@@ -1,50 +1,61 @@
 using ArbitrageBot;
 using ArbitrageBot.Configuration;
+using ArbitrageBot.Hubs;
 using ArbitrageBot.Services;
 using CryptoClients.Net;
 using Serilog;
 
-// Serilog bootstrap
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .WriteTo.Console()
     .CreateBootstrapLogger();
 
 try
-{ 
-    Log.Information("Starting ArbitrageBot...");
+{
+    Log.Information("Starting ArbitrageBot Web...");
 
-    var builder = Host.CreateApplicationBuilder(args);
+    var builder = WebApplication.CreateBuilder(args);
 
-    // Serilog
-    builder.Services.AddSerilog((services, lc) => lc
-        .ReadFrom.Configuration(builder.Configuration)
+    builder.Host.UseSerilog((ctx, services, lc) => lc
+        .ReadFrom.Configuration(ctx.Configuration)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
-        .WriteTo.Console(
-            outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
         .WriteTo.File(
             path: "logs/arbitrage-.log",
             rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 14,
-            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}"));
+            retainedFileCountLimit: 14));
 
-    // Configuration
     builder.Services.Configure<ArbitrageOptions>(
         builder.Configuration.GetSection(ArbitrageOptions.SectionName));
 
-    // CryptoClients.Net - unified multi-exchange access
     builder.Services.AddCryptoClients(options =>
     {
         options.OutputOriginalData = false;
     });
 
-    // Our services
+    builder.Services.AddSingleton<ArbitrageState>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
     builder.Services.AddHostedService<ArbitrageWorker>();
+    builder.Services.AddSignalR();
+    builder.Services.AddCors();
 
-    var host = builder.Build();
-    await host.RunAsync();
+    var app = builder.Build();
+
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+
+    app.MapHub<ArbitrageHub>("/hubs/arbitrage");
+
+    // REST snapshot for debugging / non-SignalR clients
+    app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
+
+    app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
+
+    // SPA fallback
+    app.MapFallbackToFile("index.html");
+
+    await app.RunAsync();
 }
 catch (Exception ex)
 {

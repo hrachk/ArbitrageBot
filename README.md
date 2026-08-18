@@ -1,29 +1,15 @@
 # ArbitrageBot (.NET 10)
 
-Межбиржевой арбитражный сканер на .NET 10 Worker Service.
+Межбиржевой арбитражный сканер с **live Web Dashboard**.
 
-## Возможности (текущая версия)
+## Возможности
 
-- Подключение к нескольким биржам через **CryptoClients.Net** (Binance, Bybit, OKX и др.)
-- Получение Best Bid / Best Ask (book ticker)
-- Расчёт gross и net спреда с учётом estimated taker fees
-- Логирование в консоль + файл (`logs/arbitrage-YYYYMMDD.log`)
-- Режим PaperTrading (по умолчанию включён)
-- Конфигурация через `appsettings.json`
-
-## Структура
-
-```
-ArbitrageBot/
-├── Configuration/ArbitrageOptions.cs
-├── Models/ArbitrageOpportunity.cs
-├── Services/
-│   ├── IMarketDataService.cs
-│   └── MarketDataService.cs
-├── ArbitrageWorker.cs          # BackgroundService
-├── Program.cs
-└── appsettings.json
-```
+- Multi-exchange book tickers (Binance, Bybit, OKX, …) via **CryptoClients.Net**
+- Расчёт gross / net спреда с учётом taker fees
+- Фоновый Worker + **SignalR** live updates
+- Современный тёмный Web UI (Tailwind)
+- Paper mode по умолчанию
+- REST `/api/snapshot` и `/api/health`
 
 ## Запуск
 
@@ -32,38 +18,43 @@ cd ArbitrageBot
 dotnet run
 ```
 
-Или из корня solution:
+Открой в браузере: **http://localhost:5050**
 
-```bash
-dotnet run --project ArbitrageBot
+## Структура
+
+```
+ArbitrageBot/
+├── Hubs/ArbitrageHub.cs          # SignalR
+├── Services/
+│   ├── ArbitrageState.cs         # shared in-memory state
+│   ├── IMarketDataService.cs
+│   └── MarketDataService.cs
+├── wwwroot/index.html            # Live dashboard
+├── ArbitrageWorker.cs
+├── Program.cs
+└── appsettings.json
 ```
 
-## Конфигурация
+## Конфигурация (`Arbitrage` section)
 
-В `appsettings.json` секция `Arbitrage`:
+| Key | Description |
+|-----|-------------|
+| Symbols | BTCUSDT, ETHUSDT, … |
+| Exchanges | Binance, Bybit, OKX, … |
+| MinProfitPercent | минимальный net % |
+| ScanIntervalMs | интервал скана |
+| PaperTrading | true / false |
+| EstimatedTakerFees | комиссии по биржам |
 
-- `Symbols` — пары (BTCUSDT, ETHUSDT...)
-- `Exchanges` — Binance, Bybit, OKX, Bitget, GateIo...
-- `MinProfitPercent` — минимальный net profit после fees (%)
-- `ScanIntervalMs` — интервал сканирования
-- `PaperTrading` — true/false
-- `EstimatedTakerFees` — комиссии по биржам (%)
+## Roadmap
 
-## API ключи (позже)
+1. ✅ Live Web UI + SignalR
+2. WebSocket order books (depth)
+3. Slippage / depth-aware profit
+4. Paper Execution Engine
+5. API keys (read-only → trade)
+6. Risk manager + kill-switch
 
-Для публичных book ticker ключи **не нужны**.  
-Когда будем делать реальные ордера и балансы — добавим через User Secrets:
+## Security
 
-```bash
-dotnet user-secrets set "ExchangeCredentials:Binance:ApiKey" "YOUR_KEY"
-dotnet user-secrets set "ExchangeCredentials:Binance:ApiSecret" "YOUR_SECRET"
-# аналогично для Bybit
-```
-
-## Следующие шаги
-
-1. WebSocket order books (вместо REST polling)
-2. Учёт реальной глубины стакана (slippage)
-3. Paper execution engine
-4. Inventory / балансы
-5. Real order placement + risk manager
+Не коммить API-ключи. Используй User Secrets / env vars.
