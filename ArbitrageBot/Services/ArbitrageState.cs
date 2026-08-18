@@ -3,9 +3,6 @@ using ArbitrageBot.Models;
 
 namespace ArbitrageBot.Services;
 
-/// <summary>
-/// In-memory shared state that the Worker updates and the Web UI / SignalR reads.
-/// </summary>
 public class ArbitrageState
 {
     private readonly object _lock = new();
@@ -15,6 +12,7 @@ public class ArbitrageState
     public IReadOnlyList<string> Symbols { get; set; } = [];
     public IReadOnlyList<string> Exchanges { get; set; } = [];
     public decimal MinProfitPercent { get; set; }
+    public decimal QuoteSize { get; set; }
 
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -50,9 +48,7 @@ public class ArbitrageState
     public void SetConnectionStatus(IReadOnlyDictionary<string, string> status)
     {
         lock (_lock)
-        {
             ConnectionStatus = new Dictionary<string, string>(status, StringComparer.OrdinalIgnoreCase);
-        }
     }
 
     public void SetError(string message)
@@ -87,22 +83,32 @@ public class ArbitrageState
                 symbols = Symbols,
                 exchanges = Exchanges,
                 minProfitPercent = MinProfitPercent,
+                quoteSize = QuoteSize,
                 scanCount = ScanCount,
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,
                 connectionStatus = ConnectionStatus,
-                dataSource = "websocket",
+                dataSource = "websocket+depth",
                 opportunities = Opportunities.Select(o => new
                 {
                     o.Symbol,
                     o.BuyExchange,
                     o.SellExchange,
-                    o.BuyPrice,
-                    o.SellPrice,
-                    o.GrossSpreadPercent,
-                    o.NetProfitPercent,
+                    buyPriceTop = o.BuyPriceTop,
+                    sellPriceTop = o.SellPriceTop,
+                    buyPriceVwap = o.BuyPriceVwap,
+                    sellPriceVwap = o.SellPriceVwap,
+                    o.QuoteSize,
+                    o.FillBaseQty,
+                    o.FullyFilled,
+                    grossSpreadTopPercent = o.GrossSpreadTopPercent,
+                    grossSpreadVwapPercent = o.GrossSpreadVwapPercent,
                     o.BuyFeePercent,
                     o.SellFeePercent,
+                    netProfitPercent = o.NetProfitPercent,
+                    netProfitQuote = o.NetProfitQuote,
+                    buySlippagePercent = o.BuySlippagePercent,
+                    sellSlippagePercent = o.SellSlippagePercent,
                     detectedAt = o.DetectedAt
                 }).ToList(),
                 bookTickers = books

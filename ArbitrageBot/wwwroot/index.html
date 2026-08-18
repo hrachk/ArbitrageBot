@@ -90,8 +90,9 @@
         <div class="text-2xl font-semibold font-mono" id="statOppTotal">0</div>
       </div>
       <div class="card rounded-xl p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Min profit</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Min profit / Size</div>
         <div class="text-2xl font-semibold font-mono" id="statMinProfit">—</div>
+        <div class="text-xs text-slate-500 mt-1 font-mono">size <span id="statQuoteSize">—</span> quote</div>
       </div>
     </div>
 
@@ -113,17 +114,19 @@
           <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-xs text-slate-400 uppercase tracking-wider">
-                <th class="px-4 py-2.5">Symbol</th>
-                <th class="px-4 py-2.5">Buy @</th>
-                <th class="px-4 py-2.5">Sell @</th>
-                <th class="px-4 py-2.5 text-right">Buy</th>
-                <th class="px-4 py-2.5 text-right">Sell</th>
-                <th class="px-4 py-2.5 text-right">Gross %</th>
-                <th class="px-4 py-2.5 text-right">Net %</th>
+                <th class="px-3 py-2.5">Symbol</th>
+                <th class="px-3 py-2.5">Route</th>
+                <th class="px-3 py-2.5 text-right">VWAP Buy</th>
+                <th class="px-3 py-2.5 text-right">VWAP Sell</th>
+                <th class="px-3 py-2.5 text-right">Slip</th>
+                <th class="px-3 py-2.5 text-right">Top %</th>
+                <th class="px-3 py-2.5 text-right">Net %</th>
+                <th class="px-3 py-2.5 text-right">PnL</th>
+                <th class="px-3 py-2.5 text-center">Fill</th>
               </tr>
             </thead>
             <tbody id="oppBody" class="divide-y divide-slate-800/80">
-              <tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">Waiting for data…</td></tr>
+              <tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">Waiting for data…</td></tr>
             </tbody>
           </table>
         </div>
@@ -176,7 +179,7 @@
             </tr>
           </thead>
           <tbody id="bookBody" class="divide-y divide-slate-800/80">
-            <tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">Waiting for data…</td></tr>
+            <tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">Waiting for data…</td></tr>
           </tbody>
         </table>
       </div>
@@ -215,6 +218,9 @@
       $('statOppNow').textContent = (data.opportunities || []).length;
       $('statOppTotal').textContent = data.opportunitiesFoundTotal ?? 0;
       $('statMinProfit').textContent = (data.minProfitPercent ?? 0) + '%';
+      const qs = document.getElementById('statQuoteSize');
+      if (qs) qs.textContent = (data.quoteSize != null ? Number(data.quoteSize).toLocaleString() : '—');
+
       $('modeBadge').textContent = data.mode || 'PAPER';
       $('lastScan').textContent = 'Last scan: ' + timeAgo(data.lastScanUtc);
 
@@ -259,19 +265,30 @@
       const opps = data.opportunities || [];
       $('oppCountLabel').textContent = opps.length + ' active';
       if (opps.length === 0) {
-        $('oppBody').innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No opportunities above threshold</td></tr>';
+        $('oppBody').innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">No opportunities above threshold</td></tr>';
       } else {
-        $('oppBody').innerHTML = opps.map(o => `
+        $('oppBody').innerHTML = opps.map(o => {
+          const slip = (Number(o.buySlippagePercent||0) + Number(o.sellSlippagePercent||0));
+          const fillBadge = o.fullyFilled
+            ? '<span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">full</span>'
+            : '<span class="text-xs px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">partial</span>';
+          return `
           <tr class="hover:bg-slate-800/40 transition-colors">
-            <td class="px-4 py-2.5 font-mono font-medium text-cyan-300">${o.symbol}</td>
-            <td class="px-4 py-2.5"><span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">${o.buyExchange}</span></td>
-            <td class="px-4 py-2.5"><span class="text-xs px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400">${o.sellExchange}</span></td>
-            <td class="px-4 py-2.5 text-right font-mono">${fmt(o.buyPrice)}</td>
-            <td class="px-4 py-2.5 text-right font-mono">${fmt(o.sellPrice)}</td>
-            <td class="px-4 py-2.5 text-right font-mono text-slate-300">${fmt(o.grossSpreadPercent, 3)}%</td>
-            <td class="px-4 py-2.5 text-right">${fmtPct(o.netProfitPercent)}</td>
-          </tr>
-        `).join('');
+            <td class="px-3 py-2 font-mono font-medium text-cyan-300">${o.symbol}</td>
+            <td class="px-3 py-2 whitespace-nowrap">
+              <span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">${o.buyExchange}</span>
+              <span class="text-slate-500 mx-0.5">→</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400">${o.sellExchange}</span>
+            </td>
+            <td class="px-3 py-2 text-right font-mono">${fmt(o.buyPriceVwap ?? o.buyPrice)}</td>
+            <td class="px-3 py-2 text-right font-mono">${fmt(o.sellPriceVwap ?? o.sellPrice)}</td>
+            <td class="px-3 py-2 text-right font-mono text-amber-300/90">${fmt(slip, 3)}%</td>
+            <td class="px-3 py-2 text-right font-mono text-slate-400">${fmt(o.grossSpreadTopPercent ?? o.grossSpreadPercent, 3)}%</td>
+            <td class="px-3 py-2 text-right">${fmtPct(o.netProfitPercent)}</td>
+            <td class="px-3 py-2 text-right font-mono text-emerald-300">${fmt(o.netProfitQuote, 2)}</td>
+            <td class="px-3 py-2 text-center">${fillBadge}</td>
+          </tr>`;
+        }).join('');
       }
 
       // Book tickers
@@ -287,7 +304,7 @@
       rows.sort((a, b) => a.symbol.localeCompare(b.symbol) || a.ex.localeCompare(b.ex));
 
       if (rows.length === 0) {
-        $('bookBody').innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No ticker data yet</td></tr>';
+        $('bookBody').innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">No ticker data yet</td></tr>';
       } else {
         $('bookBody').innerHTML = rows.map(r => `
           <tr class="hover:bg-slate-800/40 transition-colors">

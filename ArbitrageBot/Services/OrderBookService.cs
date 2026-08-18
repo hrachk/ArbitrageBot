@@ -192,6 +192,90 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
                ?? [];
     }
 
+
+    public FillEstimate EstimateFill(string symbol, string exchange, decimal quoteAmount, bool isBuy)
+    {
+        if (quoteAmount <= 0)
+            return FillEstimate.Fail("quoteAmount must be > 0");
+
+        var key = $"{exchange}:{symbol}";
+
+        // Prefer full depth from local order book
+        if (_books.TryGetValue(key, out var book))
+        {
+            var levels = isBuy
+                ? book.Asks?.Select(x => (x.Price, x.Quantity)).ToList()
+                : book.Bids?.Select(x => (x.Price, x.Quantity)).ToList();
+
+            if (levels == null || levels.Count == 0)
+                return FillEstimate.Fail("empty book");
+
+            return WalkLevels(levels, quoteAmount, isBuy);
+        }
+
+        // Fallback: only top of book from book ticker
+        if (_bookTickers.TryGetValue(key, out var t))
+        {
+            var price = isBuy ? t.BestAsk : t.BestBid;
+            var qty = isBuy ? t.AskQuantity : t.BidQuantity;
+            if (price <= 0 || qty <= 0)
+                return FillEstimate.Fail("no top-of-book");
+
+            return WalkLevels([(price, qty)], quoteAmount, isBuy);
+        }
+
+        return FillEstimate.Fail("no data");
+    }
+
+    private static FillEstimate WalkLevels(IReadOnlyList<(decimal Price, decimal Quantity)> levels, decimal quoteAmount, bool isBuy)
+    {
+        decimal remainingQuote = quoteAmount;
+        decimal filledBase = 0;
+        decimal filledQuote = 0;
+        decimal top = levels[0].Price;
+
+        foreach (var (price, qty) in levels)
+        {
+            if (price <= 0 || qty <= 0) continue;
+            if (remainingQuote <= 0) break;
+
+            var levelQuote = price * qty;
+            if (levelQuote <= remainingQuote)
+            {
+                filledBase += qty;
+                filledQuote += levelQuote;
+                remainingQuote -= levelQuote;
+            }
+            else
+            {
+                var takeBase = remainingQuote / price;
+                filledBase += takeBase;
+                filledQuote += remainingQuote;
+                remainingQuote = 0;
+            }
+        }
+
+        if (filledBase <= 0 || filledQuote <= 0)
+            return FillEstimate.Fail("insufficient liquidity");
+
+        var vwap = filledQuote / filledBase;
+        var fully = remainingQuote <= quoteAmount * 0.001m; // 0.1% tolerance
+        var slip = top > 0
+            ? (isBuy ? (vwap - top) / top * 100m : (top - vwap) / top * 100m)
+            : 0m;
+
+        return new FillEstimate
+        {
+            Success = true,
+            VwapPrice = vwap,
+            FilledBaseQty = filledBase,
+            FilledQuoteQty = filledQuote,
+            FullyFilled = fully,
+            TopOfBookPrice = top,
+            SlippagePercent = slip < 0 ? 0 : slip
+        };
+    }
+
     public async Task StopAsync(CancellationToken ct = default)
     {
         foreach (var kv in _books)

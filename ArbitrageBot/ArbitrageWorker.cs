@@ -34,6 +34,7 @@ public class ArbitrageWorker : BackgroundService
         _state.Symbols = _options.Symbols;
         _state.Exchanges = _options.Exchanges;
         _state.MinProfitPercent = _options.MinProfitPercent;
+        _state.QuoteSize = _options.QuoteSize;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
