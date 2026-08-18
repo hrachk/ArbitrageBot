@@ -12,7 +12,7 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("Starting ArbitrageBot Web...");
+    Log.Information("Starting ArbitrageBot Web (WebSocket order books)...");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -35,10 +35,10 @@ try
     });
 
     builder.Services.AddSingleton<ArbitrageState>();
+    builder.Services.AddSingleton<IOrderBookService, OrderBookService>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
     builder.Services.AddHostedService<ArbitrageWorker>();
     builder.Services.AddSignalR();
-    builder.Services.AddCors();
 
     var app = builder.Build();
 
@@ -46,13 +46,8 @@ try
     app.UseStaticFiles();
 
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
-
-    // REST snapshot for debugging / non-SignalR clients
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
-
     app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
-
-    // SPA fallback
     app.MapFallbackToFile("index.html");
 
     await app.RunAsync();

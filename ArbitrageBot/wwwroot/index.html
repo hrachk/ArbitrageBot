@@ -140,11 +140,16 @@
           <div id="symbolsList" class="flex flex-wrap gap-2"></div>
         </div>
         <div class="card rounded-xl p-4">
+          <h3 class="text-sm font-semibold text-slate-300 mb-3">WS Connections</h3>
+          <div id="wsStatusList" class="space-y-1.5 text-xs font-mono max-h-40 overflow-y-auto"></div>
+        </div>
+        <div class="card rounded-xl p-4">
           <h3 class="text-sm font-semibold text-slate-300 mb-2">Status</h3>
           <p class="text-xs text-slate-400 leading-relaxed">
-            Bot scans configured exchanges via REST book tickers, calculates net spread after fees, and pushes updates over SignalR.
-            Next: WebSocket depth, paper execution, API keys.
+            Live <strong class="text-cyan-400">WebSocket order books</strong> (with book-ticker fallback).
+            Net spread after fees · SignalR push · Paper mode by default.
           </p>
+          <p class="text-xs text-slate-500 mt-2">Data source: <span id="dataSource" class="text-cyan-400">—</span></p>
         </div>
       </div>
     </div>
@@ -229,6 +234,26 @@
       $('symbolsList').innerHTML = (data.symbols || []).map(s =>
         `<span class="px-2.5 py-1 rounded-md text-xs font-mono bg-slate-700/50 text-slate-300 border border-slate-600/40">${s}</span>`
       ).join('') || '<span class="text-slate-500 text-xs">—</span>';
+
+      // Data source
+      const ds = document.getElementById('dataSource');
+      if (ds) ds.textContent = data.dataSource || 'websocket';
+
+      // WS connection status
+      const wsList = document.getElementById('wsStatusList');
+      if (wsList) {
+        const st = data.connectionStatus || {};
+        const entries = Object.entries(st);
+        if (entries.length === 0) {
+          wsList.innerHTML = '<div class="text-slate-500">Starting…</div>';
+        } else {
+          wsList.innerHTML = entries.map(([k, v]) => {
+            const ok = /synced|book-ticker/i.test(String(v));
+            const color = ok ? 'text-emerald-400' : 'text-amber-400';
+            return `<div class="flex justify-between gap-2"><span class="text-slate-400 truncate">${k}</span><span class="${color}">${v}</span></div>`;
+          }).join('');
+        }
+      }
 
       // Opportunities
       const opps = data.opportunities || [];

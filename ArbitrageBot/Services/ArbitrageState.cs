@@ -16,16 +16,14 @@ public class ArbitrageState
     public IReadOnlyList<string> Exchanges { get; set; } = [];
     public decimal MinProfitPercent { get; set; }
 
-    // Latest opportunities (sorted by net profit desc)
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
-
-    // Latest book tickers: Symbol -> Exchange -> BookTicker
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    // Simple stats
     public long ScanCount { get; private set; }
     public long OpportunitiesFoundTotal { get; private set; }
     public string? LastError { get; private set; }
+    public IReadOnlyDictionary<string, string> ConnectionStatus { get; private set; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     public void UpdateScan(IReadOnlyList<ArbitrageOpportunity> opportunities, Dictionary<string, Dictionary<string, BookTicker>>? tickersBySymbol = null)
     {
@@ -46,6 +44,14 @@ public class ArbitrageState
                         dict[ex] = ticker;
                 }
             }
+        }
+    }
+
+    public void SetConnectionStatus(IReadOnlyDictionary<string, string> status)
+    {
+        lock (_lock)
+        {
+            ConnectionStatus = new Dictionary<string, string>(status, StringComparer.OrdinalIgnoreCase);
         }
     }
 
@@ -84,6 +90,8 @@ public class ArbitrageState
                 scanCount = ScanCount,
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,
+                connectionStatus = ConnectionStatus,
+                dataSource = "websocket",
                 opportunities = Opportunities.Select(o => new
                 {
                     o.Symbol,

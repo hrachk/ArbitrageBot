@@ -1,60 +1,62 @@
 # ArbitrageBot (.NET 10)
 
-Межбиржевой арбитражный сканер с **live Web Dashboard**.
+Межбиржевой арбитражный сканер с **live WebSocket order books** и Web Dashboard.
 
 ## Возможности
 
-- Multi-exchange book tickers (Binance, Bybit, OKX, …) via **CryptoClients.Net**
-- Расчёт gross / net спреда с учётом taker fees
+- **WebSocket order books** через `IExchangeOrderBookFactory` (локально синхронизируемые стаканы)
+- Fallback на **book ticker WebSocket**, если factory недоступен
+- Multi-exchange: Binance, Bybit, OKX, …
+- Расчёт gross / net спреда после taker fees
 - Фоновый Worker + **SignalR** live updates
-- Современный тёмный Web UI (Tailwind)
+- Современный тёмный Web UI (статус WS-соединений, opportunities, tickers)
 - Paper mode по умолчанию
-- REST `/api/snapshot` и `/api/health`
+- REST `/api/snapshot`, `/api/health`
 
 ## Запуск
 
 ```bash
+git pull origin Develop
 cd ArbitrageBot
 dotnet run
 ```
 
-Открой в браузере: **http://localhost:5050**
+Открой: **http://localhost:5050**
 
 ## Структура
 
 ```
 ArbitrageBot/
-├── Hubs/ArbitrageHub.cs          # SignalR
+├── Hubs/ArbitrageHub.cs
 ├── Services/
-│   ├── ArbitrageState.cs         # shared in-memory state
-│   ├── IMarketDataService.cs
-│   └── MarketDataService.cs
-├── wwwroot/index.html            # Live dashboard
+│   ├── ArbitrageState.cs
+│   ├── IOrderBookService.cs / OrderBookService.cs   # WS books
+│   ├── IMarketDataService.cs / MarketDataService.cs
+├── wwwroot/index.html
 ├── ArbitrageWorker.cs
-├── Program.cs
-└── appsettings.json
+└── Program.cs
 ```
 
-## Конфигурация (`Arbitrage` section)
+## Конфигурация (`Arbitrage`)
 
 | Key | Description |
 |-----|-------------|
 | Symbols | BTCUSDT, ETHUSDT, … |
 | Exchanges | Binance, Bybit, OKX, … |
 | MinProfitPercent | минимальный net % |
-| ScanIntervalMs | интервал скана |
+| ScanIntervalMs | как часто пересчитывать спреды (книги уже live) |
 | PaperTrading | true / false |
-| EstimatedTakerFees | комиссии по биржам |
+| EstimatedTakerFees | комиссии % |
 
 ## Roadmap
 
 1. ✅ Live Web UI + SignalR
-2. WebSocket order books (depth)
+2. ✅ WebSocket order books
 3. Slippage / depth-aware profit
-4. Paper Execution Engine
-5. API keys (read-only → trade)
-6. Risk manager + kill-switch
+4. UI polish (filters, buttons, spread chart)
+5. Paper Execution Engine
+6. API keys
 
 ## Security
 
-Не коммить API-ключи. Используй User Secrets / env vars.
+Не коммить API-ключи. User Secrets / env vars.
