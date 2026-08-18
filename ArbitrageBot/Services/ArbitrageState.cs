@@ -14,6 +14,9 @@ public class ArbitrageState
     public decimal MinProfitPercent { get; set; }
     public decimal QuoteSize { get; set; }
     public bool IsPaused { get; set; }
+    public string StrategyNote { get; set; } = "Inventory arb: trade both legs without on-chain transfers.";
+    public bool DynamicSymbols { get; set; }
+    public IReadOnlyList<object> DiscoveredSymbols { get; set; } = [];
 
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -114,6 +117,9 @@ public class ArbitrageState
                 minProfitPercent = MinProfitPercent,
                 quoteSize = QuoteSize,
                 isPaused = IsPaused,
+                strategyNote = StrategyNote,
+                dynamicSymbols = DynamicSymbols,
+                discoveredSymbols = DiscoveredSymbols,
                 scanCount = ScanCount,
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,

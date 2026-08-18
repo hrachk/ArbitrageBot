@@ -64,6 +64,25 @@
   </header>
 
   <main class="max-w-[1600px] mx-auto px-4 py-6 space-y-6">
+
+    <div class="card rounded-xl p-4 border-cyan-500/20">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div class="text-xs uppercase tracking-wider text-cyan-400/80 mb-1">Strategy</div>
+          <p id="strategyNote" class="text-sm text-slate-300 max-w-3xl leading-relaxed">Inventory arbitrage — no transfers.</p>
+        </div>
+        <div class="text-right text-xs text-slate-400 space-y-1">
+          <div>Mode: <span id="strategyMode" class="text-amber-300 font-semibold">PAPER</span></div>
+          <div>Pairs: <span id="strategyDynamic" class="text-cyan-300">dynamic</span></div>
+          <div class="font-mono text-slate-500" id="strategyFlow">Buy cheap EX → Sell rich EX (balances on both)</div>
+        </div>
+      </div>
+      <div class="mt-3">
+        <div class="text-xs text-slate-400 mb-1.5">Active pairs (ranked by liquidity)</div>
+        <div id="discoveredList" class="flex flex-wrap gap-2"></div>
+      </div>
+    </div>
+
     <!-- Stats -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="card rounded-xl p-4">
@@ -490,6 +509,29 @@
             const ok = /synced|book-ticker/i.test(String(v));
             return `<div class="flex justify-between gap-2"><span class="text-slate-400 truncate">${k}</span><span class="${ok ? 'text-emerald-400' : 'text-amber-400'}">${v}</span></div>`;
           }).join('');
+
+      
+      const sn = document.getElementById('strategyNote');
+      if (sn && data.strategyNote) sn.textContent = data.strategyNote;
+      const sm = document.getElementById('strategyMode');
+      if (sm) sm.textContent = data.mode || 'PAPER';
+      const sd = document.getElementById('strategyDynamic');
+      if (sd) sd.textContent = data.dynamicSymbols ? 'auto top-liquid' : 'fixed list';
+      const dl = document.getElementById('discoveredList');
+      if (dl) {
+        const disc = data.discoveredSymbols || [];
+        if (disc.length) {
+          dl.innerHTML = disc.map(d => {
+            const vol = d.medianQuoteVolume ? (Number(d.medianQuoteVolume) >= 1e6 ? (Number(d.medianQuoteVolume)/1e6).toFixed(1)+'M' : Math.round(Number(d.medianQuoteVolume)).toLocaleString()) : '—';
+            return '<span class="px-2.5 py-1 rounded-md text-xs font-mono bg-slate-800 border border-slate-600/50 text-slate-200" title="median quote vol">' +
+              d.symbol + ' <span class="text-slate-500">vol ' + vol + '</span></span>';
+          }).join('');
+        } else {
+          dl.innerHTML = (data.symbols || []).map(s =>
+            '<span class="px-2.5 py-1 rounded-md text-xs font-mono bg-slate-800 border border-slate-600/50">' + s + '</span>'
+          ).join('') || '—';
+        }
+      }
 
       ensureFilterOptions(data);
       renderOpportunities(data.opportunities || []);

@@ -1,41 +1,39 @@
 # ArbitrageBot (.NET 10)
 
-WebSocket order books + depth-aware arb scan + **Paper Execution Engine** + live UI.
+Inventory cross-exchange arbitrage (no transfers) + dynamic liquid pairs + paper execution + live UI.
 
-## Roadmap
+## Strategy
 
-1. ✅ Live Web UI + SignalR  
-2. ✅ WebSocket order books  
-3. ✅ Depth-aware / slippage (VWAP)  
-4. ✅ UI polish (filters, pause, chart)  
-5. ✅ **Paper Execution Engine**  
-6. ⬜ API keys + live risk  
+**No asset transfers.** On each exchange the bot holds USDT + base inventory.  
+When A is cheaper than B: **buy on A, sell on B** — balances shift, coins never leave the venues.
 
-## Paper mode
+## Dynamic symbols
 
-On each scan, if `PaperAutoExecute=true` and there is a qualifying opportunity:
+With `DynamicSymbols: true` (default):
 
-1. Take best full-fill opp (optional `PaperRequireFullFill`)
-2. Check virtual balances: USDT on buy exchange, base asset on sell exchange
-3. Simulate fill at VWAP + fees
-4. Update balances, realized PnL, trade history
+1. Load all USDT tickers from Binance / Bybit / OKX  
+2. Keep pairs listed on **all** exchanges  
+3. Filter by min median 24h quote volume  
+4. Rank (majors boost + volume) → take `DynamicTopN` (default 8)
 
-**Starting inventory (default):**
-- each exchange: `10_000 USDT`
-- BTC `0.05`, ETH `0.5`, SOL `5` on each exchange
+Fallback: static `Symbols` list if discovery fails.
 
-Cooldown between fills: `PaperCooldownMs` (default 8s).
+## Config
 
-**UI:** Paper Portfolio balances, Paper Trades, Reset Paper button.
-
-**API:** `POST /api/paper/reset`
+```json
+"DynamicSymbols": true,
+"DynamicTopN": 8,
+"DynamicMinQuoteVolumeUsd": 5000000,
+"DynamicQuoteAsset": "USDT",
+"PaperAutoExecute": true,
+"PaperStartingQuote": 10000
+```
 
 ## Run
 
 ```bash
 git pull origin Develop
-cd ArbitrageBot
-dotnet run
+cd ArbitrageBot && dotnet run
 ```
 
 http://localhost:5050

@@ -4,6 +4,9 @@ public class ArbitrageOptions
 {
     public const string SectionName = "Arbitrage";
 
+    /// <summary>
+    /// Static fallback / seed list. Used when DynamicSymbols=false or discovery fails.
+    /// </summary>
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
@@ -23,29 +26,33 @@ public class ArbitrageOptions
     public decimal QuoteSize { get; set; } = 500m;
     public int MaxDepthLevels { get; set; } = 20;
 
-    // --- Paper execution ---
-    /// <summary>Auto-execute paper trades when opportunity passes filters.</summary>
+    // Paper
     public bool PaperAutoExecute { get; set; } = true;
-
-    /// <summary>Starting USDT balance on each exchange.</summary>
     public decimal PaperStartingQuote { get; set; } = 10_000m;
-
-    /// <summary>Default starting base units per asset if not in PaperStartingBaseUnits (e.g. 0.05 BTC).</summary>
     public decimal PaperStartingBaseDefault { get; set; } = 0.05m;
-
-    /// <summary>Per-asset starting base inventory, e.g. BTC: 0.1, ETH: 1.</summary>
     public Dictionary<string, decimal> PaperStartingBaseUnits { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
         ["BTC"] = 0.05m,
         ["ETH"] = 0.5m,
         ["SOL"] = 5m
     };
-
-    /// <summary>Min ms between successful paper trades.</summary>
     public int PaperCooldownMs { get; set; } = 8000;
-
-    /// <summary>Only execute full-fill opportunities in paper mode.</summary>
     public bool PaperRequireFullFill { get; set; } = true;
+
+    // Dynamic symbol discovery
+    /// <summary>If true, bot picks top liquid USDT pairs present on ALL exchanges.</summary>
+    public bool DynamicSymbols { get; set; } = true;
+
+    /// <summary>How many pairs to trade after ranking by volume.</summary>
+    public int DynamicTopN { get; set; } = 8;
+
+    /// <summary>Min median 24h quote volume (USDT) across exchanges.</summary>
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 5_000_000m;
+
+    public string DynamicQuoteAsset { get; set; } = "USDT";
+
+    /// <summary>Re-run discovery every N minutes (0 = only at startup).</summary>
+    public int DynamicRefreshMinutes { get; set; } = 60;
 
     public IReadOnlyList<string> NormalizedSymbols =>
         Symbols.Where(s => !string.IsNullOrWhiteSpace(s))

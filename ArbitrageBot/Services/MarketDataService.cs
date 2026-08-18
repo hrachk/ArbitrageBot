@@ -8,15 +8,18 @@ public class MarketDataService : IMarketDataService
 {
     private readonly IOrderBookService _orderBooks;
     private readonly ArbitrageOptions _options;
+    private readonly ActiveMarketContext _markets;
     private readonly ILogger<MarketDataService> _logger;
 
     public MarketDataService(
         IOrderBookService orderBooks,
         IOptions<ArbitrageOptions> options,
+        ActiveMarketContext markets,
         ILogger<MarketDataService> logger)
     {
         _orderBooks = orderBooks;
         _options = options.Value;
+        _markets = markets;
         _logger = logger;
     }
 
@@ -28,7 +31,7 @@ public class MarketDataService : IMarketDataService
         var opportunities = new List<ArbitrageOpportunity>();
         var quoteSize = _options.QuoteSize > 0 ? _options.QuoteSize : 500m;
 
-        foreach (var symbol in _options.NormalizedSymbols)
+        foreach (var symbol in _markets.Symbols)
         {
             if (ct.IsCancellationRequested) break;
 

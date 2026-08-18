@@ -36,6 +36,8 @@ try
     });
 
     builder.Services.AddSingleton<ArbitrageState>();
+    builder.Services.AddSingleton<ActiveMarketContext>();
+    builder.Services.AddSingleton<ISymbolDiscoveryService, SymbolDiscoveryService>();
     builder.Services.AddSingleton<IOrderBookService, OrderBookService>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
     builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();

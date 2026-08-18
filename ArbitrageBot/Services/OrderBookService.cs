@@ -6,6 +6,7 @@ using CryptoExchange.Net.Objects.Sockets;
 using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
 
+
 namespace ArbitrageBot.Services;
 
 /// <summary>
@@ -17,6 +18,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
     private readonly IExchangeOrderBookFactory _orderBookFactory;
     private readonly IExchangeSocketClient _socketClient;
     private readonly ArbitrageOptions _options;
+    private readonly ActiveMarketContext _markets;
     private readonly ILogger<OrderBookService> _logger;
 
     private readonly ConcurrentDictionary<string, ISymbolOrderBook> _books = new(StringComparer.OrdinalIgnoreCase);
@@ -35,11 +37,13 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
         IExchangeOrderBookFactory orderBookFactory,
         IExchangeSocketClient socketClient,
         IOptions<ArbitrageOptions> options,
+        ActiveMarketContext markets,
         ILogger<OrderBookService> logger)
     {
         _orderBookFactory = orderBookFactory;
         _socketClient = socketClient;
         _options = options.Value;
+        _markets = markets;
         _logger = logger;
     }
 
@@ -48,7 +52,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
         if (_started) return;
         _started = true;
 
-        foreach (var symbolStr in _options.NormalizedSymbols)
+        foreach (var symbolStr in _markets.Symbols)
         {
             SharedSymbol symbol;
             try { symbol = ParseSymbol(symbolStr); }
@@ -58,7 +62,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
                 continue;
             }
 
-            foreach (var exchange in _options.NormalizedExchanges)
+            foreach (var exchange in _markets.Exchanges)
             {
                 var key = $"{exchange}:{symbolStr}";
                 try
@@ -173,7 +177,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
     public Dictionary<string, BookTicker> GetBookTickers(string symbol)
     {
         var result = new Dictionary<string, BookTicker>(StringComparer.OrdinalIgnoreCase);
-        foreach (var exchange in _options.NormalizedExchanges)
+        foreach (var exchange in _markets.Exchanges)
         {
             var key = $"{exchange}:{symbol}";
             if (_bookTickers.TryGetValue(key, out var t))
