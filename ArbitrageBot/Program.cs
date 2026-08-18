@@ -11,7 +11,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 try
-{
+{ 
     Log.Information("Starting ArbitrageBot...");
 
     var builder = Host.CreateApplicationBuilder(args);
