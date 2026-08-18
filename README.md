@@ -1,33 +1,32 @@
-# ArbitrageBot (.NET 10)
+# ArbitrageBot — Futures Cross-Exchange
 
-Inventory cross-exchange arbitrage (no transfers) + dynamic liquid pairs + paper execution + live UI.
+**StrategyMode: `FuturesCross`** (default)
 
-## Strategy
+LONG perpetual on the cheaper exchange + SHORT on the richer exchange.  
+Only **USDT margin** on each venue — **no coin transfers**.
 
-**No asset transfers.** On each exchange the bot holds USDT + base inventory.  
-When A is cheaper than B: **buy on A, sell on B** — balances shift, coins never leave the venues.
+## How it works
 
-## Dynamic symbols
+1. Discover liquid USDT-M style symbols (or use static list)
+2. WebSocket **perp order books** (Binance / Bybit / OKX)
+3. Depth-aware VWAP spread, minus taker fees
+4. **Paper**: open hedge when net % ≥ threshold; close on convergence or max hold
+5. Live UI via SignalR
 
-With `DynamicSymbols: true` (default):
-
-1. Load all USDT tickers from Binance / Bybit / OKX  
-2. Keep pairs listed on **all** exchanges  
-3. Filter by min median 24h quote volume  
-4. Rank (majors boost + volume) → take `DynamicTopN` (default 8)
-
-Fallback: static `Symbols` list if discovery fails.
-
-## Config
+## Config (`appsettings.json`)
 
 ```json
-"DynamicSymbols": true,
-"DynamicTopN": 8,
-"DynamicMinQuoteVolumeUsd": 5000000,
-"DynamicQuoteAsset": "USDT",
-"PaperAutoExecute": true,
-"PaperStartingQuote": 10000
+"StrategyMode": "FuturesCross",
+"MinProfitPercent": 0.08,
+"QuoteSize": 500,
+"FuturesPaperLeverage": 2,
+"FuturesMaxOpenPositions": 3,
+"FuturesMaxHoldMinutes": 30,
+"FuturesCloseBelowNetPercent": 0.02,
+"PaperAutoExecute": true
 ```
+
+Spot inventory mode: `"StrategyMode": "SpotInventory"`.
 
 ## Run
 
@@ -37,3 +36,9 @@ cd ArbitrageBot && dotnet run
 ```
 
 http://localhost:5050
+
+## Roadmap
+
+- ✅ FuturesCross paper (open/close hedge)
+- ⬜ Funding rate in net edge
+- ⬜ Live API keys + risk limits

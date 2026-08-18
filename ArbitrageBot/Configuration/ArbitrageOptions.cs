@@ -4,29 +4,28 @@ public class ArbitrageOptions
 {
     public const string SectionName = "Arbitrage";
 
-    /// <summary>
-    /// Static fallback / seed list. Used when DynamicSymbols=false or discovery fails.
-    /// </summary>
+    /// <summary>SpotInventory | FuturesCross</summary>
+    public string StrategyMode { get; set; } = "FuturesCross";
+
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.15m;
+    public decimal MinProfitPercent { get; set; } = 0.08m;
     public int ScanIntervalMs { get; set; } = 1500;
     public bool PaperTrading { get; set; } = true;
 
     public Dictionary<string, decimal> EstimatedTakerFees { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Binance"] = 0.10m,
-        ["Bybit"] = 0.10m,
-        ["OKX"] = 0.10m,
-        ["Bitget"] = 0.10m,
-        ["GateIo"] = 0.10m
+        ["Binance"] = 0.05m,
+        ["Bybit"] = 0.055m,
+        ["OKX"] = 0.05m,
+        ["Bitget"] = 0.06m,
+        ["GateIo"] = 0.05m
     };
 
     public decimal QuoteSize { get; set; } = 500m;
     public int MaxDepthLevels { get; set; } = 20;
 
-    // Paper
     public bool PaperAutoExecute { get; set; } = true;
     public decimal PaperStartingQuote { get; set; } = 10_000m;
     public decimal PaperStartingBaseDefault { get; set; } = 0.05m;
@@ -39,20 +38,21 @@ public class ArbitrageOptions
     public int PaperCooldownMs { get; set; } = 8000;
     public bool PaperRequireFullFill { get; set; } = true;
 
-    // Dynamic symbol discovery
-    /// <summary>If true, bot picks top liquid USDT pairs present on ALL exchanges.</summary>
     public bool DynamicSymbols { get; set; } = true;
-
-    /// <summary>How many pairs to trade after ranking by volume.</summary>
-    public int DynamicTopN { get; set; } = 8;
-
-    /// <summary>Min median 24h quote volume (USDT) across exchanges.</summary>
-    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 5_000_000m;
-
+    public int DynamicTopN { get; set; } = 6;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 10_000_000m;
     public string DynamicQuoteAsset { get; set; } = "USDT";
-
-    /// <summary>Re-run discovery every N minutes (0 = only at startup).</summary>
     public int DynamicRefreshMinutes { get; set; } = 60;
+
+    // Futures paper
+    public decimal FuturesPaperLeverage { get; set; } = 2m;
+    public int FuturesMaxOpenPositions { get; set; } = 3;
+    public int FuturesMaxHoldMinutes { get; set; } = 30;
+    /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
+    public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
+
+    public bool IsFuturesCross =>
+        string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
 
     public IReadOnlyList<string> NormalizedSymbols =>
         Symbols.Where(s => !string.IsNullOrWhiteSpace(s))

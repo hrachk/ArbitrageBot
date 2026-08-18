@@ -14,7 +14,9 @@ public class ArbitrageState
     public decimal MinProfitPercent { get; set; }
     public decimal QuoteSize { get; set; }
     public bool IsPaused { get; set; }
-    public string StrategyNote { get; set; } = "Inventory arb: trade both legs without on-chain transfers.";
+    public string StrategyNote { get; set; } = "Futures cross: LONG cheap perp + SHORT rich perp (margin only, no transfers).";
+    public string StrategyMode { get; set; } = "FuturesCross";
+    public object? FuturesPaper { get; set; }
     public bool DynamicSymbols { get; set; }
     public IReadOnlyList<object> DiscoveredSymbols { get; set; } = [];
 
@@ -118,6 +120,8 @@ public class ArbitrageState
                 quoteSize = QuoteSize,
                 isPaused = IsPaused,
                 strategyNote = StrategyNote,
+                strategyMode = StrategyMode,
+                futuresPaper = FuturesPaper,
                 dynamicSymbols = DynamicSymbols,
                 discoveredSymbols = DiscoveredSymbols,
                 scanCount = ScanCount,

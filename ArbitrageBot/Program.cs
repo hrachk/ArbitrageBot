@@ -38,6 +38,8 @@ try
     builder.Services.AddSingleton<ArbitrageState>();
     builder.Services.AddSingleton<ActiveMarketContext>();
     builder.Services.AddSingleton<ISymbolDiscoveryService, SymbolDiscoveryService>();
+    builder.Services.AddSingleton<IFuturesMarketService, FuturesMarketService>();
+    builder.Services.AddSingleton<IFuturesPaperService, FuturesPaperService>();
     builder.Services.AddSingleton<IOrderBookService, OrderBookService>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
     builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();
@@ -72,9 +74,25 @@ try
     app.MapPost("/api/paper/reset", (
         ArbitrageState state,
         IPaperExecutionService paper,
+        IFuturesPaperService futPaper,
         IOptions<ArbitrageOptions> options) =>
     {
         var opt = options.Value;
+        if (opt.IsFuturesCross)
+        {
+            futPaper.Reset(opt.NormalizedExchanges);
+            var margin = futPaper.GetMarginBalances();
+            state.UpdatePaper(
+                futPaper.RealizedPnlUsd,
+                futPaper.TradeAttempts,
+                futPaper.OpenCount,
+                [],
+                margin.ToDictionary(
+                    kv => kv.Key,
+                    kv => new Dictionary<string, decimal> { ["USDT"] = kv.Value },
+                    StringComparer.OrdinalIgnoreCase));
+            return Results.Ok(new { reset = true, mode = "FuturesCross", margin });
+        }
         paper.Reset(opt.NormalizedExchanges, opt.NormalizedSymbols);
         state.UpdatePaper(
             paper.RealizedPnlQuote,
@@ -82,7 +100,7 @@ try
             paper.SuccessCount,
             paper.GetRecentTrades(40),
             paper.GetBalances());
-        return Results.Ok(new { reset = true, balances = paper.GetBalances() });
+        return Results.Ok(new { reset = true, mode = "SpotInventory", balances = paper.GetBalances() });
     });
 
     app.MapFallbackToFile("index.html");
