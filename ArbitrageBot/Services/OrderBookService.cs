@@ -48,7 +48,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
         if (_started) return;
         _started = true;
 
-        foreach (var symbolStr in _options.Symbols)
+        foreach (var symbolStr in _options.NormalizedSymbols)
         {
             SharedSymbol symbol;
             try { symbol = ParseSymbol(symbolStr); }
@@ -58,7 +58,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
                 continue;
             }
 
-            foreach (var exchange in _options.Exchanges)
+            foreach (var exchange in _options.NormalizedExchanges)
             {
                 var key = $"{exchange}:{symbolStr}";
                 try
@@ -173,7 +173,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
     public Dictionary<string, BookTicker> GetBookTickers(string symbol)
     {
         var result = new Dictionary<string, BookTicker>(StringComparer.OrdinalIgnoreCase);
-        foreach (var exchange in _options.Exchanges)
+        foreach (var exchange in _options.NormalizedExchanges)
         {
             var key = $"{exchange}:{symbol}";
             if (_bookTickers.TryGetValue(key, out var t))

@@ -1,23 +1,26 @@
 # ArbitrageBot (.NET 10)
 
-Межбиржевой арбитражный сканер: **WebSocket order books + depth-aware (slippage) PnL** + live Web UI.
+Межбиржевой арбитражный сканер: WebSocket order books + depth-aware PnL + live Web UI.
 
 ## Цепочка (roadmap)
 
 1. ✅ Live Web UI + SignalR  
-2. ✅ WebSocket order books (`IExchangeOrderBookFactory` + book-ticker fallback)  
-3. ✅ **Depth-aware / slippage** (VWAP walk по стакану на `QuoteSize`)  
-4. ⬜ UI polish (filters, pause, spread chart)  
+2. ✅ WebSocket order books  
+3. ✅ Depth-aware / slippage (VWAP)  
+4. ✅ **UI polish** (filters, pause/resume, spread chart)  
 5. ⬜ Paper Execution Engine  
 6. ⬜ API keys + risk manager  
 
-## Как считается возможность
+## Багфикс
 
-1. Best bid/ask из live WS books  
-2. Walk asks (buy) и bids (sell) на сумму `QuoteSize` USDT → **VWAP**  
-3. Fees (taker %) с обеих сторон  
-4. `Net%` и `Net PnL (quote)` только если после slippage+fees ≥ `MinProfitPercent`  
-5. `full` / `partial` — хватило ли глубины на полный размер  
+Списки `Symbols` / `Exchanges` больше не дублируются (убраны default list initializers + `NormalizedSymbols` / `NormalizedExchanges`).
+
+## UI
+
+- Pause / Resume scan (`POST /api/control/toggle`)
+- Фильтры: symbol, buy/sell exchange, min net %, full fill only
+- Chart: best net % history (Chart.js)
+- Depth-aware opportunities table + WS connection status
 
 ## Запуск
 
@@ -27,7 +30,7 @@ cd ArbitrageBot
 dotnet run
 ```
 
-UI: **http://localhost:5050**
+http://localhost:5050
 
 ## Конфиг (`Arbitrage`)
 
@@ -35,17 +38,7 @@ UI: **http://localhost:5050**
 |-----|---------|---------|
 | Symbols | BTCUSDT… | пары |
 | Exchanges | Binance, Bybit, OKX | биржи |
-| QuoteSize | 500 | размер в USDT для depth |
+| QuoteSize | 500 | размер USDT для depth |
 | MinProfitPercent | 0.15 | мин. net после fees+slip |
-| ScanIntervalMs | 1500 | пересчёт спредов |
+| ScanIntervalMs | 1500 | пересчёт |
 | PaperTrading | true | без реальных ордеров |
-| EstimatedTakerFees | 0.10 | % по биржам |
-
-## Структура
-
-```
-Services/OrderBookService.cs   # WS books + EstimateFill
-Services/MarketDataService.cs  # depth-aware scan
-Services/ArbitrageState.cs     # snapshot for UI
-wwwroot/index.html             # live dashboard
-```

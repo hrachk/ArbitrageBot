@@ -28,7 +28,7 @@ public class MarketDataService : IMarketDataService
         var opportunities = new List<ArbitrageOpportunity>();
         var quoteSize = _options.QuoteSize > 0 ? _options.QuoteSize : 500m;
 
-        foreach (var symbol in _options.Symbols)
+        foreach (var symbol in _options.NormalizedSymbols)
         {
             if (ct.IsCancellationRequested) break;
 

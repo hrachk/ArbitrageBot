@@ -48,6 +48,22 @@ try
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
     app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
+
+    app.MapPost("/api/control/pause", (ArbitrageState state) =>
+    {
+        state.IsPaused = true;
+        return Results.Ok(new { isPaused = true });
+    });
+    app.MapPost("/api/control/resume", (ArbitrageState state) =>
+    {
+        state.IsPaused = false;
+        return Results.Ok(new { isPaused = false });
+    });
+    app.MapPost("/api/control/toggle", (ArbitrageState state) =>
+    {
+        state.IsPaused = !state.IsPaused;
+        return Results.Ok(new { isPaused = state.IsPaused });
+    });
     app.MapFallbackToFile("index.html");
 
     await app.RunAsync();

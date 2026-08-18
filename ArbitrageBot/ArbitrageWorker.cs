@@ -31,8 +31,8 @@ public class ArbitrageWorker : BackgroundService
         _logger = logger;
 
         _state.Mode = _options.PaperTrading ? "PAPER" : "LIVE";
-        _state.Symbols = _options.Symbols;
-        _state.Exchanges = _options.Exchanges;
+        _state.Symbols = _options.NormalizedSymbols;
+        _state.Exchanges = _options.NormalizedExchanges;
         _state.MinProfitPercent = _options.MinProfitPercent;
         _state.QuoteSize = _options.QuoteSize;
     }
@@ -42,8 +42,8 @@ public class ArbitrageWorker : BackgroundService
         _logger.LogInformation(
             "ArbitrageWorker starting. Mode: {Mode} | Symbols: {Symbols} | Exchanges: {Exchanges}",
             _state.Mode,
-            string.Join(", ", _options.Symbols),
-            string.Join(", ", _options.Exchanges));
+            string.Join(", ", _options.NormalizedSymbols),
+            string.Join(", ", _options.NormalizedExchanges));
 
         // Start WebSocket order books
         try
@@ -65,10 +65,17 @@ public class ArbitrageWorker : BackgroundService
         {
             try
             {
+                if (_state.IsPaused)
+                {
+                    await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
+                    await Task.Delay(_options.ScanIntervalMs, stoppingToken);
+                    continue;
+                }
+
                 var opportunities = await _marketData.ScanOpportunitiesAsync(stoppingToken);
 
                 var tickersBySymbol = new Dictionary<string, Dictionary<string, BookTicker>>(StringComparer.OrdinalIgnoreCase);
-                foreach (var symbol in _options.Symbols)
+                foreach (var symbol in _options.NormalizedSymbols)
                 {
                     var books = await _marketData.GetBookTickersAsync(symbol, stoppingToken);
                     if (books.Count > 0)

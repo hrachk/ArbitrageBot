@@ -13,6 +13,7 @@ public class ArbitrageState
     public IReadOnlyList<string> Exchanges { get; set; } = [];
     public decimal MinProfitPercent { get; set; }
     public decimal QuoteSize { get; set; }
+    public bool IsPaused { get; set; }
 
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -84,6 +85,7 @@ public class ArbitrageState
                 exchanges = Exchanges,
                 minProfitPercent = MinProfitPercent,
                 quoteSize = QuoteSize,
+                isPaused = IsPaused,
                 scanCount = ScanCount,
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,
