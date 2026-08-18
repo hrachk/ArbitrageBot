@@ -48,6 +48,7 @@
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-3 text-sm">
+        <button id="btnPaperReset" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-500/40 bg-slate-500/10 text-slate-300 hover:bg-slate-500/20 transition">Reset Paper</button>
         <button id="btnPause" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition">
           Pause
         </button>
@@ -112,6 +113,49 @@
           </select>
         </div>
         <button id="btnResetFilters" class="px-3 py-1.5 rounded-lg text-xs border border-slate-600 text-slate-300 hover:bg-slate-800">Reset filters</button>
+      </div>
+    </div>
+
+
+    <!-- Paper portfolio -->
+    <div class="grid lg:grid-cols-5 gap-6">
+      <div class="lg:col-span-2 card rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold text-sm flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-violet-400"></span>
+            Paper Portfolio
+          </h2>
+          <div class="text-xs font-mono">
+            PnL <span id="paperPnl" class="text-emerald-400">0</span>
+            · fills <span id="paperFills">0</span>/<span id="paperAttempts">0</span>
+          </div>
+        </div>
+        <div id="paperBalances" class="space-y-2 text-xs font-mono max-h-48 overflow-y-auto text-slate-300"></div>
+      </div>
+      <div class="lg:col-span-3 card rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+          <h2 class="font-semibold text-sm flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-violet-400"></span>
+            Paper Trades
+          </h2>
+          <span class="text-xs text-slate-500" id="paperTradeHint">auto-execute on best full opp</span>
+        </div>
+        <div class="overflow-x-auto max-h-48 overflow-y-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-slate-400 uppercase tracking-wider">
+                <th class="px-3 py-2">Time</th>
+                <th class="px-3 py-2">Route</th>
+                <th class="px-3 py-2 text-right">Qty</th>
+                <th class="px-3 py-2 text-right">PnL</th>
+                <th class="px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody id="paperTradeBody" class="divide-y divide-slate-800/80">
+              <tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">No paper trades yet</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -352,6 +396,54 @@
       }).join('');
     }
 
+    
+    function renderPaper(paper) {
+      if (!paper) return;
+      const pnl = Number(paper.realizedPnl || 0);
+      const pnlEl = $('paperPnl');
+      if (pnlEl) {
+        pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
+        pnlEl.className = pnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      }
+      if ($('paperFills')) $('paperFills').textContent = paper.successCount ?? 0;
+      if ($('paperAttempts')) $('paperAttempts').textContent = paper.tradeCount ?? 0;
+
+      const bal = paper.balances || {};
+      const balEl = $('paperBalances');
+      if (balEl) {
+        const lines = [];
+        for (const [ex, assets] of Object.entries(bal)) {
+          const parts = Object.entries(assets)
+            .filter(([,v]) => Number(v) !== 0)
+            .map(([a,v]) => a + ':' + Number(v).toFixed(a === 'USDT' ? 2 : 6));
+          lines.push('<div><span class="text-cyan-300">' + ex + '</span> ' + parts.join(' · ') + '</div>');
+        }
+        balEl.innerHTML = lines.length ? lines.join('') : '<div class="text-slate-500">—</div>';
+      }
+
+      const trades = paper.trades || [];
+      const body = $('paperTradeBody');
+      if (body) {
+        if (!trades.length) {
+          body.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">No paper trades yet</td></tr>';
+        } else {
+          body.innerHTML = trades.slice(0, 25).map(t => {
+            const ok = t.success;
+            const tme = t.executedAt ? new Date(t.executedAt).toLocaleTimeString() : '—';
+            return '<tr class="hover:bg-slate-800/40">' +
+              '<td class="px-3 py-1.5 text-slate-400">' + tme + '</td>' +
+              '<td class="px-3 py-1.5 font-mono text-xs">' + t.symbol + ' ' +
+              '<span class="text-emerald-400">' + t.buyExchange + '</span>→<span class="text-rose-400">' + t.sellExchange + '</span></td>' +
+              '<td class="px-3 py-1.5 text-right font-mono">' + fmt(t.baseQty, 6) + '</td>' +
+              '<td class="px-3 py-1.5 text-right font-mono ' + (ok && Number(t.netPnlQuote)>=0 ? 'text-emerald-400' : 'text-rose-400') + '">' +
+              (ok ? fmt(t.netPnlQuote, 4) : '—') + '</td>' +
+              '<td class="px-3 py-1.5 text-xs ' + (ok ? 'text-emerald-400' : 'text-slate-500') + '">' +
+              (ok ? 'OK' : (t.message || 'skip')) + '</td></tr>';
+          }).join('');
+        }
+      }
+    }
+
     function renderSnapshot(data) {
       if (!data) return;
       latestSnapshot = data;
@@ -401,6 +493,7 @@
 
       ensureFilterOptions(data);
       renderOpportunities(data.opportunities || []);
+      if (data.paper) renderPaper(data.paper);
 
       // books
       const books = data.bookTickers || {};
@@ -442,6 +535,14 @@
       $('filterMinNet').value = '0';
       $('filterFull').value = '';
       if (latestSnapshot) renderOpportunities(latestSnapshot.opportunities || []);
+    });
+
+    $('btnPaperReset')?.addEventListener('click', async () => {
+      try {
+        await fetch('/api/paper/reset', { method: 'POST' });
+        const r = await fetch('/api/snapshot');
+        if (r.ok) renderSnapshot(await r.json());
+      } catch (e) { console.error(e); }
     });
 
     $('btnPause').addEventListener('click', async () => {

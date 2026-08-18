@@ -10,6 +10,7 @@ public class ArbitrageWorker : BackgroundService
 {
     private readonly IMarketDataService _marketData;
     private readonly IOrderBookService _orderBooks;
+    private readonly IPaperExecutionService _paper;
     private readonly ArbitrageOptions _options;
     private readonly ArbitrageState _state;
     private readonly IHubContext<ArbitrageHub> _hub;
@@ -18,6 +19,7 @@ public class ArbitrageWorker : BackgroundService
     public ArbitrageWorker(
         IMarketDataService marketData,
         IOrderBookService orderBooks,
+        IPaperExecutionService paper,
         IOptions<ArbitrageOptions> options,
         ArbitrageState state,
         IHubContext<ArbitrageHub> hub,
@@ -25,6 +27,7 @@ public class ArbitrageWorker : BackgroundService
     {
         _marketData = marketData;
         _orderBooks = orderBooks;
+        _paper = paper;
         _options = options.Value;
         _state = state;
         _hub = hub;
@@ -40,12 +43,15 @@ public class ArbitrageWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation(
-            "ArbitrageWorker starting. Mode: {Mode} | Symbols: {Symbols} | Exchanges: {Exchanges}",
+            "ArbitrageWorker starting. Mode: {Mode} | Symbols: {Symbols} | Exchanges: {Exchanges} | PaperAuto={Auto}",
             _state.Mode,
             string.Join(", ", _options.NormalizedSymbols),
-            string.Join(", ", _options.NormalizedExchanges));
+            string.Join(", ", _options.NormalizedExchanges),
+            _options.PaperAutoExecute);
 
-        // Start WebSocket order books
+        _paper.Initialize(_options.NormalizedExchanges, _options.NormalizedSymbols);
+        PushPaperState();
+
         try
         {
             await _orderBooks.StartAsync(stoppingToken);
@@ -58,7 +64,6 @@ public class ArbitrageWorker : BackgroundService
             _state.SetError("Order books failed: " + ex.Message);
         }
 
-        // Wait a bit for first snapshots
         await Task.Delay(2500, stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -67,6 +72,7 @@ public class ArbitrageWorker : BackgroundService
             {
                 if (_state.IsPaused)
                 {
+                    PushPaperState();
                     await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
                     await Task.Delay(_options.ScanIntervalMs, stoppingToken);
                     continue;
@@ -88,10 +94,28 @@ public class ArbitrageWorker : BackgroundService
                 if (opportunities.Count > 0)
                 {
                     _logger.LogInformation("Found {Count} opportunity(ies)", opportunities.Count);
-                    foreach (var opp in opportunities.Take(5))
+                    foreach (var opp in opportunities.Take(3))
                         _logger.LogInformation("  → {Opportunity}", opp.ToString());
+
+                    if (_options.PaperTrading && _options.PaperAutoExecute)
+                    {
+                        // Best opportunity first
+                        foreach (var opp in opportunities)
+                        {
+                            if (_options.PaperRequireFullFill && !opp.FullyFilled)
+                                continue;
+
+                            var trade = _paper.TryExecute(opp);
+                            if (trade.Success)
+                            {
+                                _logger.LogInformation("Paper trade OK: {Msg}", trade.ToString());
+                                break; // one trade per scan cycle
+                            }
+                        }
+                    }
                 }
 
+                PushPaperState();
                 await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -110,5 +134,15 @@ public class ArbitrageWorker : BackgroundService
 
         await _orderBooks.StopAsync(stoppingToken);
         _logger.LogInformation("ArbitrageWorker stopped");
+    }
+
+    private void PushPaperState()
+    {
+        _state.UpdatePaper(
+            _paper.RealizedPnlQuote,
+            _paper.TradeCount,
+            _paper.SuccessCount,
+            _paper.GetRecentTrades(40),
+            _paper.GetBalances());
     }
 }

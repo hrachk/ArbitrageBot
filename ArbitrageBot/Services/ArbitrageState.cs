@@ -24,6 +24,15 @@ public class ArbitrageState
     public IReadOnlyDictionary<string, string> ConnectionStatus { get; private set; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    // Paper
+    public decimal PaperRealizedPnl { get; private set; }
+    public int PaperTradeCount { get; private set; }
+    public int PaperSuccessCount { get; private set; }
+    public IReadOnlyList<PaperTrade> PaperTrades { get; private set; } = [];
+    public IReadOnlyDictionary<string, Dictionary<string, decimal>> PaperBalances { get; private set; } =
+        new Dictionary<string, Dictionary<string, decimal>>(StringComparer.OrdinalIgnoreCase);
+    public PaperTrade? LastPaperTrade { get; private set; }
+
     public void UpdateScan(IReadOnlyList<ArbitrageOpportunity> opportunities, Dictionary<string, Dictionary<string, BookTicker>>? tickersBySymbol = null)
     {
         lock (_lock)
@@ -43,6 +52,25 @@ public class ArbitrageState
                         dict[ex] = ticker;
                 }
             }
+        }
+    }
+
+    public void UpdatePaper(
+        decimal realizedPnl,
+        int tradeCount,
+        int successCount,
+        IReadOnlyList<PaperTrade> trades,
+        IReadOnlyDictionary<string, Dictionary<string, decimal>> balances,
+        PaperTrade? lastTrade = null)
+    {
+        lock (_lock)
+        {
+            PaperRealizedPnl = realizedPnl;
+            PaperTradeCount = tradeCount;
+            PaperSuccessCount = successCount;
+            PaperTrades = trades;
+            PaperBalances = balances;
+            if (lastTrade != null) LastPaperTrade = lastTrade;
         }
     }
 
@@ -90,7 +118,7 @@ public class ArbitrageState
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,
                 connectionStatus = ConnectionStatus,
-                dataSource = "websocket+depth",
+                dataSource = "websocket+depth+paper",
                 opportunities = Opportunities.Select(o => new
                 {
                     o.Symbol,
@@ -113,7 +141,41 @@ public class ArbitrageState
                     sellSlippagePercent = o.SellSlippagePercent,
                     detectedAt = o.DetectedAt
                 }).ToList(),
-                bookTickers = books
+                bookTickers = books,
+                paper = new
+                {
+                    realizedPnl = PaperRealizedPnl,
+                    tradeCount = PaperTradeCount,
+                    successCount = PaperSuccessCount,
+                    balances = PaperBalances,
+                    trades = PaperTrades.Select(t => new
+                    {
+                        id = t.Id,
+                        executedAt = t.ExecutedAt,
+                        t.Symbol,
+                        t.BuyExchange,
+                        t.SellExchange,
+                        t.BaseQty,
+                        t.BuyVwap,
+                        t.SellVwap,
+                        t.NetPnlQuote,
+                        t.NetPnlPercent,
+                        t.Success,
+                        t.Message,
+                        t.QuoteSpent,
+                        t.QuoteReceived
+                    }).ToList(),
+                    lastTrade = LastPaperTrade == null ? null : new
+                    {
+                        LastPaperTrade.Symbol,
+                        LastPaperTrade.BuyExchange,
+                        LastPaperTrade.SellExchange,
+                        LastPaperTrade.NetPnlQuote,
+                        LastPaperTrade.Success,
+                        LastPaperTrade.Message,
+                        LastPaperTrade.ExecutedAt
+                    }
+                }
             };
         }
     }

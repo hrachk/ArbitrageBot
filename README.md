@@ -1,28 +1,36 @@
 # ArbitrageBot (.NET 10)
 
-Межбиржевой арбитражный сканер: WebSocket order books + depth-aware PnL + live Web UI.
+WebSocket order books + depth-aware arb scan + **Paper Execution Engine** + live UI.
 
-## Цепочка (roadmap)
+## Roadmap
 
 1. ✅ Live Web UI + SignalR  
 2. ✅ WebSocket order books  
 3. ✅ Depth-aware / slippage (VWAP)  
-4. ✅ **UI polish** (filters, pause/resume, spread chart)  
-5. ⬜ Paper Execution Engine  
-6. ⬜ API keys + risk manager  
+4. ✅ UI polish (filters, pause, chart)  
+5. ✅ **Paper Execution Engine**  
+6. ⬜ API keys + live risk  
 
-## Багфикс
+## Paper mode
 
-Списки `Symbols` / `Exchanges` больше не дублируются (убраны default list initializers + `NormalizedSymbols` / `NormalizedExchanges`).
+On each scan, if `PaperAutoExecute=true` and there is a qualifying opportunity:
 
-## UI
+1. Take best full-fill opp (optional `PaperRequireFullFill`)
+2. Check virtual balances: USDT on buy exchange, base asset on sell exchange
+3. Simulate fill at VWAP + fees
+4. Update balances, realized PnL, trade history
 
-- Pause / Resume scan (`POST /api/control/toggle`)
-- Фильтры: symbol, buy/sell exchange, min net %, full fill only
-- Chart: best net % history (Chart.js)
-- Depth-aware opportunities table + WS connection status
+**Starting inventory (default):**
+- each exchange: `10_000 USDT`
+- BTC `0.05`, ETH `0.5`, SOL `5` on each exchange
 
-## Запуск
+Cooldown between fills: `PaperCooldownMs` (default 8s).
+
+**UI:** Paper Portfolio balances, Paper Trades, Reset Paper button.
+
+**API:** `POST /api/paper/reset`
+
+## Run
 
 ```bash
 git pull origin Develop
@@ -31,14 +39,3 @@ dotnet run
 ```
 
 http://localhost:5050
-
-## Конфиг (`Arbitrage`)
-
-| Key | Default | Meaning |
-|-----|---------|---------|
-| Symbols | BTCUSDT… | пары |
-| Exchanges | Binance, Bybit, OKX | биржи |
-| QuoteSize | 500 | размер USDT для depth |
-| MinProfitPercent | 0.15 | мин. net после fees+slip |
-| ScanIntervalMs | 1500 | пересчёт |
-| PaperTrading | true | без реальных ордеров |

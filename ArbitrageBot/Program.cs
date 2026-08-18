@@ -3,6 +3,7 @@ using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
 using ArbitrageBot.Services;
 using CryptoClients.Net;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -12,7 +13,7 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("Starting ArbitrageBot Web (WebSocket order books)...");
+    Log.Information("Starting ArbitrageBot Web (Paper Execution)...");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +38,7 @@ try
     builder.Services.AddSingleton<ArbitrageState>();
     builder.Services.AddSingleton<IOrderBookService, OrderBookService>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
+    builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();
     builder.Services.AddHostedService<ArbitrageWorker>();
     builder.Services.AddSignalR();
 
@@ -64,6 +66,23 @@ try
         state.IsPaused = !state.IsPaused;
         return Results.Ok(new { isPaused = state.IsPaused });
     });
+
+    app.MapPost("/api/paper/reset", (
+        ArbitrageState state,
+        IPaperExecutionService paper,
+        IOptions<ArbitrageOptions> options) =>
+    {
+        var opt = options.Value;
+        paper.Reset(opt.NormalizedExchanges, opt.NormalizedSymbols);
+        state.UpdatePaper(
+            paper.RealizedPnlQuote,
+            paper.TradeCount,
+            paper.SuccessCount,
+            paper.GetRecentTrades(40),
+            paper.GetBalances());
+        return Results.Ok(new { reset = true, balances = paper.GetBalances() });
+    });
+
     app.MapFallbackToFile("index.html");
 
     await app.RunAsync();
