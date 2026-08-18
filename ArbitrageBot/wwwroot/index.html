@@ -83,6 +83,30 @@
       </div>
     </div>
 
+
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div class="card rounded-xl p-3">
+        <div class="text-[10px] uppercase text-slate-500 tracking-wider">Engine</div>
+        <div id="liveEngine" class="text-sm font-semibold text-cyan-300 mt-0.5">—</div>
+      </div>
+      <div class="card rounded-xl p-3">
+        <div class="text-[10px] uppercase text-slate-500 tracking-wider">Open hedges</div>
+        <div id="liveOpenCount" class="text-sm font-semibold text-violet-300 mt-0.5 font-mono">0</div>
+      </div>
+      <div class="card rounded-xl p-3">
+        <div class="text-[10px] uppercase text-slate-500 tracking-wider">Last action</div>
+        <div id="liveLastAction" class="text-xs text-slate-300 mt-0.5 truncate">Waiting…</div>
+      </div>
+      <div class="card rounded-xl p-3">
+        <div class="text-[10px] uppercase text-slate-500 tracking-wider">WS books</div>
+        <div id="liveWsOk" class="text-sm font-semibold text-emerald-400 mt-0.5">—</div>
+      </div>
+      <div class="card rounded-xl p-3">
+        <div class="text-[10px] uppercase text-slate-500 tracking-wider">Scan</div>
+        <div id="liveScanAge" class="text-sm font-mono text-slate-300 mt-0.5">—</div>
+      </div>
+    </div>
+
     <!-- Stats -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="card rounded-xl p-4">
@@ -135,6 +159,42 @@
       </div>
     </div>
 
+
+    
+    <!-- Open positions (futures hedges) -->
+    <div class="card rounded-xl overflow-hidden border-violet-500/20">
+      <div class="px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-semibold text-sm flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-violet-400 pulse-dot"></span>
+          Open Positions <span class="text-slate-500 font-normal">(live hedges)</span>
+        </h2>
+        <div class="text-xs text-slate-400 font-mono">
+          uPnL <span id="posUPnl" class="text-slate-300">—</span>
+          · lev <span id="posLev">—</span>x
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs text-slate-400 uppercase tracking-wider">
+              <th class="px-3 py-2">Symbol</th>
+              <th class="px-3 py-2">LONG</th>
+              <th class="px-3 py-2">SHORT</th>
+              <th class="px-3 py-2 text-right">Qty</th>
+              <th class="px-3 py-2 text-right">Entry L / S</th>
+              <th class="px-3 py-2 text-right">Mark L / S</th>
+              <th class="px-3 py-2 text-right">uPnL</th>
+              <th class="px-3 py-2 text-right">Width %</th>
+              <th class="px-3 py-2">Age</th>
+              <th class="px-3 py-2">Status</th>
+            </tr>
+          </thead>
+          <tbody id="openPosBody" class="divide-y divide-slate-800/80">
+            <tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">No open hedges — waiting for net edge</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <!-- Paper portfolio -->
     <div class="grid lg:grid-cols-5 gap-6">
@@ -461,6 +521,146 @@
           }).join('');
         }
       }
+    }
+
+    
+    function ageStr(iso) {
+      if (!iso) return '—';
+      const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (sec < 60) return sec + 's';
+      if (sec < 3600) return Math.floor(sec / 60) + 'm';
+      return Math.floor(sec / 3600) + 'h';
+    }
+
+    function renderFuturesLive(data) {
+      const fp = data.futuresPaper;
+      const mode = data.strategyMode || '';
+      const isFut = mode === 'FuturesCross';
+
+      if ($('liveEngine')) {
+        $('liveEngine').textContent = (mode || '—') + (data.isPaused ? ' · PAUSED' : ' · RUN');
+        $('liveEngine').className = 'text-sm font-semibold mt-0.5 ' + (data.isPaused ? 'text-amber-300' : 'text-cyan-300');
+      }
+
+      const st = data.connectionStatus || {};
+      const vals = Object.values(st);
+      const ok = vals.filter(v => /synced|book-ticker/i.test(String(v))).length;
+      if ($('liveWsOk')) {
+        $('liveWsOk').textContent = vals.length ? (ok + '/' + vals.length + ' up') : 'starting…';
+        $('liveWsOk').className = 'text-sm font-semibold mt-0.5 ' + (ok === vals.length && vals.length ? 'text-emerald-400' : 'text-amber-300');
+      }
+      if ($('liveScanAge')) {
+        $('liveScanAge').textContent = data.lastScanUtc ? ageStr(data.lastScanUtc) + ' ago' : '—';
+      }
+
+      if (!fp) {
+        if ($('liveOpenCount')) $('liveOpenCount').textContent = '0';
+        if ($('openPosBody')) {
+          $('openPosBody').innerHTML = '<tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">' +
+            (isFut ? 'No open hedges — waiting for net edge' : 'Spot mode — no futures positions') + '</td></tr>';
+        }
+        return;
+      }
+
+      const positions = fp.positions || [];
+      const trades = fp.trades || [];
+      if ($('liveOpenCount')) $('liveOpenCount').textContent = String(fp.openCount ?? positions.length);
+      if ($('posLev')) $('posLev').textContent = fp.leverage != null ? Number(fp.leverage) : '—';
+
+      // last action from newest trade
+      if ($('liveLastAction') && trades.length) {
+        const t = trades[0];
+        const when = t.openedAt || t.closedAt;
+        $('liveLastAction').textContent = (t.status || '') + ' ' + (t.symbol || '') +
+          ' L:' + (t.longExchange || '') + ' S:' + (t.shortExchange || '') +
+          (t.realizedPnlUsd != null ? (' pnl ' + Number(t.realizedPnlUsd).toFixed(2)) : '') +
+          ' · ' + ageStr(when);
+      } else if ($('liveLastAction')) {
+        $('liveLastAction').textContent = 'No trades yet';
+      }
+
+      // mark prices from bookTickers
+      const books = data.bookTickers || {};
+      let sumUpnl = 0;
+      const body = $('openPosBody');
+      if (!body) return;
+
+      if (!positions.length) {
+        body.innerHTML = '<tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">No open hedges — waiting for net edge ≥ min profit</td></tr>';
+        if ($('posUPnl')) $('posUPnl').textContent = '—';
+        return;
+      }
+
+      body.innerHTML = positions.map(p => {
+        const byEx = books[p.symbol] || {};
+        const longBook = byEx[p.longExchange] || {};
+        const shortBook = byEx[p.shortExchange] || {};
+        // mark for long: bid (exit), short: ask (cover)
+        const longMark = Number(longBook.bestBid || longBook.bestAsk || 0);
+        const shortMark = Number(shortBook.bestAsk || shortBook.bestBid || 0);
+        const qty = Number(p.baseQty || 0);
+        const longEntry = Number(p.longEntry || 0);
+        const shortEntry = Number(p.shortEntry || 0);
+        let upnl = 0;
+        if (longMark > 0 && shortMark > 0 && qty > 0) {
+          upnl = (longMark - longEntry) * qty + (shortEntry - shortMark) * qty;
+        }
+        sumUpnl += upnl;
+        const width = (longMark > 0 && shortMark > 0)
+          ? ((shortMark - longMark) / longMark * 100) : null;
+        const upnlCls = upnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+        return '<tr class="hover:bg-slate-800/40">' +
+          '<td class="px-3 py-2 font-mono text-cyan-300">' + p.symbol + '</td>' +
+          '<td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">' + p.longExchange + '</span></td>' +
+          '<td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400">' + p.shortExchange + '</span></td>' +
+          '<td class="px-3 py-2 text-right font-mono">' + fmt(qty, 6) + '</td>' +
+          '<td class="px-3 py-2 text-right font-mono text-slate-400">' + fmt(longEntry, 2) + ' / ' + fmt(shortEntry, 2) + '</td>' +
+          '<td class="px-3 py-2 text-right font-mono">' + fmt(longMark, 2) + ' / ' + fmt(shortMark, 2) + '</td>' +
+          '<td class="px-3 py-2 text-right font-mono ' + upnlCls + '">' + (upnl >= 0 ? '+' : '') + upnl.toFixed(4) + '</td>' +
+          '<td class="px-3 py-2 text-right font-mono text-slate-400">' + (width == null ? '—' : width.toFixed(3) + '%') + '</td>' +
+          '<td class="px-3 py-2 text-slate-400">' + ageStr(p.openedAt) + '</td>' +
+          '<td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300">OPEN</span></td>' +
+          '</tr>';
+      }).join('');
+
+      if ($('posUPnl')) {
+        $('posUPnl').textContent = (sumUpnl >= 0 ? '+' : '') + sumUpnl.toFixed(4);
+        $('posUPnl').className = sumUpnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      }
+
+      // also feed paper trades table from futures trades
+      const tradeBody = $('paperTradeBody');
+      if (tradeBody && trades.length) {
+        tradeBody.innerHTML = trades.slice(0, 30).map(t => {
+          const ok = t.isOpen || (t.status && String(t.status).startsWith('Closed'));
+          const tme = t.openedAt ? new Date(t.openedAt).toLocaleTimeString() : '—';
+          const pnl = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
+          return '<tr class="hover:bg-slate-800/40">' +
+            '<td class="px-3 py-1.5 text-slate-400">' + tme + '</td>' +
+            '<td class="px-3 py-1.5 font-mono text-xs">' + t.symbol +
+            ' <span class="text-emerald-400">L:' + t.longExchange + '</span>' +
+            ' <span class="text-rose-400">S:' + t.shortExchange + '</span></td>' +
+            '<td class="px-3 py-1.5 text-right font-mono">' + fmt(t.baseQty, 6) + '</td>' +
+            '<td class="px-3 py-1.5 text-right font-mono ' + (pnl != null && pnl >= 0 ? 'text-emerald-400' : 'text-rose-400') + '">' +
+            (pnl == null ? (t.isOpen ? 'open' : '—') : fmt(pnl, 4)) + '</td>' +
+            '<td class="px-3 py-1.5 text-xs ' + (t.isOpen ? 'text-violet-300' : 'text-slate-400') + '">' +
+            (t.status || '') + (t.message ? (' · ' + t.message) : '') + '</td></tr>';
+        }).join('');
+      }
+
+      // margin balances
+      if (fp.margin && $('paperBalances')) {
+        const lines = Object.entries(fp.margin).map(([ex, v]) =>
+          '<div><span class="text-cyan-300">' + ex + '</span> USDT:' + Number(v).toFixed(2) + '</div>');
+        $('paperBalances').innerHTML = lines.join('') || '—';
+      }
+      if ($('paperPnl') && fp.realizedPnl != null) {
+        const pnl = Number(fp.realizedPnl);
+        $('paperPnl').textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
+        $('paperPnl').className = pnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      }
+      if ($('paperFills')) $('paperFills').textContent = fp.openCount ?? 0;
+      if ($('paperAttempts')) $('paperAttempts').textContent = fp.tradeAttempts ?? 0;
     }
 
     function renderSnapshot(data) {
