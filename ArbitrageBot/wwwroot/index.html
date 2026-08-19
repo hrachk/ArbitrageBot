@@ -93,13 +93,18 @@
   </div>
 
   <!-- KPIs -->
-  <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+  <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
     <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Scans</div><div class="text-xl font-mono font-semibold" id="kpiScans">0</div></div>
     <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Сигналы</div><div class="text-xl font-mono font-semibold text-emerald-400" id="kpiOpp">0</div></div>
     <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Best net</div><div class="text-xl font-mono font-semibold" id="kpiBest">—</div></div>
     <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Paper PnL</div><div class="text-xl font-mono font-semibold" id="kpiPnl">0</div></div>
     <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Open hedges</div><div class="text-xl font-mono font-semibold text-violet-300" id="kpiOpen">0</div></div>
     <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Day PnL</div><div class="text-xl font-mono font-semibold" id="kpiDay">0</div></div>
+    <div class="card rounded-xl p-3 col-span-2 md:col-span-1 xl:col-span-2">
+      <div class="text-[10px] text-slate-500 uppercase">Маржа / сделку (paper)</div>
+      <div class="text-sm font-mono font-semibold text-slate-200" id="kpiMargin">—</div>
+      <div class="text-[10px] text-slate-500 mt-0.5" id="kpiMarginHint">notional/lev на каждую биржу</div>
+    </div>
   </div>
 
   <div id="exHealth" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
@@ -320,6 +325,15 @@ function renderSnapshot(data) {
   $('kpiMin').textContent = (data.minProfitPercent ?? 0) + '%';
   $('kpiSize').textContent = data.quoteSize != null ? Number(data.quoteSize) : '—';
   if (fp.leverage) $('kpiLev').textContent = fp.leverage + 'x';
+  const lev = Number(fp.leverage || 5);
+  const size = Number(data.quoteSize || 400);
+  const marginLeg = lev > 0 ? size / lev : size;
+  const usage = Number(fp.maxMarginUsagePercent || 0.15);
+  const maxNotional = Number(fp.maxNotionalUsd || 1500);
+  if ($('kpiMargin')) {
+    $('kpiMargin').textContent = marginLeg.toFixed(0) + ' USDT × 2 биржи = ' + (marginLeg*2).toFixed(0) + ' USDT';
+    $('kpiMarginHint').textContent = 'lev ' + lev + 'x · max notional ' + maxNotional + ' · max ' + Math.round(usage*100) + '% free margin/leg · still PAPER';
+  }
   if (fp.stopLossUsd != null) $('kpiStop').textContent = fp.stopLossUsd;
 
   const pnl = Number(fp.realizedPnl ?? fp.realizedPnlUsd ?? 0);

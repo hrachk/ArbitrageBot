@@ -56,13 +56,13 @@ public class ArbitrageOptions
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
 
     /// <summary>Max share of free margin on one exchange that a single new hedge may lock (0.25 = 25%).</summary>
-    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.25m;
+    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.15m;
     /// <summary>Force-close if unrealized PnL on a hedge drops below this (USD, negative).</summary>
     public decimal FuturesStopLossUsd { get; set; } = -40m;
     /// <summary>Stop opening new hedges if day realized PnL is below this.</summary>
     public decimal FuturesDailyLossLimitUsd { get; set; } = -150m;
     /// <summary>Refuse open if notional would exceed this (USD) even with leverage.</summary>
-    public decimal FuturesMaxNotionalUsd { get; set; } = 2500m;
+    public decimal FuturesMaxNotionalUsd { get; set; } = 1500m;
 
     /// <summary>Include expected funding over N funding intervals (usually 8h each) in net filter.</summary>
     public bool FuturesIncludeFunding { get; set; } = true;

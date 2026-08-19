@@ -155,6 +155,12 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         {
             yield return "GateIO";
             yield return "Gate.io";
+            yield return "Gate";
+        }
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Bitget";
+            yield return "BitGet";
         }
     }
 
