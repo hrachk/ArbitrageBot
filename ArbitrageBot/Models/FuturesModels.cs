@@ -3,8 +3,8 @@ namespace ArbitrageBot.Models;
 public record FuturesOpportunity
 {
     public required string Symbol { get; init; }
-    public required string LongExchange { get; init; }   // buy cheap
-    public required string ShortExchange { get; init; }  // sell rich
+    public required string LongExchange { get; init; }
+    public required string ShortExchange { get; init; }
     public decimal LongAskVwap { get; init; }
     public decimal ShortBidVwap { get; init; }
     public decimal LongAskTop { get; init; }
@@ -13,15 +13,25 @@ public record FuturesOpportunity
     public decimal BaseQty { get; init; }
     public bool FullyFilled { get; init; }
     public decimal GrossSpreadPercent { get; init; }
+    /// <summary>Open fees only (legacy view).</summary>
     public decimal NetSpreadPercent { get; init; }
+    /// <summary>Open+close taker fees both legs.</summary>
+    public decimal NetRoundTripPercent { get; init; }
+    /// <summary>Net after round-trip fees and expected funding over hold horizon.</summary>
+    public decimal NetAfterFundingPercent { get; init; }
     public decimal EstNetPnlUsd { get; init; }
     public decimal LongFeePercent { get; init; }
     public decimal ShortFeePercent { get; init; }
     public decimal SlippagePercent { get; init; }
+    public decimal? LongFundingRate { get; init; }
+    public decimal? ShortFundingRate { get; init; }
+    /// <summary>Expected funding PnL % over configured hold periods (positive = we receive).</summary>
+    public decimal ExpectedFundingPercent { get; init; }
     public DateTime DetectedAt { get; init; } = DateTime.UtcNow;
 
     public override string ToString() =>
-        $"{Symbol}: LONG {LongExchange}@{LongAskVwap:F2} / SHORT {ShortExchange}@{ShortBidVwap:F2} | net {NetSpreadPercent:F3}% (~{EstNetPnlUsd:F2} USD)";
+        $"{Symbol}: L {LongExchange}@{LongAskVwap:F2} / S {ShortExchange}@{ShortBidVwap:F2} | " +
+        $"RT {NetRoundTripPercent:F3}% fund {ExpectedFundingPercent:F3}% → {NetAfterFundingPercent:F3}%";
 }
 
 public record FuturesPaperTrade
@@ -55,4 +65,6 @@ public class FuturesPaperPosition
     public decimal ShortEntry { get; set; }
     public DateTime OpenedAt { get; set; }
     public Guid TradeId { get; set; }
+    public decimal UnrealizedPnlUsd { get; set; }
+    public decimal CurrentWidthPercent { get; set; }
 }

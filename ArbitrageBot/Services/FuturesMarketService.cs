@@ -16,6 +16,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 {
     private readonly IExchangeOrderBookFactory _factory;
     private readonly IExchangeSocketClient _socket;
+    private readonly IExchangeRestClient _rest;
     private readonly ActiveMarketContext _markets;
     private readonly ArbitrageOptions _options;
     private readonly ILogger<FuturesMarketService> _logger;
@@ -26,6 +27,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private readonly List<UpdateSubscription> _subs = [];
     private readonly object _subLock = new();
     private bool _started;
+    private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(10);
 
     public IReadOnlyDictionary<string, string> ConnectionStatus => _status;
     public bool IsReady => _started && _tickers.Count > 0;
@@ -33,12 +36,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public FuturesMarketService(
         IExchangeOrderBookFactory factory,
         IExchangeSocketClient socket,
+        IExchangeRestClient rest,
         ActiveMarketContext markets,
         IOptions<ArbitrageOptions> options,
         ILogger<FuturesMarketService> logger)
     {
         _factory = factory;
         _socket = socket;
+        _rest = rest;
         _markets = markets;
         _options = options.Value;
         _logger = logger;
@@ -226,8 +231,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         };
     }
 
-    public Task<IReadOnlyList<FuturesOpportunity>> ScanAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<FuturesOpportunity>> ScanAsync(CancellationToken ct = default)
     {
+        if (_options.FuturesIncludeFunding)
+            await RefreshFundingCacheAsync(ct);
+
         var list = new List<FuturesOpportunity>();
         var notional = _options.QuoteSize > 0 ? _options.QuoteSize : 500m;
 
@@ -260,17 +268,30 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var longFee = _options.EstimatedTakerFees.GetValueOrDefault(longEx, 0.05m);
                     var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(shortEx, 0.05m);
-                    // Perp taker often ~0.04-0.06; keep configurable. Open both legs.
                     var gross = (shortVwap - longVwap) / longVwap * 100m;
-                    var netPct = gross - longFee - shortFee;
-                    // Approximate close fees later; for open edge we use open fees only as threshold filter
-                    var longCost = longVwap * qty * (1 + longFee / 100m);
-                    var shortCredit = shortVwap * qty * (1 - shortFee / 100m);
-                    // For a hedge, "locked" edge at open is not fully realized until close;
-                    // EstNetPnl approximates edge if we could close at same mid — use half-spread proxy:
-                    var estPnl = (shortVwap - longVwap) * qty - longVwap * qty * (longFee / 100m) - shortVwap * qty * (shortFee / 100m);
+                    var netOpen = gross - longFee - shortFee;
+                    // Round-trip: open long+short + close long+short (4 taker touches)
+                    var netRt = gross - 2m * (longFee + shortFee);
 
-                    if (netPct < _options.MinProfitPercent) continue;
+                    decimal? frLong = GetCachedFunding(longEx, symbol);
+                    decimal? frShort = GetCachedFunding(shortEx, symbol);
+                    // Funding: positive rate => longs pay shorts. Hedge funding PnL % ≈ (FR_short - FR_long) * periods * 100
+                    var periods = _options.FuturesFundingPeriods > 0 ? _options.FuturesFundingPeriods : 1;
+                    decimal fundPct = 0;
+                    if (_options.FuturesIncludeFunding && frLong is not null && frShort is not null)
+                        fundPct = (frShort.Value - frLong.Value) * periods * 100m;
+
+                    var netAfterFund = netRt + fundPct;
+                    var thresholdMetric = _options.FuturesRequireRoundTripEdge
+                        ? (_options.FuturesIncludeFunding ? netAfterFund : netRt)
+                        : netOpen;
+
+                    var estPnl = (shortVwap - longVwap) * qty
+                        - longVwap * qty * (longFee / 100m) * 2m
+                        - shortVwap * qty * (shortFee / 100m) * 2m
+                        + notional * fundPct / 100m;
+
+                    if (thresholdMetric < _options.MinProfitPercent) continue;
 
                     list.Add(new FuturesOpportunity
                     {
@@ -285,18 +306,22 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         BaseQty = qty,
                         FullyFilled = buyFill.FullyFilled && sellFill.FullyFilled,
                         GrossSpreadPercent = gross,
-                        NetSpreadPercent = netPct,
+                        NetSpreadPercent = netOpen,
+                        NetRoundTripPercent = netRt,
+                        NetAfterFundingPercent = netAfterFund,
                         EstNetPnlUsd = estPnl,
                         LongFeePercent = longFee,
                         ShortFeePercent = shortFee,
-                        SlippagePercent = buyFill.SlippagePercent + sellFill.SlippagePercent
+                        SlippagePercent = buyFill.SlippagePercent + sellFill.SlippagePercent,
+                        LongFundingRate = frLong,
+                        ShortFundingRate = frShort,
+                        ExpectedFundingPercent = fundPct
                     });
                 }
             }
         }
 
-        return Task.FromResult<IReadOnlyList<FuturesOpportunity>>(
-            list.OrderByDescending(x => x.NetSpreadPercent).ToList());
+        return list.OrderByDescending(x => x.NetAfterFundingPercent).ToList();
     }
 
     public async Task StopAsync(CancellationToken ct = default)
@@ -315,6 +340,57 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     }
 
     public async ValueTask DisposeAsync() => await StopAsync();
+
+
+    private decimal? GetCachedFunding(string exchange, string symbol)
+    {
+        var key = $"{exchange}:{symbol}";
+        if (_fundingCache.TryGetValue(key, out var e) && DateTime.UtcNow - e.at < FundingCacheTtl)
+            return e.rate;
+        return null;
+    }
+
+    private async Task RefreshFundingCacheAsync(CancellationToken ct)
+    {
+        var need = false;
+        foreach (var symbol in _markets.Symbols)
+        foreach (var ex in _markets.Exchanges)
+        {
+            var key = $"{ex}:{symbol}";
+            if (!_fundingCache.TryGetValue(key, out var e) || DateTime.UtcNow - e.at >= FundingCacheTtl)
+            { need = true; break; }
+        }
+        if (!need) return;
+
+        foreach (var symbolStr in _markets.Symbols)
+        {
+            if (ct.IsCancellationRequested) break;
+            SharedSymbol symbol;
+            try { symbol = ParsePerp(symbolStr); }
+            catch { continue; }
+
+            try
+            {
+                var results = await _rest.GetFundingRateHistoryAsync(
+                    new GetFundingRateHistoryRequest(symbol),
+                    _markets.Exchanges,
+                    ct);
+
+                foreach (var r in results)
+                {
+                    if (!r.Success || r.Data == null || r.Data.Length == 0)
+                        continue;
+                    var last = r.Data.OrderByDescending(x => x.Timestamp).FirstOrDefault();
+                    if (last == null) continue;
+                    _fundingCache[$"{r.Exchange}:{symbolStr}"] = (last.FundingRate, DateTime.UtcNow);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Funding refresh failed for {S}", symbolStr);
+            }
+        }
+    }
 
     private static SharedSymbol ParsePerp(string symbol)
     {

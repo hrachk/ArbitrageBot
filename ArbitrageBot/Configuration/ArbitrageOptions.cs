@@ -51,6 +51,13 @@ public class ArbitrageOptions
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
 
+    /// <summary>Include expected funding over N funding intervals (usually 8h each) in net filter.</summary>
+    public bool FuturesIncludeFunding { get; set; } = true;
+    /// <summary>How many funding periods to assume while holding (default 1 ≈ one 8h window).</summary>
+    public int FuturesFundingPeriods { get; set; } = 1;
+    /// <summary>Use round-trip (open+close) fees for entry threshold.</summary>
+    public bool FuturesRequireRoundTripEdge { get; set; } = true;
+
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
 

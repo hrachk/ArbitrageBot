@@ -98,7 +98,7 @@ public class FuturesPaperService : IFuturesPaperService
                 OpenFeesUsd = openFees,
                 IsOpen = true,
                 Status = "Open",
-                Message = $"Hedge opened | net edge {opp.NetSpreadPercent:F3}%"
+                Message = $"Hedge opened | RT+fund {opp.NetAfterFundingPercent:F3}%"
             };
 
             _positions.Add(new FuturesPaperPosition
@@ -204,6 +204,31 @@ public class FuturesPaperService : IFuturesPaperService
     public IReadOnlyDictionary<string, decimal> GetMarginBalances()
     {
         lock (_lock) return _margin.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+
+    public void UpdateMarkToMarket(Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks)
+    {
+        lock (_lock)
+        {
+            decimal sum = 0;
+            foreach (var pos in _positions)
+            {
+                var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
+                if (marks == null) continue;
+                var (longBid, shortAsk) = marks.Value;
+                if (longBid <= 0 || shortAsk <= 0) continue;
+                // Close long at bid, cover short at ask
+                var longFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m) / 100m;
+                var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m) / 100m;
+                var longPnl = (longBid - pos.LongEntry) * pos.BaseQty - pos.LongEntry * pos.BaseQty * longFee - longBid * pos.BaseQty * longFee;
+                var shortPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty - pos.ShortEntry * pos.BaseQty * shortFee - shortAsk * pos.BaseQty * shortFee;
+                pos.UnrealizedPnlUsd = longPnl + shortPnl;
+                pos.CurrentWidthPercent = (shortAsk - longBid) / longBid * 100m;
+                sum += pos.UnrealizedPnlUsd;
+            }
+            UnrealizedHintUsd = sum;
+        }
     }
 
     private FuturesPaperTrade Fail(FuturesOpportunity opp, string msg) => new()

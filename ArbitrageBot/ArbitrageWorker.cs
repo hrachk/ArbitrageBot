@@ -143,7 +143,7 @@ public class ArbitrageWorker : BackgroundService
             GrossSpreadVwapPercent = o.GrossSpreadPercent,
             BuyFeePercent = o.LongFeePercent,
             SellFeePercent = o.ShortFeePercent,
-            NetProfitPercent = o.NetSpreadPercent,
+            NetProfitPercent = o.NetAfterFundingPercent,
             NetProfitQuote = o.EstNetPnlUsd,
             BuySlippagePercent = o.SlippagePercent / 2,
             SellSlippagePercent = o.SlippagePercent / 2
@@ -210,12 +210,21 @@ public class ArbitrageWorker : BackgroundService
 
     private void PushFuturesPaper()
     {
+        _futPaper.UpdateMarkToMarket((symbol, longEx, shortEx) =>
+        {
+            var books = _futMarket.GetBookTickers(symbol);
+            if (!books.TryGetValue(longEx, out var lb) || !books.TryGetValue(shortEx, out var sb))
+                return null;
+            return (lb.BestBid, sb.BestAsk);
+        });
+
         var trades = _futPaper.GetTrades(40);
         var positions = _futPaper.GetOpenPositions();
         var margin = _futPaper.GetMarginBalances();
         _state.FuturesPaper = new
         {
             realizedPnl = _futPaper.RealizedPnlUsd,
+            unrealizedPnl = _futPaper.UnrealizedHintUsd,
             openCount = _futPaper.OpenCount,
             tradeAttempts = _futPaper.TradeAttempts,
             leverage = _options.FuturesPaperLeverage,
@@ -228,6 +237,8 @@ public class ArbitrageWorker : BackgroundService
                 p.BaseQty,
                 p.LongEntry,
                 p.ShortEntry,
+                unrealizedPnl = p.UnrealizedPnlUsd,
+                currentWidthPercent = p.CurrentWidthPercent,
                 p.OpenedAt
             }).ToList(),
             trades = trades.Select(t => new
