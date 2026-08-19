@@ -86,6 +86,29 @@
       </div>
     </div>
 
+
+    <!-- How it works + exchange health -->
+    <div class="grid lg:grid-cols-2 gap-4">
+      <div class="card rounded-xl p-4 border-cyan-500/15">
+        <h2 class="text-sm font-semibold mb-2 text-cyan-300">Как работает бот (demo / paper)</h2>
+        <ol id="pipelineList" class="text-xs text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
+          <li>WebSocket: реальные цены perp со стаканов</li>
+          <li>VWAP на размер QuoteSize + комиссии (+ funding если REST ок)</li>
+          <li>Сигнал: LONG на дешёвой бирже, SHORT на дорогой</li>
+          <li>PAPER: виртуальная маржа, open/close — <b>без реальных ордеров</b></li>
+        </ol>
+        <p class="text-[11px] text-slate-500 mt-3">Реальные API keys для торговли ещё не подключены. Сейчас проверка логики на live-данных.</p>
+      </div>
+      <div class="card rounded-xl p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm font-semibold">Биржи (из конфига)</h2>
+          <span id="exCountLabel" class="text-xs text-slate-500">—</span>
+        </div>
+        <div id="exchangeHealth" class="space-y-2"></div>
+        <p class="text-[11px] text-slate-500 mt-2">Если биржа «error» — нет WS/котировок (geo/сеть). Скан идёт по живым биржам.</p>
+      </div>
+    </div>
+
     <!-- Pairs + margin -->
     <div class="grid lg:grid-cols-3 gap-4">
       <div class="card rounded-xl p-4 lg:col-span-2">
@@ -244,6 +267,43 @@ const chart = new Chart($('spreadChart'), {
   }
 });
 
+
+function renderExchangeHealth(data) {
+  const box = $('exchangeHealth');
+  if (!box) return;
+  const health = data.exchangeHealth || [];
+  const configured = data.exchanges || [];
+  $('exCountLabel') && ($('exCountLabel').textContent = configured.length + ' в settings');
+
+  const rows = health.length ? health : configured.map(name => ({ name, state: 'idle', liveStreams: 0, totalStreams: 0, hasQuotes: false, streams: [] }));
+  box.innerHTML = rows.map(h => {
+    const color = h.state === 'live' ? 'bg-emerald-500' : h.state === 'error' ? 'bg-rose-500' : h.state === 'connecting' ? 'bg-amber-500' : 'bg-slate-500';
+    const label = h.state === 'live' ? 'LIVE' : h.state === 'error' ? 'ERROR' : h.state === 'connecting' ? '…' : 'IDLE';
+    const detail = (h.liveStreams != null)
+      ? `${h.liveStreams}/${h.totalStreams||0} streams` + (h.hasQuotes ? ' · quotes' : '')
+      : '';
+    const streams = (h.streams || []).slice(0, 6).map(s =>
+      `<div class="text-[10px] text-slate-500 font-mono truncate">${s.key}: ${s.status}</div>`
+    ).join('');
+    return `<div class="rounded-lg border border-slate-700/80 p-2.5">
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-semibold text-sm">${h.name}</span>
+        <span class="text-[10px] font-bold px-2 py-0.5 rounded ${color}/20 text-white flex items-center gap-1">
+          <span class="w-1.5 h-1.5 rounded-full ${color}"></span>${label}
+        </span>
+      </div>
+      <div class="text-[11px] text-slate-400 mt-1">${detail}</div>
+      ${streams}
+    </div>`;
+  }).join('') || '<div class="text-slate-500 text-xs">Нет данных по биржам</div>';
+}
+
+function renderPipeline(data) {
+  const ol = $('pipelineList');
+  if (!ol || !data.pipeline) return;
+  ol.innerHTML = data.pipeline.map(s => `<li>${s.replace(/^[0-9]+\.\s*/, '')}</li>`).join('');
+}
+
 function fmt(n, d=4) {
   if (n==null || Number.isNaN(Number(n))) return '—';
   return Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -271,6 +331,8 @@ function volStr(v) {
 
 function render(data) {
   latest = data;
+  renderExchangeHealth(data);
+  renderPipeline(data);
   const isFut = (data.strategyMode || '') === 'FuturesCross';
   const fp = data.futuresPaper || null;
   const opps = data.opportunities || [];
@@ -364,15 +426,23 @@ function render(data) {
 
   // Margin
   const margin = fp?.margin || data.paper?.balances || {};
-  if (fp?.margin) {
-    $('marginList').innerHTML = Object.entries(fp.margin).map(([ex,v]) =>
-      `<div class="flex justify-between"><span class="text-cyan-300">${ex}</span><span>${fmt(v,2)} USDT</span></div>`).join('') || '—';
-  } else if (data.paper?.balances) {
-    $('marginList').innerHTML = Object.entries(data.paper.balances).map(([ex,assets]) => {
-      const usdt = assets.USDT ?? assets.usdt ?? Object.values(assets)[0];
-      return `<div class="flex justify-between"><span class="text-cyan-300">${ex}</span><span>${fmt(usdt,2)}</span></div>`;
-    }).join('');
-  } else $('marginList').innerHTML = '<span class="text-slate-500">—</span>';
+  // Margin: always list every exchange from settings
+  {
+    const conf = data.exchanges || [];
+    const m = (fp && fp.margin) ? fp.margin : {};
+    const rows = conf.length ? conf : Object.keys(m);
+    $('marginList').innerHTML = rows.length
+      ? rows.map(ex => {
+          let v = m[ex];
+          if (v == null) {
+            const k = Object.keys(m).find(x => x.toLowerCase() === String(ex).toLowerCase());
+            if (k) v = m[k];
+          }
+          const txt = v != null ? fmt(v, 2) + ' USDT' : 'ожидание…';
+          return `<div class="flex justify-between"><span class="text-cyan-300">${ex}</span><span>${txt}</span></div>`;
+        }).join('')
+      : '<span class="text-slate-500">—</span>';
+  }
 
   // Positions
   const positions = fp?.positions || [];

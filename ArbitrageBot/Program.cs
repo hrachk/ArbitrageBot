@@ -53,7 +53,11 @@ try
 
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
-    app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
+    app.MapGet("/api/health", (ArbitrageState state) =>
+    {
+        var snap = state.GetSnapshot();
+        return Results.Ok(new { status = "ok", utc = DateTime.UtcNow, mode = state.Mode, snapshot = snap });
+    });
 
     app.MapPost("/api/control/pause", (ArbitrageState state) =>
     {

@@ -100,6 +100,36 @@ public class ArbitrageState
     {
         lock (_lock)
         {
+            var health = Exchanges.Select(ex =>
+            {
+                var streams = ConnectionStatus
+                    .Where(kv => kv.Key.StartsWith(ex + ":", StringComparison.OrdinalIgnoreCase))
+                    .Select(kv => new { key = kv.Key, status = kv.Value })
+                    .ToList();
+                var live = streams.Count(s =>
+                    s.status.Contains("Synced", StringComparison.OrdinalIgnoreCase) ||
+                    s.status.Contains("book-ticker", StringComparison.OrdinalIgnoreCase));
+                var hasQuotes = BookTickers.Values.Any(byEx =>
+                    byEx.ContainsKey(ex) && byEx[ex].BestBid > 0 && byEx[ex].BestAsk > 0);
+                var anyFail = streams.Any(s =>
+                    s.status.StartsWith("failed", StringComparison.OrdinalIgnoreCase) ||
+                    s.status.StartsWith("error", StringComparison.OrdinalIgnoreCase) ||
+                    s.status.StartsWith("ticker-fail", StringComparison.OrdinalIgnoreCase));
+                string state =
+                    live > 0 || hasQuotes ? "live" :
+                    anyFail ? "error" :
+                    streams.Count == 0 ? "idle" : "connecting";
+                return new
+                {
+                    name = ex,
+                    state,
+                    liveStreams = live,
+                    totalStreams = streams.Count,
+                    hasQuotes,
+                    streams
+                };
+            }).ToList();
+
             var books = BookTickers.ToDictionary(
                 kv => kv.Key,
                 kv => kv.Value.ToDictionary(x => x.Key, x => new
@@ -132,6 +162,14 @@ public class ArbitrageState
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,
                 connectionStatus = ConnectionStatus,
+                exchangeHealth = health,
+                pipeline = new[]
+                {
+                    "1. WebSocket order books / tickers (реальные цены)",
+                    "2. Depth VWAP на QuoteSize + fees (+ funding если REST доступен)",
+                    "3. Сигнал: LONG дешёвый perp / SHORT дорогой perp",
+                    "4. PAPER: виртуальная маржа, open/close хеджа, без реальных ордеров"
+                },
                 dataSource = "websocket+depth+paper",
                 opportunities = Opportunities.Select(o => new
                 {

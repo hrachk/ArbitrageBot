@@ -54,6 +54,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         if (_started) return;
         _started = true;
 
+        // Pre-register every exchange:symbol so UI always lists all configured venues
+        foreach (var symbolStr in _markets.Symbols)
+        foreach (var exchange in _markets.Exchanges)
+            _status[$"{exchange}:{symbolStr}"] = "pending";
+
         foreach (var symbolStr in _markets.Symbols)
         {
             SharedSymbol symbol;
@@ -61,6 +66,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Skip symbol {S}", symbolStr);
+                foreach (var exchange in _markets.Exchanges)
+                    _status[$"{exchange}:{symbolStr}"] = "bad-symbol";
                 continue;
             }
 
@@ -69,10 +76,31 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 var key = $"{exchange}:{symbolStr}";
                 try
                 {
-                    var book = _factory.Create(exchange, symbol, _options.MaxDepthLevels > 0 ? _options.MaxDepthLevels : 20);
+                    var depth = _options.MaxDepthLevels > 0 ? _options.MaxDepthLevels : 20;
+                    // Try canonical name + common aliases (OKX vs Okx)
+                    ISymbolOrderBook? book = null;
+                    foreach (var name in ExchangeNameVariants(exchange))
+                    {
+                        try
+                        {
+                            book = _factory.Create(name, symbol, depth);
+                            if (book != null)
+                            {
+                                if (!string.Equals(name, exchange, StringComparison.OrdinalIgnoreCase))
+                                    _logger.LogInformation("OrderBook factory matched alias {Alias} for {Ex}", name, exchange);
+                                break;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Create book {Name}:{Sym} threw", name, symbolStr);
+                        }
+                    }
+
                     if (book == null)
                     {
-                        _status[key] = "no-factory";
+                        _status[key] = "no-factory→ticker";
+                        _logger.LogWarning("No futures order-book factory for {Key}, using book-ticker", key);
                         await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct);
                         continue;
                     }
@@ -103,6 +131,31 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 }
             }
         }
+
+        // Summary for logs / demo validation
+        foreach (var exchange in _markets.Exchanges)
+        {
+            var keys = _status.Where(kv => kv.Key.StartsWith(exchange + ":", StringComparison.OrdinalIgnoreCase)).ToList();
+            var live = keys.Count(kv =>
+                kv.Value.Contains("Synced", StringComparison.OrdinalIgnoreCase) ||
+                kv.Value.Contains("book-ticker", StringComparison.OrdinalIgnoreCase));
+            _logger.LogInformation("Exchange {Ex}: {Live}/{Total} streams live", exchange, live, keys.Count);
+        }
+    }
+
+    private static IEnumerable<string> ExchangeNameVariants(string exchange)
+    {
+        yield return exchange;
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Okx";
+            yield return "OKX";
+        }
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "GateIO";
+            yield return "Gate.io";
+        }
     }
 
     private async Task SubscribeBookTickerAsync(string exchange, SharedSymbol symbol, string symbolStr, CancellationToken ct)
@@ -110,33 +163,51 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         var key = $"{exchange}:{symbolStr}";
         try
         {
-            var result = await _socket.SubscribeToBookTickerUpdatesAsync(
-                exchange,
-                new SubscribeBookTickerRequest(symbol),
-                update =>
-                {
-                    var d = update.Data;
-                    _tickers[key] = new BookTicker
-                    {
-                        Exchange = exchange,
-                        Symbol = symbolStr,
-                        BestBid = d.BestBidPrice,
-                        BestAsk = d.BestAskPrice,
-                        BidQuantity = d.BestBidQuantity,
-                        AskQuantity = d.BestAskQuantity,
-                        Timestamp = DateTime.UtcNow
-                    };
-                    _status[key] = "book-ticker";
-                },
-                ct);
-
-            if (result.Success && result.Data != null)
+            string? lastErr = null;
+            UpdateSubscription? sub = null;
+            foreach (var name in ExchangeNameVariants(exchange))
             {
-                lock (_subLock) _subs.Add(result.Data);
+                try
+                {
+                    var result = await _socket.SubscribeToBookTickerUpdatesAsync(
+                        name,
+                        new SubscribeBookTickerRequest(symbol),
+                        update =>
+                        {
+                            var d = update.Data;
+                            _tickers[key] = new BookTicker
+                            {
+                                Exchange = exchange,
+                                Symbol = symbolStr,
+                                BestBid = d.BestBidPrice,
+                                BestAsk = d.BestAskPrice,
+                                BidQuantity = d.BestBidQuantity,
+                                AskQuantity = d.BestAskQuantity,
+                                Timestamp = DateTime.UtcNow
+                            };
+                            _status[key] = "book-ticker";
+                        },
+                        ct);
+                    if (result.Success && result.Data != null)
+                    {
+                        sub = result.Data;
+                        break;
+                    }
+                    lastErr = result.Error?.Message;
+                }
+                catch (Exception ex)
+                {
+                    lastErr = ex.Message;
+                }
+            }
+
+            if (sub != null)
+            {
+                lock (_subLock) _subs.Add(sub);
                 _status[key] = "book-ticker-sub";
             }
             else
-                _status[key] = $"ticker-fail:{result.Error?.Message}";
+                _status[key] = $"ticker-fail:{lastErr}";
         }
         catch (Exception ex)
         {
