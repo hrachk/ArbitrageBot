@@ -3,6 +3,7 @@ using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
 using ArbitrageBot.Services;
 using CryptoClients.Net;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -12,7 +13,7 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("Starting ArbitrageBot Web (WebSocket order books)...");
+    Log.Information("Starting ArbitrageBot Web (Paper Execution)...");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -35,8 +36,13 @@ try
     });
 
     builder.Services.AddSingleton<ArbitrageState>();
+    builder.Services.AddSingleton<ActiveMarketContext>();
+    builder.Services.AddSingleton<ISymbolDiscoveryService, SymbolDiscoveryService>();
+    builder.Services.AddSingleton<IFuturesMarketService, FuturesMarketService>();
+    builder.Services.AddSingleton<IFuturesPaperService, FuturesPaperService>();
     builder.Services.AddSingleton<IOrderBookService, OrderBookService>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
+    builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();
     builder.Services.AddHostedService<ArbitrageWorker>();
     builder.Services.AddSignalR();
 
@@ -48,6 +54,55 @@ try
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
     app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
+
+    app.MapPost("/api/control/pause", (ArbitrageState state) =>
+    {
+        state.IsPaused = true;
+        return Results.Ok(new { isPaused = true });
+    });
+    app.MapPost("/api/control/resume", (ArbitrageState state) =>
+    {
+        state.IsPaused = false;
+        return Results.Ok(new { isPaused = false });
+    });
+    app.MapPost("/api/control/toggle", (ArbitrageState state) =>
+    {
+        state.IsPaused = !state.IsPaused;
+        return Results.Ok(new { isPaused = state.IsPaused });
+    });
+
+    app.MapPost("/api/paper/reset", (
+        ArbitrageState state,
+        IPaperExecutionService paper,
+        IFuturesPaperService futPaper,
+        IOptions<ArbitrageOptions> options) =>
+    {
+        var opt = options.Value;
+        if (opt.IsFuturesCross)
+        {
+            futPaper.Reset(opt.NormalizedExchanges);
+            var margin = futPaper.GetMarginBalances();
+            state.UpdatePaper(
+                futPaper.RealizedPnlUsd,
+                futPaper.TradeAttempts,
+                futPaper.OpenCount,
+                [],
+                margin.ToDictionary(
+                    kv => kv.Key,
+                    kv => new Dictionary<string, decimal> { ["USDT"] = kv.Value },
+                    StringComparer.OrdinalIgnoreCase));
+            return Results.Ok(new { reset = true, mode = "FuturesCross", margin });
+        }
+        paper.Reset(opt.NormalizedExchanges, opt.NormalizedSymbols);
+        state.UpdatePaper(
+            paper.RealizedPnlQuote,
+            paper.TradeCount,
+            paper.SuccessCount,
+            paper.GetRecentTrades(40),
+            paper.GetBalances());
+        return Results.Ok(new { reset = true, mode = "SpotInventory", balances = paper.GetBalances() });
+    });
+
     app.MapFallbackToFile("index.html");
 
     await app.RunAsync();

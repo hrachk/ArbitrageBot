@@ -4,40 +4,65 @@ public class ArbitrageOptions
 {
     public const string SectionName = "Arbitrage";
 
-    /// <summary>
-    /// Trading symbols to monitor (e.g. BTCUSDT, ETHUSDT)
-    /// </summary>
-    public List<string> Symbols { get; set; } = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+    /// <summary>SpotInventory | FuturesCross</summary>
+    public string StrategyMode { get; set; } = "FuturesCross";
 
-    /// <summary>
-    /// Minimum net profit after fees (in percent). Example: 0.15 means 0.15%
-    /// </summary>
-    public decimal MinProfitPercent { get; set; } = 0.15m;
+    public List<string> Symbols { get; set; } = [];
+    public List<string> Exchanges { get; set; } = [];
 
-    /// <summary>
-    /// How often to scan for opportunities (milliseconds)
-    /// </summary>
-    public int ScanIntervalMs { get; set; } = 2000;
-
-    /// <summary>
-    /// Paper trading mode - no real orders
-    /// </summary>
+    public decimal MinProfitPercent { get; set; } = 0.08m;
+    public int ScanIntervalMs { get; set; } = 1500;
     public bool PaperTrading { get; set; } = true;
 
-    /// <summary>
-    /// Exchanges to use (must match CryptoClients.Net names)
-    /// </summary>
-    public List<string> Exchanges { get; set; } = ["Binance", "Bybit", "OKX"];
-
-    /// <summary>
-    /// Estimated taker fee per exchange (percent). Used for profit calculation.
-    /// </summary>
-    public Dictionary<string, decimal> EstimatedTakerFees { get; set; } = new()
+    public Dictionary<string, decimal> EstimatedTakerFees { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Binance"] = 0.10m,
-        ["Bybit"] = 0.10m,
-        ["OKX"] = 0.10m,
-        ["Bitget"] = 0.10m,
-        ["GateIo"] = 0.10m
+        ["Binance"] = 0.05m,
+        ["Bybit"] = 0.055m,
+        ["OKX"] = 0.05m,
+        ["Bitget"] = 0.06m,
+        ["GateIo"] = 0.05m
     };
+
+    public decimal QuoteSize { get; set; } = 500m;
+    public int MaxDepthLevels { get; set; } = 20;
+
+    public bool PaperAutoExecute { get; set; } = true;
+    public decimal PaperStartingQuote { get; set; } = 10_000m;
+    public decimal PaperStartingBaseDefault { get; set; } = 0.05m;
+    public Dictionary<string, decimal> PaperStartingBaseUnits { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["BTC"] = 0.05m,
+        ["ETH"] = 0.5m,
+        ["SOL"] = 5m
+    };
+    public int PaperCooldownMs { get; set; } = 8000;
+    public bool PaperRequireFullFill { get; set; } = true;
+
+    public bool DynamicSymbols { get; set; } = true;
+    public int DynamicTopN { get; set; } = 6;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 10_000_000m;
+    public string DynamicQuoteAsset { get; set; } = "USDT";
+    public int DynamicRefreshMinutes { get; set; } = 60;
+
+    // Futures paper
+    public decimal FuturesPaperLeverage { get; set; } = 2m;
+    public int FuturesMaxOpenPositions { get; set; } = 3;
+    public int FuturesMaxHoldMinutes { get; set; } = 30;
+    /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
+    public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
+
+    public bool IsFuturesCross =>
+        string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> NormalizedSymbols =>
+        Symbols.Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim().ToUpperInvariant())
+            .Distinct()
+            .ToList();
+
+    public IReadOnlyList<string> NormalizedExchanges =>
+        Exchanges.Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 }

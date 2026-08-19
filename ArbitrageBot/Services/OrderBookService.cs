@@ -6,6 +6,7 @@ using CryptoExchange.Net.Objects.Sockets;
 using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
 
+
 namespace ArbitrageBot.Services;
 
 /// <summary>
@@ -17,6 +18,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
     private readonly IExchangeOrderBookFactory _orderBookFactory;
     private readonly IExchangeSocketClient _socketClient;
     private readonly ArbitrageOptions _options;
+    private readonly ActiveMarketContext _markets;
     private readonly ILogger<OrderBookService> _logger;
 
     private readonly ConcurrentDictionary<string, ISymbolOrderBook> _books = new(StringComparer.OrdinalIgnoreCase);
@@ -35,11 +37,13 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
         IExchangeOrderBookFactory orderBookFactory,
         IExchangeSocketClient socketClient,
         IOptions<ArbitrageOptions> options,
+        ActiveMarketContext markets,
         ILogger<OrderBookService> logger)
     {
         _orderBookFactory = orderBookFactory;
         _socketClient = socketClient;
         _options = options.Value;
+        _markets = markets;
         _logger = logger;
     }
 
@@ -48,7 +52,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
         if (_started) return;
         _started = true;
 
-        foreach (var symbolStr in _options.Symbols)
+        foreach (var symbolStr in _markets.Symbols)
         {
             SharedSymbol symbol;
             try { symbol = ParseSymbol(symbolStr); }
@@ -58,7 +62,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
                 continue;
             }
 
-            foreach (var exchange in _options.Exchanges)
+            foreach (var exchange in _markets.Exchanges)
             {
                 var key = $"{exchange}:{symbolStr}";
                 try
@@ -173,7 +177,7 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
     public Dictionary<string, BookTicker> GetBookTickers(string symbol)
     {
         var result = new Dictionary<string, BookTicker>(StringComparer.OrdinalIgnoreCase);
-        foreach (var exchange in _options.Exchanges)
+        foreach (var exchange in _markets.Exchanges)
         {
             var key = $"{exchange}:{symbol}";
             if (_bookTickers.TryGetValue(key, out var t))
@@ -190,6 +194,90 @@ public class OrderBookService : IOrderBookService, IAsyncDisposable
 
         return book.Bids?.Take(levels).Select(x => new OrderBookLevelSnapshot(x.Price, x.Quantity)).ToList()
                ?? [];
+    }
+
+
+    public FillEstimate EstimateFill(string symbol, string exchange, decimal quoteAmount, bool isBuy)
+    {
+        if (quoteAmount <= 0)
+            return FillEstimate.Fail("quoteAmount must be > 0");
+
+        var key = $"{exchange}:{symbol}";
+
+        // Prefer full depth from local order book
+        if (_books.TryGetValue(key, out var book))
+        {
+            var levels = isBuy
+                ? book.Asks?.Select(x => (x.Price, x.Quantity)).ToList()
+                : book.Bids?.Select(x => (x.Price, x.Quantity)).ToList();
+
+            if (levels == null || levels.Count == 0)
+                return FillEstimate.Fail("empty book");
+
+            return WalkLevels(levels, quoteAmount, isBuy);
+        }
+
+        // Fallback: only top of book from book ticker
+        if (_bookTickers.TryGetValue(key, out var t))
+        {
+            var price = isBuy ? t.BestAsk : t.BestBid;
+            var qty = isBuy ? t.AskQuantity : t.BidQuantity;
+            if (price <= 0 || qty <= 0)
+                return FillEstimate.Fail("no top-of-book");
+
+            return WalkLevels([(price, qty)], quoteAmount, isBuy);
+        }
+
+        return FillEstimate.Fail("no data");
+    }
+
+    private static FillEstimate WalkLevels(IReadOnlyList<(decimal Price, decimal Quantity)> levels, decimal quoteAmount, bool isBuy)
+    {
+        decimal remainingQuote = quoteAmount;
+        decimal filledBase = 0;
+        decimal filledQuote = 0;
+        decimal top = levels[0].Price;
+
+        foreach (var (price, qty) in levels)
+        {
+            if (price <= 0 || qty <= 0) continue;
+            if (remainingQuote <= 0) break;
+
+            var levelQuote = price * qty;
+            if (levelQuote <= remainingQuote)
+            {
+                filledBase += qty;
+                filledQuote += levelQuote;
+                remainingQuote -= levelQuote;
+            }
+            else
+            {
+                var takeBase = remainingQuote / price;
+                filledBase += takeBase;
+                filledQuote += remainingQuote;
+                remainingQuote = 0;
+            }
+        }
+
+        if (filledBase <= 0 || filledQuote <= 0)
+            return FillEstimate.Fail("insufficient liquidity");
+
+        var vwap = filledQuote / filledBase;
+        var fully = remainingQuote <= quoteAmount * 0.001m; // 0.1% tolerance
+        var slip = top > 0
+            ? (isBuy ? (vwap - top) / top * 100m : (top - vwap) / top * 100m)
+            : 0m;
+
+        return new FillEstimate
+        {
+            Success = true,
+            VwapPrice = vwap,
+            FilledBaseQty = filledBase,
+            FilledQuoteQty = filledQuote,
+            FullyFilled = fully,
+            TopOfBookPrice = top,
+            SlippagePercent = slip < 0 ? 0 : slip
+        };
     }
 
     public async Task StopAsync(CancellationToken ct = default)
