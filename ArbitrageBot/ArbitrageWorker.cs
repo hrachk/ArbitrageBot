@@ -273,9 +273,16 @@ public class ArbitrageWorker : BackgroundService
     {
         IReadOnlyList<DiscoveredSymbol> discovered;
         if (_options.DynamicSymbols)
-            discovered = await _discovery.DiscoverAsync(_markets.Exchanges, ct);
+        {
+            var discResult = await _discovery.DiscoverAsync(_markets.Exchanges, ct);
+            discovered = discResult.Symbols;
+            _state.DiscoverySource = discResult.Source;
+            _state.DiscoveryMessage = discResult.Message;
+        }
         else
         {
+            _state.DiscoverySource = "fixed";
+            _state.DiscoveryMessage = "DynamicSymbols=false — список из конфига";
             discovered = _options.NormalizedSymbols.Select(s => new DiscoveredSymbol
             {
                 Symbol = s,

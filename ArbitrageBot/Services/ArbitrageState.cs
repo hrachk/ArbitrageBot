@@ -19,6 +19,8 @@ public class ArbitrageState
     public object? FuturesPaper { get; set; }
     public bool DynamicSymbols { get; set; }
     public IReadOnlyList<object> DiscoveredSymbols { get; set; } = [];
+    public string DiscoverySource { get; set; } = "config-fallback";
+    public string? DiscoveryMessage { get; set; }
 
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -124,6 +126,8 @@ public class ArbitrageState
                 futuresPaper = FuturesPaper,
                 dynamicSymbols = DynamicSymbols,
                 discoveredSymbols = DiscoveredSymbols,
+                discoverySource = DiscoverySource,
+                discoveryMessage = DiscoveryMessage,
                 scanCount = ScanCount,
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,
