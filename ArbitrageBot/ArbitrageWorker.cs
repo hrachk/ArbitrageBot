@@ -229,6 +229,8 @@ public class ArbitrageWorker : BackgroundService
             tradeAttempts = _futPaper.TradeAttempts,
             leverage = _options.FuturesPaperLeverage,
             margin,
+            maxHoldMinutes = _options.FuturesMaxHoldMinutes,
+            closeBelowNetPercent = _options.FuturesCloseBelowNetPercent,
             positions = positions.Select(p => new
             {
                 p.Symbol,
@@ -239,7 +241,9 @@ public class ArbitrageWorker : BackgroundService
                 p.ShortEntry,
                 unrealizedPnl = p.UnrealizedPnlUsd,
                 currentWidthPercent = p.CurrentWidthPercent,
-                p.OpenedAt
+                entryWidthPercent = p.EntryWidthPercent,
+                openedAt = p.OpenedAt,
+                holdSeconds = (int)(DateTime.UtcNow - p.OpenedAt).TotalSeconds
             }).ToList(),
             trades = trades.Select(t => new
             {

@@ -65,6 +65,7 @@ public class FuturesPaperPosition
     public decimal ShortEntry { get; set; }
     public DateTime OpenedAt { get; set; }
     public Guid TradeId { get; set; }
+    public decimal EntryWidthPercent { get; set; }
     public decimal UnrealizedPnlUsd { get; set; }
     public decimal CurrentWidthPercent { get; set; }
 }

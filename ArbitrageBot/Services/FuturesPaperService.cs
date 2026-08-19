@@ -110,7 +110,10 @@ public class FuturesPaperService : IFuturesPaperService
                 LongEntry = opp.LongAskVwap,
                 ShortEntry = opp.ShortBidVwap,
                 OpenedAt = trade.OpenedAt,
-                TradeId = trade.Id
+                TradeId = trade.Id,
+                EntryWidthPercent = opp.LongAskVwap > 0
+                    ? (opp.ShortBidVwap - opp.LongAskVwap) / opp.LongAskVwap * 100m
+                    : 0m
             });
 
             _trades.Insert(0, trade);
@@ -139,21 +142,25 @@ public class FuturesPaperService : IFuturesPaperService
                 // Close: sell long at bid, buy back short at ask
                 var exitSpreadPct = (longBid - shortAsk) / shortAsk * 100m; // usually negative when converged
                 // Entry locked edge roughly (shortEntry - longEntry); exit cost is crossing
-                var feeRate = 0.05m; // approx; detailed fees on close
-                var closeFees = longBid * pos.BaseQty * (feeRate / 100m) + shortAsk * pos.BaseQty * (feeRate / 100m);
+                var longFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
+                var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
+                var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
                 var pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
                           + (longBid - pos.LongEntry) * pos.BaseQty
                           - closeFees;
 
-                // Close if spread collapsed (short no longer premium) or max hold
-                var stillWide = (pos.ShortEntry - pos.LongEntry) / pos.LongEntry * 100m;
                 var currentWidth = (shortAsk > 0 && longBid > 0)
                     ? (shortAsk - longBid) / longBid * 100m
                     : 0m;
 
                 var holdMin = _options.FuturesMaxHoldMinutes > 0 ? _options.FuturesMaxHoldMinutes : 30;
                 var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
-                var converged = currentWidth <= closeWhenNetBelowPercent;
+
+                // Converged: width below configured threshold OR shrunk to <= 40% of entry width
+                var threshold = closeWhenNetBelowPercent;
+                var shrunkALot = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.4m;
+                var belowAbs = currentWidth <= threshold;
+                var converged = belowAbs || shrunkALot;
 
                 if (!converged && !timedOut) continue;
 
