@@ -45,11 +45,20 @@ public class ArbitrageOptions
     public int DynamicRefreshMinutes { get; set; } = 60;
 
     // Futures paper
-    public decimal FuturesPaperLeverage { get; set; } = 2m;
+    public decimal FuturesPaperLeverage { get; set; } = 5m;
     public int FuturesMaxOpenPositions { get; set; } = 3;
     public int FuturesMaxHoldMinutes { get; set; } = 30;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
+
+    /// <summary>Max share of free margin on one exchange that a single new hedge may lock (0.25 = 25%).</summary>
+    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.25m;
+    /// <summary>Force-close if unrealized PnL on a hedge drops below this (USD, negative).</summary>
+    public decimal FuturesStopLossUsd { get; set; } = -40m;
+    /// <summary>Stop opening new hedges if day realized PnL is below this.</summary>
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -150m;
+    /// <summary>Refuse open if notional would exceed this (USD) even with leverage.</summary>
+    public decimal FuturesMaxNotionalUsd { get; set; } = 2500m;
 
     /// <summary>Include expected funding over N funding intervals (usually 8h each) in net filter.</summary>
     public bool FuturesIncludeFunding { get; set; } = true;

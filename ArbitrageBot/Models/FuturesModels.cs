@@ -68,4 +68,7 @@ public class FuturesPaperPosition
     public decimal EntryWidthPercent { get; set; }
     public decimal UnrealizedPnlUsd { get; set; }
     public decimal CurrentWidthPercent { get; set; }
+    public decimal LockedMarginUsd { get; set; }
+    public decimal Leverage { get; set; }
 }
+

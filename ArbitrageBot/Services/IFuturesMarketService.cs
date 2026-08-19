@@ -22,6 +22,7 @@ public interface IFuturesPaperService
     IReadOnlyDictionary<string, decimal> GetMarginBalances();
     decimal RealizedPnlUsd { get; }
     decimal UnrealizedHintUsd { get; set; }
+    decimal DailyRealizedPnlUsd { get; }
     void UpdateMarkToMarket(Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks);
     int OpenCount { get; }
     int TradeAttempts { get; }

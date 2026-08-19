@@ -21,6 +21,8 @@ public class FuturesPaperService : IFuturesPaperService
 
     public decimal RealizedPnlUsd { get; private set; }
     public decimal UnrealizedHintUsd { get; set; }
+    public decimal DailyRealizedPnlUsd { get; private set; }
+    private DateTime _dayUtc = DateTime.UtcNow.Date;
     public int OpenCount { get { lock (_lock) return _positions.Count; } }
     public int TradeAttempts { get; private set; }
 
@@ -44,6 +46,8 @@ public class FuturesPaperService : IFuturesPaperService
             _trades.Clear();
             RealizedPnlUsd = 0;
             UnrealizedHintUsd = 0;
+            DailyRealizedPnlUsd = 0;
+            _dayUtc = DateTime.UtcNow.Date;
             TradeAttempts = 0;
             _lastOpenUtc = DateTime.MinValue;
             _logger.LogInformation("Futures paper margin initialized: {Start} USDT x {N} exchanges", start, _margin.Count);
@@ -72,7 +76,24 @@ public class FuturesPaperService : IFuturesPaperService
             if (_positions.Any(p => p.Symbol.Equals(opp.Symbol, StringComparison.OrdinalIgnoreCase)))
                 return Fail(opp, "Already open on symbol");
 
-            var leverage = _options.FuturesPaperLeverage > 0 ? _options.FuturesPaperLeverage : 2m;
+            // Day rollover for daily loss limit
+            if (DateTime.UtcNow.Date != _dayUtc)
+            {
+                _dayUtc = DateTime.UtcNow.Date;
+                DailyRealizedPnlUsd = 0;
+            }
+
+            var dayLimit = _options.FuturesDailyLossLimitUsd;
+            if (dayLimit < 0 && DailyRealizedPnlUsd <= dayLimit)
+                return Fail(opp, $"Daily loss limit {dayLimit:F0} USDT hit ({DailyRealizedPnlUsd:F2})");
+
+            var leverage = _options.FuturesPaperLeverage > 0 ? _options.FuturesPaperLeverage : 5m;
+            if (leverage > 10m) leverage = 10m; // hard cap for paper safety
+
+            var notionalCap = _options.FuturesMaxNotionalUsd > 0 ? _options.FuturesMaxNotionalUsd : 2500m;
+            if (opp.NotionalUsd > notionalCap)
+                return Fail(opp, $"Notional {opp.NotionalUsd:F0} > max {notionalCap:F0}");
+
             var marginEach = opp.NotionalUsd / leverage;
             if (marginEach <= 0) marginEach = opp.NotionalUsd;
 
@@ -80,6 +101,14 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Low margin on {opp.LongExchange}");
             if (!_margin.TryGetValue(opp.ShortExchange, out var shortBal) || shortBal < marginEach)
                 return Fail(opp, $"Low margin on {opp.ShortExchange}");
+
+            // Per-venue usage cap: do not lock more than X% of current free margin in one hedge leg
+            var usage = _options.FuturesMaxMarginUsagePercent > 0 ? _options.FuturesMaxMarginUsagePercent : 0.25m;
+            if (usage > 1m) usage = 1m;
+            if (marginEach > longBal * usage)
+                return Fail(opp, $"Margin leg > {usage:P0} free on {opp.LongExchange}");
+            if (marginEach > shortBal * usage)
+                return Fail(opp, $"Margin leg > {usage:P0} free on {opp.ShortExchange}");
 
             var openFees = opp.LongAskVwap * opp.BaseQty * (opp.LongFeePercent / 100m)
                            + opp.ShortBidVwap * opp.BaseQty * (opp.ShortFeePercent / 100m);
@@ -113,14 +142,16 @@ public class FuturesPaperService : IFuturesPaperService
                 TradeId = trade.Id,
                 EntryWidthPercent = opp.LongAskVwap > 0
                     ? (opp.ShortBidVwap - opp.LongAskVwap) / opp.LongAskVwap * 100m
-                    : 0m
+                    : 0m,
+                LockedMarginUsd = marginEach,
+                Leverage = leverage
             });
 
             _trades.Insert(0, trade);
             Trim();
             _lastOpenUtc = DateTime.UtcNow;
-            _logger.LogInformation("FUT PAPER OPEN {Sym} L:{L} S:{S} qty={Q:F6} edge={E:F3}%",
-                opp.Symbol, opp.LongExchange, opp.ShortExchange, opp.BaseQty, opp.NetSpreadPercent);
+            _logger.LogInformation("FUT PAPER OPEN {Sym} L:{L} S:{S} qty={Q:F6} lev={Lev}x margin={M:F2} edge={E:F3}%",
+                opp.Symbol, opp.LongExchange, opp.ShortExchange, opp.BaseQty, leverage, marginEach, opp.NetSpreadPercent);
             return trade;
         }
     }
@@ -156,21 +187,34 @@ public class FuturesPaperService : IFuturesPaperService
                 var holdMin = _options.FuturesMaxHoldMinutes > 0 ? _options.FuturesMaxHoldMinutes : 30;
                 var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
 
-                // Converged: width below configured threshold OR shrunk to <= 40% of entry width
+                // Converged: width below threshold OR shrunk to <= 40% of entry width
                 var threshold = closeWhenNetBelowPercent;
                 var shrunkALot = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.4m;
                 var belowAbs = currentWidth <= threshold;
                 var converged = belowAbs || shrunkALot;
 
-                if (!converged && !timedOut) continue;
+                // Risk: force close on stop-loss (unrealized)
+                pos.UnrealizedPnlUsd = pnl; // approximate mark with current exit prices
+                var stop = _options.FuturesStopLossUsd;
+                var stopHit = stop < 0 && pnl <= stop;
 
-                var leverage = _options.FuturesPaperLeverage > 0 ? _options.FuturesPaperLeverage : 2m;
-                var marginEach = pos.LongEntry * pos.BaseQty / leverage;
+                if (!converged && !timedOut && !stopHit) continue;
+
+                var reason = stopHit ? "stop-loss" : timedOut ? "timeout" : "converge";
+                var marginEach = pos.LockedMarginUsd > 0
+                    ? pos.LockedMarginUsd
+                    : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
 
                 _margin.AddOrUpdate(pos.LongExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
                 _margin.AddOrUpdate(pos.ShortExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
 
                 RealizedPnlUsd += pnl;
+                if (DateTime.UtcNow.Date != _dayUtc)
+                {
+                    _dayUtc = DateTime.UtcNow.Date;
+                    DailyRealizedPnlUsd = 0;
+                }
+                DailyRealizedPnlUsd += pnl;
                 _positions.Remove(pos);
 
                 var trade = _trades.FirstOrDefault(t => t.Id == pos.TradeId);
@@ -185,14 +229,19 @@ public class FuturesPaperService : IFuturesPaperService
                         CloseFeesUsd = closeFees,
                         RealizedPnlUsd = pnl,
                         IsOpen = false,
-                        Status = timedOut ? "Closed(timeout)" : "Closed(converge)",
-                        Message = $"PnL {pnl:F4} USD | width {currentWidth:F3}%"
+                        Status = reason switch
+                        {
+                            "stop-loss" => "Closed(stop)",
+                            "timeout" => "Closed(timeout)",
+                            _ => "Closed(converge)"
+                        },
+                        Message = $"PnL {pnl:F4} USD | width {currentWidth:F3}% | {reason}"
                     };
                 }
 
                 closed++;
-                _logger.LogInformation("FUT PAPER CLOSE {Sym} pnl={Pnl:F4} reason={R}",
-                    pos.Symbol, pnl, timedOut ? "timeout" : "converge");
+                _logger.LogInformation("FUT PAPER CLOSE {Sym} pnl={Pnl:F4} reason={R} lev={Lev}x",
+                    pos.Symbol, pnl, reason, pos.Leverage > 0 ? pos.Leverage : 5m);
             }
             return closed;
         }
