@@ -449,6 +449,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             try { await kv.Value.StopAsync(); } catch { /* ignore */ }
         }
         _books.Clear();
+        _tickers.Clear();
+        _status.Clear();
         List<UpdateSubscription> subs;
         lock (_subLock) { subs = _subs.ToList(); _subs.Clear(); }
         foreach (var s in subs)

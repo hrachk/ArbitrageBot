@@ -19,6 +19,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ArbitrageState _state;
     private readonly IHubContext<ArbitrageHub> _hub;
     private readonly ILogger<ArbitrageWorker> _logger;
+    private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
 
     public ArbitrageWorker(
         IMarketDataService spotMarket,
@@ -60,6 +61,7 @@ public class ArbitrageWorker : BackgroundService
         _markets.SetExchanges(_options.NormalizedExchanges);
         _state.Exchanges = _markets.Exchanges;
         await RefreshSymbolsAsync(stoppingToken);
+        _lastSymbolRefreshUtc = DateTime.UtcNow;
 
         _logger.LogInformation(
             "Start | Strategy={Strat} | Mode={Mode} | Symbols={Sym} | Ex={Ex}",
@@ -85,6 +87,14 @@ public class ArbitrageWorker : BackgroundService
         {
             try
             {
+                // Periodic symbol universe refresh (config DynamicRefreshMinutes)
+                var refreshMin = _options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0;
+                if (_options.DynamicSymbols && refreshMin > 0 &&
+                    (DateTime.UtcNow - _lastSymbolRefreshUtc).TotalMinutes >= refreshMin)
+                {
+                    await TryRefreshUniverseAsync(stoppingToken);
+                }
+
                 if (_state.IsPaused)
                 {
                     PushSnapshotExtras();
@@ -338,4 +348,49 @@ public class ArbitrageWorker : BackgroundService
             d.ExchangeCount
         }).ToList();
     }
+
+    private async Task TryRefreshUniverseAsync(CancellationToken ct)
+    {
+        try
+        {
+            var before = _markets.Symbols.ToList();
+            await RefreshSymbolsAsync(ct);
+            _lastSymbolRefreshUtc = DateTime.UtcNow;
+            var after = _markets.Symbols.ToList();
+
+            var same = before.Count == after.Count &&
+                       before.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                             .SequenceEqual(after.OrderBy(x => x, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+
+            _logger.LogInformation(
+                "Symbol refresh ({Src}): [{Before}] → [{After}] | changed={Changed}",
+                _state.DiscoverySource,
+                string.Join(",", before),
+                string.Join(",", after),
+                !same);
+
+            if (same)
+                return;
+
+            if (_options.IsFuturesCross)
+            {
+                _logger.LogInformation("Restarting futures books for new symbol set…");
+                await _futMarket.StopAsync(ct);
+                await _futMarket.StartAsync(ct);
+            }
+            else
+            {
+                _logger.LogInformation("Restarting spot books for new symbol set…");
+                await _spotBooks.StopAsync(ct);
+                await _spotBooks.StartAsync(ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Periodic symbol refresh failed — keeping previous set");
+            _lastSymbolRefreshUtc = DateTime.UtcNow;
+            _state.DiscoveryMessage = "refresh error: " + ex.Message;
+        }
+    }
+
 }
