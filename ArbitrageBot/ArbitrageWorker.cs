@@ -51,8 +51,8 @@ public class ArbitrageWorker : BackgroundService
         _state.QuoteSize = _options.QuoteSize;
         _state.DynamicSymbols = _options.DynamicSymbols;
         _state.StrategyNote = _options.IsFuturesCross
-            ? "Futures cross-exchange: LONG perpetual on cheaper venue + SHORT on richer venue. Only USDT margin — no coin transfers."
-            : "Spot inventory arb: buy/sell using pre-funded balances on each exchange. No transfers.";
+            ? "FuturesCross (realistic paper): LONG cheap perp + SHORT rich perp. Round-trip fees + funding. Majors BTC/ETH/BNB excluded — mid-alts only. Margin only, no transfers."
+            : "Spot inventory arb: buy cheap / sell rich with pre-funded balances.";
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -151,6 +151,11 @@ public class ArbitrageWorker : BackgroundService
 
         _state.UpdateScan(mapped, tickersBySymbol);
         _state.SetConnectionStatus(_futMarket.ConnectionStatus);
+
+        var depthMap = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sym in _markets.Symbols.Take(10))
+            depthMap[sym] = _futMarket.GetDepth(sym, 18);
+        _state.OrderBookDepth = depthMap;
 
         // Close converged hedges first
         _futPaper.TryCloseConverged((symbol, longEx, shortEx) =>
@@ -316,7 +321,7 @@ public class ArbitrageWorker : BackgroundService
 
         var symbols = discovered.Select(d => d.Symbol).ToList();
         if (symbols.Count == 0)
-            symbols = ["BTCUSDT", "ETHUSDT"];
+            symbols = ["DOGEUSDT", "ADAUSDT", "SUIUSDT", "NEARUSDT"];
 
         // Futures: prefer fewer highly liquid names
         if (_options.IsFuturesCross && symbols.Count > _options.DynamicTopN)

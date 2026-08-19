@@ -8,6 +8,8 @@ public interface IFuturesMarketService
     Task StopAsync(CancellationToken ct = default);
     Task<IReadOnlyList<FuturesOpportunity>> ScanAsync(CancellationToken ct = default);
     Dictionary<string, BookTicker> GetBookTickers(string symbol);
+    /// <summary>Top N bids/asks per exchange for a symbol (price, qty).</summary>
+    Dictionary<string, object> GetDepth(string symbol, int levels = 12);
     IReadOnlyDictionary<string, string> ConnectionStatus { get; }
     bool IsReady { get; }
 }

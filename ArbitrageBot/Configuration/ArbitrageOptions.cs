@@ -43,6 +43,10 @@ public class ArbitrageOptions
     public decimal DynamicMinQuoteVolumeUsd { get; set; } = 10_000_000m;
     public string DynamicQuoteAsset { get; set; } = "USDT";
     public int DynamicRefreshMinutes { get; set; } = 60;
+    /// <summary>Skip these base assets (majors with near-zero cross-exchange edge).</summary>
+    public List<string> ExcludeMajorBases { get; set; } = ["BTC", "ETH", "BNB"];
+    /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
+    public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
     // Futures paper
     public decimal FuturesPaperLeverage { get; set; } = 5m;

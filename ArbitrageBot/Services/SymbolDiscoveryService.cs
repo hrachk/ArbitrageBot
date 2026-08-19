@@ -11,18 +11,21 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     private readonly ArbitrageOptions _options;
     private readonly ILogger<SymbolDiscoveryService> _logger;
 
-    private static readonly HashSet<string> PreferredBases = new(StringComparer.OrdinalIgnoreCase)
+    // Mid-liquid movers — not BTC/ETH majors
+    private static readonly HashSet<string> PreferredAlts = new(StringComparer.OrdinalIgnoreCase)
     {
-        "BTC", "ETH", "SOL", "XRP", "BNB", "DOGE", "ADA", "AVAX", "LINK", "DOT",
-        "LTC", "BCH", "ATOM", "NEAR", "APT", "ARB", "OP", "SUI", "TON", "TRX",
-        "PEPE", "WIF", "FIL", "INJ", "SEI"
+        "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "LTC", "ATOM", "NEAR",
+        "APT", "ARB", "OP", "SUI", "TON", "TRX", "FIL", "INJ", "SEI", "TIA",
+        "WLD", "PEPE", "WIF", "RENDER", "FET", "AAVE", "UNI", "ENA", "JUP", "STRK"
     };
 
-    /// <summary>Highly liquid USDT-M perps present on Binance/Bybit/OKX — used when REST volume discovery fails (geo).</summary>
-    private static readonly string[] CuratedFuturesUsdt =
+    private static readonly string[] CuratedAltFutures =
     [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
-        "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT"
+        "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT",
+        "NEARUSDT", "ARBUSDT", "OPUSDT", "INJUSDT", "APTUSDT",
+        "SEIUSDT", "TIAUSDT", "WIFUSDT", "FILUSDT", "ATOMUSDT",
+        "LTCUSDT", "XRPUSDT", "SOLUSDT", "TONUSDT", "DOTUSDT",
+        "RENDERUSDT", "FETUSDT", "PEPEUSDT"
     ];
 
     public SymbolDiscoveryService(
@@ -35,13 +38,21 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         _logger = logger;
     }
 
+    private HashSet<string> ExcludedBases =>
+        new((_options.ExcludeMajorBases is { Count: > 0 }
+                ? _options.ExcludeMajorBases
+                : ["BTC", "ETH", "BNB"]),
+            StringComparer.OrdinalIgnoreCase);
+
     public async Task<DiscoveryResult> DiscoverAsync(
         IReadOnlyList<string> exchanges,
         CancellationToken ct = default)
     {
-        var topN = _options.DynamicTopN > 0 ? _options.DynamicTopN : 8;
+        var topN = _options.DynamicTopN > 0 ? _options.DynamicTopN : 10;
         var minVol = _options.DynamicMinQuoteVolumeUsd;
+        var maxVol = _options.DynamicMaxQuoteVolumeUsd > 0 ? _options.DynamicMaxQuoteVolumeUsd : 800_000_000m;
         var quote = (_options.DynamicQuoteAsset ?? "USDT").ToUpperInvariant();
+        var excluded = ExcludedBases;
 
         var volumes = new Dictionary<string, Dictionary<string, decimal>>(StringComparer.OrdinalIgnoreCase);
         var bases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -51,7 +62,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         {
             if (_options.IsFuturesCross)
             {
-                _logger.LogInformation("Discovery: futures tickers on {Ex}", string.Join(",", exchanges));
+                _logger.LogInformation("Discovery: futures tickers on {Ex} (exclude majors {Maj})",
+                    string.Join(",", exchanges), string.Join(",", excluded));
                 var fut = await _rest.GetFuturesTickersAsync(new GetTickersRequest(), exchanges, ct);
                 foreach (var exResult in fut)
                 {
@@ -62,61 +74,46 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
                     }
                     okExchanges.Add(exResult.Exchange);
                     foreach (var t in exResult.Data)
-                        ConsiderTicker(exResult.Exchange, t.SharedSymbol, t.LastPrice, t.Volumes, null, null, quote, volumes, bases);
+                        ConsiderTicker(exResult.Exchange, t.SharedSymbol, t.LastPrice, t.Volumes, quote, excluded, volumes, bases);
                 }
             }
 
-            // Always try spot volumes as supplemental ranking signal
-            _logger.LogInformation("Discovery: spot tickers on {Ex}", string.Join(",", exchanges));
+            _logger.LogInformation("Discovery: spot tickers (supplemental ranking)");
             var spot = await _rest.GetSpotTickersAsync(new GetTickersRequest(), exchanges, ct);
             foreach (var exResult in spot)
             {
-                if (!exResult.Success || exResult.Data == null)
-                {
-                    _logger.LogWarning("Spot tickers failed {Ex}: {Err}", exResult.Exchange, exResult.Error?.Message);
-                    continue;
-                }
+                if (!exResult.Success || exResult.Data == null) continue;
                 okExchanges.Add(exResult.Exchange);
                 foreach (var t in exResult.Data)
-                    ConsiderTicker(exResult.Exchange, t.SharedSymbol, t.LastPrice, t.Volumes, null, null, quote, volumes, bases);
+                    ConsiderTicker(exResult.Exchange, t.SharedSymbol, t.LastPrice, t.Volumes, quote, excluded, volumes, bases);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Symbol discovery REST error");
-            return FallbackResult("REST exception: " + ex.Message);
+            return FallbackResult("REST error: " + ex.Message);
         }
 
         if (volumes.Count == 0 || okExchanges.Count == 0)
-            return FallbackResult("автоподбор не получил объёмы (REST/geo) — используется список из конфига / curated");
+            return FallbackResult("автоподбор без объёмов (REST/geo) — curated mid-alts");
 
-        // Prefer pairs on ALL configured exchanges; else on all exchanges that responded
-        var required = exchanges.Count;
-        var ranked = Rank(volumes, bases, required, minVol, topN);
+        var ranked = Rank(volumes, bases, exchanges.Count, minVol, maxVol, topN);
         if (ranked.Count == 0 && okExchanges.Count >= 2)
-        {
-            _logger.LogWarning("No symbols on all {N} exchanges; relaxing to responding set ({Ok})",
-                required, string.Join(",", okExchanges));
-            ranked = Rank(volumes, bases, okExchanges.Count, minVol, topN, okExchanges);
-        }
-
-        // Soften volume filter if still empty
+            ranked = Rank(volumes, bases, okExchanges.Count, minVol, maxVol, topN, okExchanges);
         if (ranked.Count == 0)
-            ranked = Rank(volumes, bases, Math.Min(required, okExchanges.Count), 0, topN, okExchanges.Count >= 2 ? okExchanges : null);
+            ranked = Rank(volumes, bases, Math.Min(2, okExchanges.Count), minVol * 0.5m, maxVol * 2, topN, okExchanges);
 
         if (ranked.Count == 0)
-            return FallbackResult("объёмы пришли, но пересечение пар пустое — fallback");
+            return FallbackResult("пересечение mid-alt пар пустое — curated");
 
-        _logger.LogInformation("Discovered {Count} via REST: {List}",
+        _logger.LogInformation("Discovered {Count} mid-alts: {List}",
             ranked.Count, string.Join(", ", ranked.Select(r => $"{r.Symbol}({Fmt(r.MedianQuoteVolume)})")));
 
         return new DiscoveryResult
         {
             Symbols = ranked,
-            Source = okExchanges.Count < exchanges.Count ? "partial-dynamic" : "dynamic",
-            Message = okExchanges.Count < exchanges.Count
-                ? $"объёмы с {okExchanges.Count}/{exchanges.Count} бирж"
-                : $"топ-{ranked.Count} по median quote volume"
+            Source = okExchanges.Count < exchanges.Count ? "partial-dynamic-alts" : "dynamic-alts",
+            Message = $"исключены {string.Join("/", excluded)}; топ-{ranked.Count} по объёму"
         };
     }
 
@@ -125,6 +122,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         Dictionary<string, string> bases,
         int minExchangeCount,
         decimal minVol,
+        decimal maxVol,
         int topN,
         HashSet<string>? onlyExchanges = null)
     {
@@ -139,39 +137,35 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             if (byEx.Count < minExchangeCount) continue;
             var vols = byEx.Values.OrderBy(v => v).ToList();
             var median = vols[vols.Count / 2];
-            if (median < minVol) continue;
-            list.Add(Make(symbol, bases, byEx, median));
+            if (median < minVol || median > maxVol) continue;
+
+            var baseAsset = bases.GetValueOrDefault(symbol, "");
+            list.Add(new DiscoveredSymbol
+            {
+                Symbol = symbol,
+                BaseAsset = baseAsset,
+                QuoteAsset = "USDT",
+                MedianQuoteVolume = median,
+                ExchangeCount = byEx.Count,
+                Exchanges = byEx.Keys.ToList()
+            });
         }
 
+        // Prefer known liquid alts, then by volume (sweet spot: high but not ultra-major)
         return list
-            .OrderByDescending(d => PreferredBases.Contains(d.BaseAsset) ? 1 : 0)
+            .OrderByDescending(d => PreferredAlts.Contains(d.BaseAsset) ? 1 : 0)
             .ThenByDescending(d => d.MedianQuoteVolume)
             .Take(topN)
             .ToList();
     }
 
-    private static DiscoveredSymbol Make(
-        string symbol,
-        Dictionary<string, string> bases,
-        Dictionary<string, decimal> byEx,
-        decimal median) => new()
-    {
-        Symbol = symbol,
-        BaseAsset = bases.GetValueOrDefault(symbol, symbol),
-        QuoteAsset = "USDT",
-        MedianQuoteVolume = median,
-        ExchangeCount = byEx.Count,
-        Exchanges = byEx.Keys.ToList()
-    };
-
-    private static void ConsiderTicker(
+    private void ConsiderTicker(
         string exchange,
         SharedSymbol? shared,
         decimal? lastPrice,
         SharedOrderQuantity? volumes,
-        decimal? quoteVolume,
-        decimal? volume,
         string quote,
+        HashSet<string> excluded,
         Dictionary<string, Dictionary<string, decimal>> volumesMap,
         Dictionary<string, string> bases)
     {
@@ -180,12 +174,9 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         if (string.IsNullOrEmpty(baseAsset) || !quoteAsset.Equals(quote, StringComparison.OrdinalIgnoreCase))
             return;
         if (IsJunk(baseAsset)) return;
+        if (excluded.Contains(baseAsset)) return;
 
         var vol = volumes?.GetQuantityInQuoteAsset(lastPrice) ?? 0;
-#pragma warning disable CS0618
-        if (vol <= 0 && quoteVolume is > 0) vol = quoteVolume.Value;
-        if (vol <= 0 && volume is > 0 && lastPrice is > 0) vol = volume.Value * lastPrice.Value;
-#pragma warning restore CS0618
         if (vol <= 0) return;
 
         var symbol = $"{baseAsset.ToUpperInvariant()}{quote}";
@@ -217,37 +208,29 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     private DiscoveryResult FallbackResult(string reason)
     {
         _logger.LogWarning("Discovery fallback: {Reason}", reason);
+        var excluded = ExcludedBases;
+        var topN = _options.DynamicTopN > 0 ? _options.DynamicTopN : 10;
 
-        List<string> symbols;
-        string source;
-
-        if (_options.IsFuturesCross)
+        // Config symbols first (already mid-alts), pad from curated alts — never inject BTC/ETH
+        var symbols = new List<string>();
+        foreach (var s in _options.Symbols ?? [])
         {
-            // Curated liquid perps, then intersect with config if user fixed a short list
-            var curated = CuratedFuturesUsdt.Take(_options.DynamicTopN > 0 ? _options.DynamicTopN : 8).ToList();
-            if (_options.Symbols is { Count: > 0 })
-            {
-                // Prefer config order, pad from curated
-                symbols = _options.Symbols.Select(s => s.ToUpperInvariant()).Distinct().ToList();
-                foreach (var c in curated)
-                    if (!symbols.Contains(c) && symbols.Count < (_options.DynamicTopN > 0 ? _options.DynamicTopN : 8))
-                        symbols.Add(c);
-                source = "config+curated-futures";
-            }
-            else
-            {
-                symbols = curated;
-                source = "curated-futures";
-            }
+            var u = s.ToUpperInvariant();
+            var b = u.EndsWith("USDT") ? u[..^4] : u;
+            if (excluded.Contains(b)) continue;
+            if (!symbols.Contains(u)) symbols.Add(u);
         }
-        else
+        foreach (var c in CuratedAltFutures)
         {
-            symbols = (_options.Symbols?.Count > 0 ? _options.Symbols : ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
-                .Select(s => s.ToUpperInvariant()).Distinct().ToList();
-            source = "config-fallback";
+            if (symbols.Count >= topN) break;
+            var b = c.EndsWith("USDT") ? c[..^4] : c;
+            if (excluded.Contains(b)) continue;
+            if (!symbols.Contains(c)) symbols.Add(c);
         }
+        if (symbols.Count == 0)
+            symbols = CuratedAltFutures.Take(topN).ToList();
 
-        var list = symbols.Select(s => new DiscoveredSymbol
+        var list = symbols.Take(topN).Select(s => new DiscoveredSymbol
         {
             Symbol = s,
             BaseAsset = s.EndsWith("USDT") ? s[..^4] : s,
@@ -260,8 +243,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         return new DiscoveryResult
         {
             Symbols = list,
-            Source = source,
-            Message = reason
+            Source = "curated-alts",
+            Message = reason + " | без BTC/ETH/BNB"
         };
     }
 }

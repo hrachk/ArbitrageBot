@@ -24,6 +24,7 @@ public class ArbitrageState
 
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, object> OrderBookDepth { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public long ScanCount { get; private set; }
     public long OpportunitiesFoundTotal { get; private set; }
@@ -194,6 +195,7 @@ public class ArbitrageState
                     detectedAt = o.DetectedAt
                 }).ToList(),
                 bookTickers = books,
+                orderBookDepth = OrderBookDepth,
                 paper = new
                 {
                     realizedPnl = PaperRealizedPnl,

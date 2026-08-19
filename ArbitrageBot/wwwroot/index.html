@@ -3,350 +3,330 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ArbitrageBot — Futures Cross</title>
+  <title>ArbitrageBot — FuturesCross Paper (realistic)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>tailwind.config={theme:{extend:{fontFamily:{sans:['Inter','system-ui'],mono:['JetBrains Mono','monospace']}}}}</script>
   <style>
-    body{background:#0b0f19;color:#e5e7eb}
-    .card{background:linear-gradient(145deg,#111827 0%,#0f172a 100%);border:1px solid #1e293b}
+    body{background:#070a12;color:#e5e7eb}
+    .card{background:linear-gradient(165deg,#0e1522 0%,#0a101c 100%);border:1px solid #1e293b}
+    .card:hover{border-color:#2a3a52}
     .pulse-dot{animation:pulse 2s infinite}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-    table th{position:sticky;top:0;background:#111827;z-index:5}
-    select,input[type=number]{background:#0f172a;border:1px solid #334155;color:#e5e7eb;border-radius:.5rem;padding:.35rem .6rem;font-size:.8rem}
+    table th{position:sticky;top:0;background:#0e1522;z-index:5}
+    select,input[type=number]{background:#0b1220;border:1px solid #334155;color:#e5e7eb;border-radius:.5rem;padding:.35rem .6rem;font-size:.8rem}
+    .ob-grid{display:grid;grid-template-columns:1fr 56px 1fr;gap:2px;font-family:'JetBrains Mono',monospace;font-size:11px}
+    .ob-bar{position:relative;overflow:hidden;border-radius:2px;padding:2px 4px;min-height:18px}
+    .ob-bar span{position:relative;z-index:1}
+    .ob-bar::before{content:'';position:absolute;inset:0;opacity:.18}
+    .ob-bid::before{background:#10b981;right:0;left:auto;width:var(--w,0%)}
+    .ob-ask::before{background:#f43f5e;left:0;width:var(--w,0%)}
+    tr.sel{background:rgba(6,182,212,.1);outline:1px solid rgba(6,182,212,.25)}
+    ::-webkit-scrollbar{width:8px;height:8px}
+    ::-webkit-scrollbar-thumb{background:#334155;border-radius:4px}
+    .tag{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid}
   </style>
 </head>
 <body class="font-sans min-h-screen">
-  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-50">
-    <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white text-sm">AB</div>
-        <div>
-          <h1 class="text-lg font-semibold">ArbitrageBot</h1>
-          <p class="text-xs text-slate-400">Futures cross · LONG cheap + SHORT rich · без переводов</p>
-        </div>
+<header class="border-b border-slate-800/80 bg-slate-950/95 backdrop-blur sticky top-0 z-50">
+  <div class="max-w-[1920px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow-lg shadow-cyan-900/40">AB</div>
+      <div>
+        <h1 class="text-lg font-semibold tracking-tight">ArbitrageBot</h1>
+        <p class="text-[11px] text-slate-400">FuturesCross · mid-alts · paper с правилами как в live · без BTC/ETH</p>
       </div>
-      <div class="flex flex-wrap items-center gap-2 text-sm">
-        <button id="btnPaperReset" class="px-3 py-1.5 rounded-lg text-xs border border-slate-600 text-slate-300 hover:bg-slate-800">Reset Paper</button>
-        <button id="btnPause" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-300">Pause</button>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 text-sm">
+      <button id="btnPause" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">Pause</button>
+      <button id="btnPaperReset" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-600 text-slate-300 hover:bg-slate-800">Reset Paper</button>
+      <div class="flex items-center gap-2 px-2">
         <span id="connDot" class="w-2.5 h-2.5 rounded-full bg-slate-500 pulse-dot"></span>
-        <span id="connText" class="text-xs text-slate-400">Connecting…</span>
-        <span id="modeBadge" class="px-2 py-1 rounded text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">PAPER</span>
-        <span id="pauseBadge" class="hidden px-2 py-1 rounded text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">PAUSED</span>
+        <span id="connText" class="text-slate-400 text-xs">…</span>
+      </div>
+      <span id="modeBadge" class="tag border-amber-500/40 text-amber-300 bg-amber-500/10">PAPER</span>
+      <span id="pauseBadge" class="hidden tag border-rose-500/40 text-rose-300 bg-rose-500/10">PAUSED</span>
+      <span class="text-slate-500 font-mono text-[11px]" id="lastScan">—</span>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-[1920px] mx-auto px-4 py-5 space-y-4">
+  <!-- Strategy strip -->
+  <div class="card rounded-xl p-4">
+    <div class="flex flex-wrap gap-4 justify-between">
+      <div class="max-w-3xl">
+        <div class="text-[10px] uppercase tracking-wider text-cyan-400/80 mb-1">Стратегия · реалистичный paper</div>
+        <p id="strategyNote" class="text-sm text-slate-200 leading-relaxed">
+          LONG perp на дешёвой бирже + SHORT на дорогой. Только USDT-маржа, без переводов монет.
+          Net считается после <b>round-trip fees</b> + depth/slippage + funding. BTC/ETH/BNB исключены.
+        </p>
+        <p id="discoveryMsg" class="text-xs text-amber-400/90 mt-2"></p>
+      </div>
+      <div class="text-right text-xs text-slate-400 space-y-1 font-mono">
+        <div>Режим: <span id="strategyMode" class="text-amber-300 font-semibold">PAPER</span></div>
+        <div>Пары: <span id="strategyDynamic" class="text-cyan-300">mid-alts</span></div>
+        <div>Порог net: <span id="kpiMin" class="text-slate-200">—</span> · size <span id="kpiSize">—</span></div>
+        <div>Плечо: <span id="kpiLev" class="text-violet-300">5x</span> · stop <span id="kpiStop">—</span></div>
       </div>
     </div>
-  </header>
+    <div class="mt-3 flex flex-wrap gap-2" id="discoveredList"></div>
+  </div>
 
-  <main class="max-w-[1600px] mx-auto px-4 py-5 space-y-4">
+  <!-- KPIs -->
+  <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+    <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Scans</div><div class="text-xl font-mono font-semibold" id="kpiScans">0</div></div>
+    <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Сигналы</div><div class="text-xl font-mono font-semibold text-emerald-400" id="kpiOpp">0</div></div>
+    <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Best net</div><div class="text-xl font-mono font-semibold" id="kpiBest">—</div></div>
+    <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Paper PnL</div><div class="text-xl font-mono font-semibold" id="kpiPnl">0</div></div>
+    <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Open hedges</div><div class="text-xl font-mono font-semibold text-violet-300" id="kpiOpen">0</div></div>
+    <div class="card rounded-xl p-3"><div class="text-[10px] text-slate-500 uppercase">Day PnL</div><div class="text-xl font-mono font-semibold" id="kpiDay">0</div></div>
+  </div>
 
-    <!-- What is happening now -->
-    <div class="card rounded-xl p-4 border-cyan-500/25">
-      <div class="flex flex-wrap justify-between gap-3">
-        <div class="max-w-3xl">
-          <div class="text-[11px] uppercase tracking-wider text-cyan-400/80 mb-1">Что происходит сейчас</div>
-          <p id="statusStory" class="text-sm text-slate-200 leading-relaxed">Подключение…</p>
-          <p id="statusHint" class="text-xs text-slate-500 mt-1"></p>
+  <div id="exHealth" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
+  <div id="errorBanner" class="hidden card rounded-xl p-3 border-rose-500/40 text-rose-300 text-sm"></div>
+
+  <!-- MAIN: 7 + 5 -->
+  <div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
+    <!-- LEFT -->
+    <div class="xl:col-span-7 space-y-4">
+      <div class="card rounded-xl p-3 flex flex-wrap gap-3 items-end">
+        <div>
+          <label class="block text-[10px] text-slate-500 mb-1">Symbol</label>
+          <select id="filterSymbol"><option value="">All</option></select>
         </div>
-        <div class="text-right text-xs space-y-1 text-slate-400">
-          <div>Стратегия: <span id="lblStrategy" class="text-cyan-300 font-semibold">FuturesCross</span></div>
-          <div>Режим: <span id="lblMode" class="text-amber-300">PAPER</span></div>
-          <div>Порог net: <span id="lblMin" class="font-mono">—</span>% · size <span id="lblSize" class="font-mono">—</span></div>
-          <div>Скан: <span id="lblScanAge" class="font-mono">—</span></div>
+        <div>
+          <label class="block text-[10px] text-slate-500 mb-1">Min net %</label>
+          <input id="filterMinNet" type="number" step="0.01" value="0" class="w-24" />
         </div>
+        <button id="btnResetFilters" class="px-3 py-1.5 rounded-lg text-xs border border-slate-600 text-slate-300 hover:bg-slate-800">Reset</button>
+        <span class="text-xs text-slate-500 ml-auto" id="oppCount">0</span>
       </div>
-    </div>
 
-    <!-- KPIs -->
-    <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
-      <div class="card rounded-xl p-3">
-        <div class="text-[10px] uppercase text-slate-500">Сканы</div>
-        <div id="kpiScans" class="text-xl font-mono font-semibold mt-1">0</div>
-      </div>
-      <div class="card rounded-xl p-3">
-        <div class="text-[10px] uppercase text-slate-500">Сигналы сейчас</div>
-        <div id="kpiOpp" class="text-xl font-mono font-semibold text-emerald-400 mt-1">0</div>
-      </div>
-      <div class="card rounded-xl p-3">
-        <div class="text-[10px] uppercase text-slate-500">Открытые хеджи</div>
-        <div id="kpiOpen" class="text-xl font-mono font-semibold text-violet-300 mt-1">0</div>
-      </div>
-      <div class="card rounded-xl p-3">
-        <div class="text-[10px] uppercase text-slate-500">Realized PnL <span class="text-slate-600">(после close)</span></div>
-        <div id="kpiPnl" class="text-xl font-mono font-semibold mt-1">0</div>
-      </div>
-      <div class="card rounded-xl p-3">
-        <div class="text-[10px] uppercase text-slate-500">WS стаканы</div>
-        <div id="kpiWs" class="text-xl font-mono font-semibold text-emerald-400 mt-1">—</div>
-      </div>
-      <div class="card rounded-xl p-3">
-        <div class="text-[10px] uppercase text-slate-500">Лучший net %</div>
-        <div id="kpiBest" class="text-xl font-mono font-semibold text-cyan-300 mt-1">—</div>
-      </div>
-    </div>
-
-
-    <!-- How it works + exchange health -->
-    <div class="grid lg:grid-cols-2 gap-4">
-      <div class="card rounded-xl p-4 border-cyan-500/15">
-        <h2 class="text-sm font-semibold mb-2 text-cyan-300">Как работает бот (demo / paper)</h2>
-        <ol id="pipelineList" class="text-xs text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
-          <li>WebSocket: реальные цены perp со стаканов</li>
-          <li>VWAP на размер QuoteSize + комиссии (+ funding если REST ок)</li>
-          <li>Сигнал: LONG на дешёвой бирже, SHORT на дорогой</li>
-          <li>PAPER: виртуальная маржа, open/close — <b>без реальных ордеров</b></li>
-        </ol>
-        <p class="text-[11px] text-slate-500 mt-3">Реальные API keys для торговли ещё не подключены. Сейчас проверка логики на live-данных.</p>
-      </div>
-      <div class="card rounded-xl p-4">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-sm font-semibold">Биржи (из конфига)</h2>
-          <span id="exCountLabel" class="text-xs text-slate-500">—</span>
+      <div class="card rounded-xl overflow-hidden">
+        <div class="px-4 py-2.5 border-b border-slate-800 flex justify-between items-center">
+          <h2 class="text-sm font-semibold flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>Сигналы (net после fees+depth+funding)</h2>
+          <span class="text-[10px] text-slate-500">клик по строке → стакан справа</span>
         </div>
-        <div id="exchangeHealth" class="space-y-2"></div>
-        <p class="text-[11px] text-slate-500 mt-2">Если биржа «error» — нет WS/котировок (geo/сеть). Скан идёт по живым биржам.</p>
-      </div>
-    </div>
-
-    <!-- Pairs + margin -->
-    <div class="grid lg:grid-cols-3 gap-4">
-      <div class="card rounded-xl p-4 lg:col-span-2">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-sm font-semibold">Активные пары <span class="text-slate-500 font-normal">(автоподбор по ликвидности)</span></h2>
-          <span id="pairsMeta" class="text-xs text-slate-500"></span>
-        </div>
-        <div id="pairsList" class="flex flex-wrap gap-2"></div>
-        <p id="pairsNote" class="text-xs text-slate-500 mt-2"></p>
-      </div>
-      <div class="card rounded-xl p-4">
-        <h2 class="text-sm font-semibold mb-2">Маржа (paper USDT)</h2>
-        <div id="marginList" class="space-y-1.5 text-xs font-mono text-slate-300"></div>
-      </div>
-    </div>
-
-    <!-- Open positions -->
-    <div class="card rounded-xl overflow-hidden border-violet-500/20">
-      <div class="px-4 py-3 border-b border-slate-800 flex justify-between items-center">
-        <h2 class="text-sm font-semibold flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-violet-400 pulse-dot"></span>
-          Открытые позиции (хеджи)
-        </h2>
-        <span class="text-xs text-slate-400">uPnL <span id="posUPnl">—</span> · lev <span id="posLev">—</span>x · <span id="posCloseHint" class="text-slate-500">close: width↓ или timeout</span></span>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-xs text-slate-400 uppercase">
-              <th class="px-3 py-2">Пара</th>
-              <th class="px-3 py-2">LONG</th>
-              <th class="px-3 py-2">SHORT</th>
-              <th class="px-3 py-2 text-right">Qty</th>
-              <th class="px-3 py-2 text-right">Entry L/S</th>
-              <th class="px-3 py-2 text-right">Mark L/S</th>
-              <th class="px-3 py-2 text-right">uPnL</th>
-              <th class="px-3 py-2 text-right">Width %</th>
-              <th class="px-3 py-2">Возраст</th>
-              <th class="px-3 py-2">Статус</th>
-            </tr>
-          </thead>
-          <tbody id="openPosBody" class="divide-y divide-slate-800/80">
-            <tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">Нет открытых хеджей</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Opportunities + trades -->
-    <div class="grid lg:grid-cols-5 gap-4">
-      <div class="lg:col-span-3 card rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-800 flex flex-wrap justify-between gap-2 items-center">
-          <h2 class="text-sm font-semibold flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-            Сигналы (LONG дешёвый / SHORT дорогой)
-          </h2>
-          <div class="flex flex-wrap gap-2 items-center text-xs">
-            <select id="filterSymbol"><option value="">Все пары</option></select>
-            <input id="filterMinNet" type="number" step="0.01" value="0" class="w-20" title="Min net %" />
-            <span id="oppCount" class="text-slate-500">0</span>
-          </div>
-        </div>
-        <div class="overflow-x-auto max-h-[320px] overflow-y-auto">
+        <div class="overflow-x-auto max-h-[380px] overflow-y-auto">
           <table class="w-full text-sm">
             <thead>
-              <tr class="text-left text-xs text-slate-400 uppercase">
-                <th class="px-3 py-2">Пара</th>
-                <th class="px-3 py-2">Маршрут</th>
-                <th class="px-3 py-2 text-right">VWAP LONG</th>
-                <th class="px-3 py-2 text-right">VWAP SHORT</th>
+              <tr class="text-left text-[10px] text-slate-500 uppercase tracking-wider">
+                <th class="px-3 py-2">Symbol</th>
+                <th class="px-3 py-2">Long → Short</th>
+                <th class="px-3 py-2 text-right">VWAP L / S</th>
+                <th class="px-3 py-2 text-right">Gross</th>
                 <th class="px-3 py-2 text-right">Net %</th>
-                <th class="px-3 py-2 text-right">PnL$</th>
+                <th class="px-3 py-2 text-right">Est $</th>
                 <th class="px-3 py-2 text-center">Fill</th>
               </tr>
             </thead>
-            <tbody id="oppBody" class="divide-y divide-slate-800/80">
-              <tr><td colspan="7" class="px-4 py-6 text-center text-slate-500">Нет сигналов ≥ порога</td></tr>
+            <tbody id="oppBody" class="divide-y divide-slate-800/70">
+              <tr><td colspan="7" class="px-4 py-10 text-center text-slate-500">Ожидание данных…</td></tr>
             </tbody>
           </table>
         </div>
       </div>
-      <div class="lg:col-span-2 card rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-800">
-          <h2 class="text-sm font-semibold">История paper сделок</h2>
-        </div>
-        <div class="overflow-x-auto max-h-[320px] overflow-y-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-xs text-slate-400 uppercase">
-                <th class="px-3 py-2">Время</th>
-                <th class="px-3 py-2">Сделка</th>
-                <th class="px-3 py-2 text-right">PnL</th>
-                <th class="px-3 py-2">Статус</th>
-              </tr>
-            </thead>
-            <tbody id="tradeBody" class="divide-y divide-slate-800/80">
-              <tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">Пока пусто</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
 
-    <!-- Chart + books -->
-    <div class="grid lg:grid-cols-5 gap-4">
-      <div class="lg:col-span-2 card rounded-xl p-4">
-        <h2 class="text-sm font-semibold mb-2">Лучший net % (история)</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="card rounded-xl overflow-hidden">
+          <div class="px-4 py-2.5 border-b border-slate-800 text-sm font-semibold">Открытые хеджи</div>
+          <div class="overflow-x-auto max-h-40 overflow-y-auto">
+            <table class="w-full text-xs">
+              <thead><tr class="text-slate-500 text-[10px] uppercase"><th class="px-3 py-2 text-left">Pos</th><th class="px-3 py-2 text-right">uPnL</th><th class="px-3 py-2 text-right">Width</th></tr></thead>
+              <tbody id="posBody"><tr><td colspan="3" class="px-3 py-4 text-center text-slate-500">Нет</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card rounded-xl overflow-hidden">
+          <div class="px-4 py-2.5 border-b border-slate-800 text-sm font-semibold">Сделки paper</div>
+          <div class="overflow-x-auto max-h-40 overflow-y-auto">
+            <table class="w-full text-xs">
+              <thead><tr class="text-slate-500 text-[10px] uppercase"><th class="px-3 py-2 text-left">Time</th><th class="px-3 py-2">Route</th><th class="px-3 py-2 text-right">PnL</th><th class="px-3 py-2">St</th></tr></thead>
+              <tbody id="tradeBody"><tr><td colspan="4" class="px-3 py-4 text-center text-slate-500">Нет</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card rounded-xl p-4">
+        <div class="flex justify-between mb-2"><h2 class="text-sm font-semibold">Best net history</h2><span class="text-[10px] text-slate-500">~60 samples</span></div>
         <div class="h-40"><canvas id="spreadChart"></canvas></div>
       </div>
-      <div class="lg:col-span-3 card rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-slate-800 flex justify-between">
-          <h2 class="text-sm font-semibold">Live цены (best bid/ask)</h2>
-          <span class="text-xs text-slate-500" id="wsDetail">—</span>
+    </div>
+
+    <!-- RIGHT: Order books -->
+    <div class="xl:col-span-5 space-y-4">
+      <div class="card rounded-xl p-4 sticky top-16">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <h2 class="text-sm font-semibold flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+              Стакан (order book)
+            </h2>
+            <p class="text-[11px] text-slate-500 mt-0.5">
+              <span class="text-emerald-400">Bids</span> — спрос ·
+              <span class="text-rose-400">Asks</span> — предложение ·
+              depth для VWAP
+            </p>
+          </div>
+          <select id="depthSymbol" class="text-xs"></select>
         </div>
-        <div class="overflow-x-auto max-h-56 overflow-y-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-xs text-slate-400 uppercase">
-                <th class="px-3 py-2">Пара</th>
-                <th class="px-3 py-2">Биржа</th>
-                <th class="px-3 py-2 text-right">Bid</th>
-                <th class="px-3 py-2 text-right">Ask</th>
-                <th class="px-3 py-2 text-right">Spread %</th>
-              </tr>
-            </thead>
-            <tbody id="bookBody" class="divide-y divide-slate-800/80"></tbody>
-          </table>
+        <div id="depthPanels" class="space-y-3 max-h-[calc(100vh-140px)] overflow-y-auto pr-1">
+          <div class="text-sm text-slate-500 text-center py-12">Выбери пару в таблице сигналов или в селекте</div>
+        </div>
+        <div class="mt-3 pt-3 border-t border-slate-800 text-[11px] text-slate-500 leading-relaxed">
+          <b class="text-slate-300">Как читать:</b> LONG открывается по <span class="text-rose-400">asks</span> на дешёвой бирже,
+          SHORT — по <span class="text-emerald-400">bids</span> на дорогой. Чем глубже стакан и ровнее цена — тем меньше slippage.
+          Paper считает net только если хватает объёма на size (full fill).
         </div>
       </div>
     </div>
+  </div>
 
-    <div id="errorBanner" class="hidden card rounded-xl p-3 border-red-500/40 bg-red-500/10 text-red-300 text-sm"></div>
-  </main>
+  <!-- Tickers strip -->
+  <div class="card rounded-xl overflow-hidden">
+    <div class="px-4 py-2.5 border-b border-slate-800 text-sm font-semibold">Live best bid / ask (все пары × биржи)</div>
+    <div class="overflow-x-auto max-h-52 overflow-y-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-slate-500 text-[10px] uppercase">
+            <th class="px-3 py-2 text-left">Symbol</th><th class="px-3 py-2 text-left">Ex</th>
+            <th class="px-3 py-2 text-right">Bid</th><th class="px-3 py-2 text-right">Ask</th>
+            <th class="px-3 py-2 text-right">Spread %</th>
+          </tr>
+        </thead>
+        <tbody id="bookBody"><tr><td colspan="5" class="px-3 py-6 text-center text-slate-500">—</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
 
-  <footer class="border-t border-slate-800 mt-6 py-3 text-center text-xs text-slate-500">
-    FuturesCross SEMI-REAL demo · вход net≥0.02% · close по схождению/12м · без реальных ордеров
-  </footer>
+<footer class="border-t border-slate-800 mt-6 py-4 text-center text-[11px] text-slate-500">
+  ArbitrageBot · .NET 10 · FuturesCross paper · mid-alts only · rules ≈ live
+</footer>
 
 <script>
 const $ = id => document.getElementById(id);
-let latest = null;
+let latest = null, selectedSymbol = '';
 const chartData = { labels: [], values: [] };
 const chart = new Chart($('spreadChart'), {
   type: 'line',
   data: { labels: chartData.labels, datasets: [{
-    data: chartData.values, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.08)',
+    data: chartData.values, borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,0.07)',
     fill: true, tension: 0.25, pointRadius: 0, borderWidth: 2
   }]},
   options: {
     responsive: true, maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: {
-      x: { ticks: { color: '#64748b', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: '#1e293b' } },
-      y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } }
+      x: { ticks: { color: '#64748b', maxTicksLimit: 6, font: { size: 9 } }, grid: { color: '#1e293b' } },
+      y: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: '#1e293b' } }
     }
   }
 });
 
-
-function renderExchangeHealth(data) {
-  const box = $('exchangeHealth');
-  if (!box) return;
-  const health = data.exchangeHealth || [];
-  const configured = data.exchanges || [];
-  $('exCountLabel') && ($('exCountLabel').textContent = configured.length + ' в settings');
-
-  const rows = health.length ? health : configured.map(name => ({ name, state: 'idle', liveStreams: 0, totalStreams: 0, hasQuotes: false, streams: [] }));
-  box.innerHTML = rows.map(h => {
-    const color = h.state === 'live' ? 'bg-emerald-500' : h.state === 'error' ? 'bg-rose-500' : h.state === 'connecting' ? 'bg-amber-500' : 'bg-slate-500';
-    const label = h.state === 'live' ? 'LIVE' : h.state === 'error' ? 'ERROR' : h.state === 'connecting' ? '…' : 'IDLE';
-    const detail = (h.liveStreams != null)
-      ? `${h.liveStreams}/${h.totalStreams||0} streams` + (h.hasQuotes ? ' · quotes' : '')
-      : '';
-    const streams = (h.streams || []).slice(0, 6).map(s =>
-      `<div class="text-[10px] text-slate-500 font-mono truncate">${s.key}: ${s.status}</div>`
-    ).join('');
-    return `<div class="rounded-lg border border-slate-700/80 p-2.5">
-      <div class="flex items-center justify-between gap-2">
-        <span class="font-semibold text-sm">${h.name}</span>
-        <span class="text-[10px] font-bold px-2 py-0.5 rounded ${color}/20 text-white flex items-center gap-1">
-          <span class="w-1.5 h-1.5 rounded-full ${color}"></span>${label}
-        </span>
-      </div>
-      <div class="text-[11px] text-slate-400 mt-1">${detail}</div>
-      ${streams}
-    </div>`;
-  }).join('') || '<div class="text-slate-500 text-xs">Нет данных по биржам</div>';
-}
-
-function renderPipeline(data) {
-  const ol = $('pipelineList');
-  if (!ol || !data.pipeline) return;
-  ol.innerHTML = data.pipeline.map(s => `<li>${s.replace(/^[0-9]+\.\s*/, '')}</li>`).join('');
-}
-
 function fmt(n, d=4) {
-  if (n==null || Number.isNaN(Number(n))) return '—';
-  return Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  return Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 function fmtPct(n) {
-  if (n==null) return '—';
+  if (n == null) return '—';
   const v = Number(n);
   return `<span class="${v>=0?'text-emerald-400':'text-rose-400'} font-mono">${v>=0?'+':''}${v.toFixed(3)}%</span>`;
 }
-function ageStr(iso) {
+function timeAgo(iso) {
   if (!iso) return '—';
-  const sec = Math.floor((Date.now()-new Date(iso).getTime())/1000);
-  if (sec < 5) return 'сейчас';
-  if (sec < 60) return sec + 'с назад';
-  return Math.floor(sec/60) + 'м назад';
-}
-function volStr(v) {
-  v = Number(v||0);
-  if (v<=0) return '—';
-  if (v>=1e9) return (v/1e9).toFixed(1)+'B';
-  if (v>=1e6) return (v/1e6).toFixed(1)+'M';
-  if (v>=1e3) return (v/1e3).toFixed(0)+'K';
-  return v.toFixed(0);
+  const s = Math.floor((Date.now()-new Date(iso))/1000);
+  if (s < 5) return 'сейчас';
+  if (s < 60) return s + 'с назад';
+  return Math.floor(s/60) + 'м назад';
 }
 
-function render(data) {
+function renderDepth(data) {
+  const depth = data.orderBookDepth || {};
+  const symbols = Object.keys(depth).sort();
+  const sel = $('depthSymbol');
+  const cur = selectedSymbol || sel.value || symbols[0] || '';
+  sel.innerHTML = symbols.map(s => `<option value="${s}">${s}</option>`).join('') || '<option>—</option>';
+  if (cur && [...sel.options].some(o => o.value === cur)) { sel.value = cur; selectedSymbol = cur; }
+
+  const panels = $('depthPanels');
+  if (!selectedSymbol || !depth[selectedSymbol]) {
+    panels.innerHTML = '<div class="text-sm text-slate-500 text-center py-12">Нет depth для выбранной пары</div>';
+    return;
+  }
+  const byEx = depth[selectedSymbol];
+  const exchanges = Object.keys(byEx);
+  panels.innerHTML = exchanges.map(ex => {
+    const book = byEx[ex] || {};
+    const bids = book.bids || [];
+    const asks = book.asks || [];
+    const src = book.source || 'book';
+    const maxQ = Math.max(1, ...bids.map(x => Number(x.qty||0)), ...asks.map(x => Number(x.qty||0)));
+    const n = Math.max(bids.length, asks.length, 1);
+    let rows = '';
+    for (let i = 0; i < n; i++) {
+      const b = bids[i], a = asks[i];
+      const bw = b ? Math.min(100, Number(b.qty)/maxQ*100) : 0;
+      const aw = a ? Math.min(100, Number(a.qty)/maxQ*100) : 0;
+      rows += `<div class="ob-grid items-center">
+        <div class="ob-bar ob-bid text-emerald-400 text-right">${b?`<span>${fmt(b.qty,4)}</span> <span class="text-emerald-300/90">${fmt(b.price)}</span>`:''}</div>
+        <div class="text-center text-slate-600 text-[9px]">${i+1}</div>
+        <div class="ob-bar ob-ask text-rose-400">${a?`<span class="text-rose-300/90">${fmt(a.price)}</span> <span>${fmt(a.qty,4)}</span>`:''}</div>
+      </div>`;
+    }
+    const bestBid = bids[0]?.price, bestAsk = asks[0]?.price;
+    const mid = bestBid && bestAsk ? (Number(bestBid)+Number(bestAsk))/2 : 0;
+    const spr = mid ? ((Number(bestAsk)-Number(bestBid))/mid*100) : 0;
+    return `<div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+      <div class="flex justify-between items-center mb-2">
+        <span class="font-semibold text-sm text-cyan-300">${ex}</span>
+        <span class="text-[10px] text-slate-500">${src} · spread ${fmt(spr,4)}%</span>
+      </div>
+      <div class="ob-grid text-[9px] text-slate-500 mb-1 px-1">
+        <div class="text-right text-emerald-500/70">qty · bid</div><div></div><div class="text-rose-500/70">ask · qty</div>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function renderSnapshot(data) {
+  if (!data) return;
   latest = data;
-  renderExchangeHealth(data);
-  renderPipeline(data);
-  const isFut = (data.strategyMode || '') === 'FuturesCross';
-  const fp = data.futuresPaper || null;
-  const opps = data.opportunities || [];
-  const st = data.connectionStatus || {};
-  const vals = Object.values(st);
-  const okWs = vals.filter(v => /synced|book-ticker/i.test(String(v))).length;
+  const fp = data.futuresPaper || data.paper || {};
+
+  $('kpiScans').textContent = data.scanCount ?? 0;
+  $('kpiOpp').textContent = (data.opportunities||[]).length;
+  $('kpiOpen').textContent = (fp.positions||[]).length;
+  $('kpiMin').textContent = (data.minProfitPercent ?? 0) + '%';
+  $('kpiSize').textContent = data.quoteSize != null ? Number(data.quoteSize) : '—';
+  if (fp.leverage) $('kpiLev').textContent = fp.leverage + 'x';
+  if (fp.stopLossUsd != null) $('kpiStop').textContent = fp.stopLossUsd;
+
+  const pnl = Number(fp.realizedPnl ?? fp.realizedPnlUsd ?? 0);
+  $('kpiPnl').textContent = (pnl>=0?'+':'') + pnl.toFixed(2);
+  $('kpiPnl').className = 'text-xl font-mono font-semibold ' + (pnl>=0?'text-emerald-400':'text-rose-400');
+  const day = Number(fp.dailyRealizedPnlUsd ?? 0);
+  $('kpiDay').textContent = (day>=0?'+':'') + day.toFixed(2);
+  $('kpiDay').className = 'text-xl font-mono font-semibold ' + (day>=0?'text-emerald-400':'text-rose-400');
 
   $('modeBadge').textContent = data.mode || 'PAPER';
-  $('lblMode').textContent = data.mode || 'PAPER';
-  $('lblStrategy').textContent = data.strategyMode || '—';
-  $('lblMin').textContent = data.minProfitPercent ?? '—';
-  $('lblSize').textContent = data.quoteSize != null ? Number(data.quoteSize).toLocaleString() : '—';
-  $('lblScanAge').textContent = ageStr(data.lastScanUtc);
-  $('lblScanAge').dataset.iso = data.lastScanUtc || '';
+  $('strategyMode').textContent = data.mode || 'PAPER';
+  $('strategyDynamic').textContent = data.dynamicSymbols ? ('auto · ' + (data.discoverySource||'?')) : 'fixed';
+  if (data.strategyNote) $('strategyNote').textContent = data.strategyNote;
+  const dmsg = $('discoveryMsg');
+  if (dmsg) {
+    const src = data.discoverySource || '';
+    const msg = data.discoveryMessage || '';
+    dmsg.textContent = src ? (src + (msg ? ' — ' + msg : '')) : msg;
+    dmsg.className = (src==='dynamic'||src==='partial-dynamic') ? 'text-xs text-emerald-400/90 mt-2' : 'text-xs text-amber-400/90 mt-2';
+  }
+  $('lastScan').textContent = 'scan: ' + timeAgo(data.lastScanUtc);
+  $('lastScan').dataset.iso = data.lastScanUtc || '';
 
   if (data.isPaused) {
     $('pauseBadge').classList.remove('hidden');
@@ -355,138 +335,45 @@ function render(data) {
     $('pauseBadge').classList.add('hidden');
     $('btnPause').textContent = 'Pause';
   }
-
   if (data.lastError) {
     $('errorBanner').classList.remove('hidden');
     $('errorBanner').textContent = '⚠ ' + data.lastError;
   } else $('errorBanner').classList.add('hidden');
 
-  // KPIs
-  $('kpiScans').textContent = data.scanCount ?? 0;
-  $('kpiOpp').textContent = opps.length;
-  $('kpiOpen').textContent = fp ? (fp.openCount ?? (fp.positions||[]).length) : 0;
-  const pnl = fp ? Number(fp.realizedPnl||0) : Number(data.paper?.realizedPnl||0);
-  $('kpiPnl').textContent = (pnl>=0?'+':'') + pnl.toFixed(2);
-  $('kpiPnl').className = 'text-xl font-mono font-semibold mt-1 ' + (pnl>=0?'text-emerald-400':'text-rose-400');
-  $('kpiWs').textContent = vals.length ? (okWs + '/' + vals.length) : '—';
-  $('wsDetail').textContent = vals.length ? (okWs + '/' + vals.length + ' Synced') : 'starting';
-
-  // Story
-  let story = '';
-  let hint = '';
-  if (data.isPaused) {
-    story = 'Сканер на паузе. Стаканы могут быть живы, но новые сигналы и paper-сделки не ищутся.';
-  } else if (!vals.length) {
-    story = 'Подключаемся к WebSocket стаканам бирж…';
-  } else if (okWs < vals.length) {
-    story = `Стаканы поднимаются: ${okWs} из ${vals.length} готовы. Ждём полный sync.`;
-  } else if (opps.length === 0) {
-    story = isFut
-      ? 'Рынок просмотрен. Сейчас нет net-спреда ≥ порога после комиссий и проскальзывания. Бот ждёт перекос между биржами.'
-      : 'Нет spot-возможностей ≥ порога.';
-    hint = 'На BTC/ETH спред часто 0.00x% — это нормально. Сигнал появится при расхождении цен.';
-  } else {
-    const best = opps[0];
-    story = isFut
-      ? `Есть сигнал: LONG ${best.buyExchange} / SHORT ${best.sellExchange} по ${best.symbol}. Net ${Number(best.netProfitPercent).toFixed(3)}%.`
-      : `Есть signal ${best.symbol}: buy ${best.buyExchange} → sell ${best.sellExchange}.`;
-    if (fp && (fp.openCount||0) > 0)
-      hint = `Открыто хеджей: ${fp.openCount}. Закроются при схождении спреда или по таймауту.`;
-    else
-      hint = data.paperTrading !== false ? 'Paper auto-execute попытается открыть хедж (если хватает маржи и cooldown).' : '';
-  }
-  $('statusStory').textContent = story;
-  $('statusHint').textContent = hint;
-
-  // Pairs
+  // pairs
   const disc = data.discoveredSymbols || [];
-  const symbols = data.symbols || [];
-  if (disc.length) {
-    $('pairsList').innerHTML = disc.map(d =>
-      `<span class="px-2.5 py-1 rounded-md text-xs font-mono bg-slate-800 border border-slate-600/50">
-        ${d.symbol} <span class="text-slate-500">vol ${volStr(d.medianQuoteVolume)}</span>
-      </span>`).join('');
-    const auto = disc.some(d => Number(d.medianQuoteVolume)>0);
-    $('pairsMeta').textContent = auto ? 'dynamic' : 'fallback list';
-    $('pairsNote').textContent = auto
-      ? 'Пары выбраны автоматически: есть на всех биржах + максимальная ликвидность.'
-      : 'Автоподбор не получил объёмы (REST/geo) — используется список из конфига. После перезапуска с доступом к API подтянутся топ-пары.';
-  } else {
-    $('pairsList').innerHTML = symbols.map(s =>
-      `<span class="px-2.5 py-1 rounded-md text-xs font-mono bg-slate-800 border border-slate-600/50">${s}</span>`).join('');
-    $('pairsMeta').textContent = 'config';
-    $('pairsNote').textContent = '';
-  }
+  $('discoveredList').innerHTML = (disc.length ? disc : (data.symbols||[]).map(s=>({symbol:s}))).map(d => {
+    const vol = d.medianQuoteVolume ? (Number(d.medianQuoteVolume)>=1e6 ? (Number(d.medianQuoteVolume)/1e6).toFixed(1)+'M' : Math.round(Number(d.medianQuoteVolume)).toLocaleString()) : '';
+    return `<span class="tag border-slate-600 text-slate-200 bg-slate-800/60 font-mono">${d.symbol||d}${vol?' <span class="text-slate-500">'+vol+'</span>':''}</span>`;
+  }).join('') || '—';
+
+  // exchange health from connectionStatus
+  const st = data.connectionStatus || {};
+  const byEx = {};
+  Object.entries(st).forEach(([k,v]) => {
+    const ex = k.split(':')[0];
+    if (!byEx[ex]) byEx[ex] = { ok:0, total:0, sample:v };
+    byEx[ex].total++;
+    if (/synced|book|ok/i.test(String(v))) byEx[ex].ok++;
+  });
+  $('exHealth').innerHTML = Object.keys(byEx).length ? Object.entries(byEx).map(([ex,info]) => {
+    const good = info.ok >= info.total * 0.5;
+    return `<div class="card rounded-lg px-3 py-2 flex justify-between items-center">
+      <span class="font-medium text-sm">${ex}</span>
+      <span class="text-xs font-mono ${good?'text-emerald-400':'text-amber-400'}">${info.ok}/${info.total} books · ${info.sample}</span>
+    </div>`;
+  }).join('') : '';
 
   // filter symbols
-  const sel = $('filterSymbol');
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">Все пары</option>' + symbols.map(s => `<option value="${s}">${s}</option>`).join('');
-  if ([...sel.options].some(o => o.value===cur)) sel.value = cur;
+  const opps = data.opportunities || [];
+  const fs = $('filterSymbol');
+  const prev = fs.value;
+  const syms = [...new Set([...(data.symbols||[]), ...opps.map(o=>o.symbol)])];
+  fs.innerHTML = '<option value="">All</option>' + syms.map(s=>`<option value="${s}">${s}</option>`).join('');
+  if ([...fs.options].some(o=>o.value===prev)) fs.value = prev;
 
-  // Margin
-  const margin = fp?.margin || data.paper?.balances || {};
-  // Margin: always list every exchange from settings
-  {
-    const conf = data.exchanges || [];
-    const m = (fp && fp.margin) ? fp.margin : {};
-    const rows = conf.length ? conf : Object.keys(m);
-    $('marginList').innerHTML = rows.length
-      ? rows.map(ex => {
-          let v = m[ex];
-          if (v == null) {
-            const k = Object.keys(m).find(x => x.toLowerCase() === String(ex).toLowerCase());
-            if (k) v = m[k];
-          }
-          const txt = v != null ? fmt(v, 2) + ' USDT' : 'ожидание…';
-          return `<div class="flex justify-between"><span class="text-cyan-300">${ex}</span><span>${txt}</span></div>`;
-        }).join('')
-      : '<span class="text-slate-500">—</span>';
-  }
-
-  // Positions
-  const positions = fp?.positions || [];
-  $('posLev').textContent = fp?.leverage != null ? Number(fp.leverage) : '—';
-  const books = data.bookTickers || {};
-  let sumUpnl = 0;
-  if (!positions.length) {
-    $('openPosBody').innerHTML = '<tr><td colspan="10" class="px-4 py-6 text-center text-slate-500">Нет открытых хеджей — ждём net edge ≥ порога</td></tr>';
-    $('posUPnl').textContent = '—';
-    if ($('posCloseHint') && fp?.maxHoldMinutes != null)
-      $('posCloseHint').textContent = 'force close ≤ ' + fp.maxHoldMinutes + ' мин';
-  } else {
-    $('openPosBody').innerHTML = positions.map(p => {
-      const byEx = books[p.symbol] || {};
-      const lb = byEx[p.longExchange] || {};
-      const sb = byEx[p.shortExchange] || {};
-      const longMark = Number(lb.bestBid || lb.bestAsk || 0);
-      const shortMark = Number(sb.bestAsk || sb.bestBid || 0);
-      const qty = Number(p.baseQty||0);
-      const le = Number(p.longEntry||0), se = Number(p.shortEntry||0);
-      let upnl = 0;
-      if (longMark>0 && shortMark>0) upnl = (longMark-le)*qty + (se-shortMark)*qty;
-      sumUpnl += upnl;
-      const width = (longMark>0 && shortMark>0) ? ((shortMark-longMark)/longMark*100) : null;
-      return `<tr class="hover:bg-slate-800/40">
-        <td class="px-3 py-2 font-mono text-cyan-300">${p.symbol}</td>
-        <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">${p.longExchange}</span></td>
-        <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400">${p.shortExchange}</span></td>
-        <td class="px-3 py-2 text-right font-mono">${fmt(qty,6)}</td>
-        <td class="px-3 py-2 text-right font-mono text-slate-400">${fmt(le,2)} / ${fmt(se,2)}</td>
-        <td class="px-3 py-2 text-right font-mono">${fmt(longMark,2)} / ${fmt(shortMark,2)}</td>
-        <td class="px-3 py-2 text-right font-mono ${upnl>=0?'text-emerald-400':'text-rose-400'}">${upnl>=0?'+':''}${upnl.toFixed(4)}</td>
-        <td class="px-3 py-2 text-right font-mono text-slate-400">${width==null?'—':width.toFixed(3)+'%'}</td>
-        <td class="px-3 py-2 text-slate-400">${ageStr(p.openedAt)}</td>
-        <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300">OPEN</span></td>
-      </tr>`;
-    }).join('');
-    $('posUPnl').textContent = (sumUpnl>=0?'+':'')+sumUpnl.toFixed(4);
-    $('posUPnl').className = sumUpnl>=0?'text-emerald-400':'text-rose-400';
-  }
-
-  // Opportunities
   const minNet = parseFloat($('filterMinNet').value)||0;
-  const fSym = $('filterSymbol').value;
+  const fSym = fs.value;
   const filtered = opps.filter(o => {
     if (fSym && o.symbol !== fSym) return false;
     if (Number(o.netProfitPercent||0) < minNet) return false;
@@ -498,91 +385,96 @@ function render(data) {
 
   chartData.labels.push(new Date().toLocaleTimeString());
   chartData.values.push(best);
-  if (chartData.labels.length>60){chartData.labels.shift();chartData.values.shift()}
+  if (chartData.labels.length > 60) { chartData.labels.shift(); chartData.values.shift(); }
   chart.update('none');
 
   if (!filtered.length) {
-    $('oppBody').innerHTML = '<tr><td colspan="7" class="px-4 py-6 text-center text-slate-500">Нет сигналов ≥ порога (или фильтр слишком жёсткий)</td></tr>';
+    $('oppBody').innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-slate-500">Нет сигналов ≥ порога (net после RT fees + depth)</td></tr>';
   } else {
-    $('oppBody').innerHTML = filtered.map(o => `
-      <tr class="hover:bg-slate-800/40">
+    $('oppBody').innerHTML = filtered.map(o => {
+      const sel = selectedSymbol === o.symbol ? 'sel' : '';
+      return `<tr class="hover:bg-slate-800/50 cursor-pointer ${sel}" data-sym="${o.symbol}">
         <td class="px-3 py-2 font-mono text-cyan-300">${o.symbol}</td>
-        <td class="px-3 py-2 whitespace-nowrap">
-          <span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">L ${o.buyExchange}</span>
-          <span class="text-slate-500 mx-0.5">/</span>
-          <span class="text-xs px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400">S ${o.sellExchange}</span>
-        </td>
-        <td class="px-3 py-2 text-right font-mono">${fmt(o.buyPriceVwap)}</td>
-        <td class="px-3 py-2 text-right font-mono">${fmt(o.sellPriceVwap)}</td>
+        <td class="px-3 py-2 text-xs whitespace-nowrap"><span class="text-emerald-400">${o.buyExchange||o.longExchange}</span> <span class="text-slate-600">→</span> <span class="text-rose-400">${o.sellExchange||o.shortExchange}</span></td>
+        <td class="px-3 py-2 text-right font-mono text-xs">${fmt(o.buyPriceVwap||o.longAskVwap)} / ${fmt(o.sellPriceVwap||o.shortBidVwap)}</td>
+        <td class="px-3 py-2 text-right font-mono text-slate-400 text-xs">${fmt(o.grossSpreadVwapPercent,3)}%</td>
         <td class="px-3 py-2 text-right">${fmtPct(o.netProfitPercent)}</td>
-        <td class="px-3 py-2 text-right font-mono text-emerald-300">${fmt(o.netProfitQuote,2)}</td>
-        <td class="px-3 py-2 text-center">${o.fullyFilled
-          ? '<span class="text-xs text-emerald-400">full</span>'
-          : '<span class="text-xs text-amber-400">partial</span>'}</td>
-      </tr>`).join('');
-  }
-
-  // Trades
-  const trades = fp?.trades || data.paper?.trades || [];
-  if (!trades.length) {
-    $('tradeBody').innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">Пока пусто</td></tr>';
-  } else {
-    $('tradeBody').innerHTML = trades.slice(0,25).map(t => {
-      const pnl = t.realizedPnlUsd ?? t.netPnlQuote;
-      const tme = t.openedAt || t.executedAt;
-      return `<tr class="hover:bg-slate-800/40">
-        <td class="px-3 py-1.5 text-slate-400 text-xs">${tme?new Date(tme).toLocaleTimeString():'—'}</td>
-        <td class="px-3 py-1.5 font-mono text-xs">${t.symbol||''}
-          <span class="text-emerald-400">L:${t.longExchange||t.buyExchange||''}</span>
-          <span class="text-rose-400">S:${t.shortExchange||t.sellExchange||''}</span></td>
-        <td class="px-3 py-1.5 text-right font-mono text-xs ${pnl!=null&&Number(pnl)>=0?'text-emerald-400':'text-rose-400'}">${pnl==null?(t.isOpen?'open':'—'):fmt(pnl,3)}</td>
-        <td class="px-3 py-1.5 text-xs text-slate-400">${t.status||t.message||''}</td>
+        <td class="px-3 py-2 text-right font-mono text-emerald-300/90">${fmt(o.netProfitQuote||o.estNetPnlUsd,2)}</td>
+        <td class="px-3 py-2 text-center text-xs">${o.fullyFilled?'<span class="text-emerald-400">full</span>':'<span class="text-amber-400">part</span>'}</td>
       </tr>`;
     }).join('');
+    document.querySelectorAll('#oppBody tr[data-sym]').forEach(tr => {
+      tr.onclick = () => {
+        selectedSymbol = tr.dataset.sym;
+        $('depthSymbol').value = selectedSymbol;
+        renderDepth(data);
+        document.querySelectorAll('#oppBody tr').forEach(r => r.classList.remove('sel'));
+        tr.classList.add('sel');
+      };
+    });
   }
 
-  // Books
+  // positions
+  const positions = fp.positions || [];
+  $('posBody').innerHTML = positions.length ? positions.map(p =>
+    `<tr><td class="px-3 py-1.5 font-mono">${p.symbol} <span class="text-slate-500">${p.longExchange}→${p.shortExchange}</span></td>
+     <td class="px-3 py-1.5 text-right font-mono ${Number(p.unrealizedPnlUsd)>=0?'text-emerald-400':'text-rose-400'}">${fmt(p.unrealizedPnlUsd,2)}</td>
+     <td class="px-3 py-1.5 text-right font-mono text-slate-400">${fmt(p.currentWidthPercent,3)}%</td></tr>`
+  ).join('') : '<tr><td colspan="3" class="px-3 py-4 text-center text-slate-500">Нет</td></tr>';
+
+  const trades = fp.trades || [];
+  $('tradeBody').innerHTML = trades.length ? trades.slice(0,20).map(t => {
+    const tme = t.openedAt || t.executedAt ? new Date(t.openedAt||t.executedAt).toLocaleTimeString() : '—';
+    const pnl = t.realizedPnlUsd ?? t.netPnlQuote;
+    return `<tr><td class="px-3 py-1.5 text-slate-400">${tme}</td>
+      <td class="px-3 py-1.5 font-mono text-[10px]">${t.symbol} ${t.longExchange||t.buyExchange}→${t.shortExchange||t.sellExchange}</td>
+      <td class="px-3 py-1.5 text-right font-mono ${Number(pnl)>=0?'text-emerald-400':'text-rose-400'}">${pnl!=null?fmt(pnl,2):'—'}</td>
+      <td class="px-3 py-1.5 text-[10px] text-slate-400">${t.status|| (t.success?'OK':'')}</td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="px-3 py-4 text-center text-slate-500">Нет</td></tr>';
+
+  // tickers table
+  const books = data.bookTickers || {};
   const rows = [];
-  for (const [symbol, byEx] of Object.entries(books)) {
-    for (const [ex, t] of Object.entries(byEx)) {
+  for (const [symbol, byE] of Object.entries(books)) {
+    for (const [ex, t] of Object.entries(byE)) {
       const mid = (Number(t.bestBid)+Number(t.bestAsk))/2;
-      const spr = mid>0 ? ((Number(t.bestAsk)-Number(t.bestBid))/mid*100) : 0;
-      rows.push({symbol,ex,...t,spr});
+      const spr = mid>0 ? (Number(t.bestAsk)-Number(t.bestBid))/mid*100 : 0;
+      rows.push({ symbol, ex, ...t, spr });
     }
   }
   rows.sort((a,b)=>a.symbol.localeCompare(b.symbol)||a.ex.localeCompare(b.ex));
-  $('bookBody').innerHTML = rows.length ? rows.map(r => `
-    <tr class="hover:bg-slate-800/40">
-      <td class="px-3 py-1.5 font-mono text-cyan-300">${r.symbol}</td>
-      <td class="px-3 py-1.5">${r.ex}</td>
-      <td class="px-3 py-1.5 text-right font-mono text-emerald-400">${fmt(r.bestBid)}</td>
-      <td class="px-3 py-1.5 text-right font-mono text-rose-400">${fmt(r.bestAsk)}</td>
-      <td class="px-3 py-1.5 text-right font-mono text-slate-400">${fmt(r.spr,4)}%</td>
-    </tr>`).join('') : '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">Нет данных стакана</td></tr>';
+  $('bookBody').innerHTML = rows.length ? rows.map(r =>
+    `<tr class="hover:bg-slate-800/40"><td class="px-3 py-1 font-mono text-cyan-300">${r.symbol}</td><td class="px-3 py-1">${r.ex}</td>
+     <td class="px-3 py-1 text-right font-mono text-emerald-400">${fmt(r.bestBid)}</td>
+     <td class="px-3 py-1 text-right font-mono text-rose-400">${fmt(r.bestAsk)}</td>
+     <td class="px-3 py-1 text-right font-mono text-slate-400">${fmt(r.spr,4)}%</td></tr>`
+  ).join('') : '<tr><td colspan="5" class="px-3 py-6 text-center text-slate-500">—</td></tr>';
+
+  renderDepth(data);
 }
 
-['filterSymbol','filterMinNet'].forEach(id => {
-  $(id).addEventListener('change', () => latest && render(latest));
-  $(id).addEventListener('input', () => latest && render(latest));
+$('depthSymbol').addEventListener('change', () => {
+  selectedSymbol = $('depthSymbol').value;
+  if (latest) renderDepth(latest);
 });
-$('btnPause').onclick = async () => {
-  await fetch('/api/control/toggle',{method:'POST'});
-  const r = await fetch('/api/snapshot'); if (r.ok) render(await r.json());
-};
+['filterSymbol','filterMinNet'].forEach(id => {
+  $(id).addEventListener('change', () => latest && renderSnapshot(latest));
+  $(id).addEventListener('input', () => latest && renderSnapshot(latest));
+});
+$('btnResetFilters').onclick = () => { $('filterSymbol').value=''; $('filterMinNet').value='0'; latest && renderSnapshot(latest); };
+$('btnPause').onclick = async () => { await fetch('/api/control/toggle',{method:'POST'}); };
 $('btnPaperReset').onclick = async () => {
-  await fetch('/api/paper/reset',{method:'POST'});
-  const r = await fetch('/api/snapshot'); if (r.ok) render(await r.json());
+  await fetch('/api/paper/reset',{method:'POST'}).catch(()=>{});
+  const r = await fetch('/api/snapshot'); if (r.ok) renderSnapshot(await r.json());
 };
 
 const connection = new signalR.HubConnectionBuilder()
-  .withUrl('/hubs/arbitrage')
-  .withAutomaticReconnect([0,1000,2000,5000,10000])
-  .configureLogging(signalR.LogLevel.Warning)
-  .build();
-connection.on('Snapshot', render);
-connection.onreconnecting(() => { $('connDot').className='w-2.5 h-2.5 rounded-full bg-amber-500 pulse-dot'; $('connText').textContent='Reconnecting…'; });
+  .withUrl('/hubs/arbitrage').withAutomaticReconnect([0,1000,2000,5000,10000])
+  .configureLogging(signalR.LogLevel.Warning).build();
+connection.on('Snapshot', renderSnapshot);
+connection.onreconnecting(() => { $('connDot').className='w-2.5 h-2.5 rounded-full bg-amber-500 pulse-dot'; $('connText').textContent='…'; });
 connection.onreconnected(() => { $('connDot').className='w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-dot'; $('connText').textContent='Live'; connection.invoke('RequestSnapshot').catch(()=>{}); });
-connection.onclose(() => { $('connDot').className='w-2.5 h-2.5 rounded-full bg-rose-500'; $('connText').textContent='Disconnected'; });
+connection.onclose(() => { $('connDot').className='w-2.5 h-2.5 rounded-full bg-rose-500'; $('connText').textContent='Off'; });
 
 async function start() {
   try {
@@ -590,16 +482,14 @@ async function start() {
     $('connDot').className='w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-dot';
     $('connText').textContent='Live';
   } catch {
+    $('connDot').className='w-2.5 h-2.5 rounded-full bg-rose-500';
     $('connText').textContent='Error';
-    try { const r=await fetch('/api/snapshot'); if(r.ok) render(await r.json()); } catch{}
+    try { const r=await fetch('/api/snapshot'); if(r.ok) renderSnapshot(await r.json()); } catch {}
     setTimeout(start, 3000);
   }
 }
 start();
-setInterval(() => {
-  const el = $('lblScanAge');
-  if (el?.dataset.iso) el.textContent = ageStr(el.dataset.iso);
-}, 1000);
+setInterval(() => { const el=$('lastScan'); if(el?.dataset.iso) el.textContent='scan: '+timeAgo(el.dataset.iso); }, 1000);
 </script>
 </body>
 </html>

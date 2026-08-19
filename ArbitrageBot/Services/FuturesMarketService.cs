@@ -242,6 +242,33 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         return result;
     }
 
+    public Dictionary<string, object> GetDepth(string symbol, int levels = 12)
+    {
+        var result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        levels = Math.Clamp(levels, 1, 50);
+        foreach (var ex in _markets.Exchanges)
+        {
+            var key = $"{ex}:{symbol}";
+            if (!_books.TryGetValue(key, out var book))
+            {
+                if (_tickers.TryGetValue(key, out var t) && t.BestBid > 0)
+                {
+                    result[ex] = new
+                    {
+                        bids = new[] { new { price = t.BestBid, qty = t.BidQuantity } },
+                        asks = new[] { new { price = t.BestAsk, qty = t.AskQuantity } },
+                        source = "ticker"
+                    };
+                }
+                continue;
+            }
+            var bids = book.Bids?.Take(levels).Select(x => new { price = x.Price, qty = x.Quantity }).ToList() ?? [];
+            var asks = book.Asks?.Take(levels).Select(x => new { price = x.Price, qty = x.Quantity }).ToList() ?? [];
+            result[ex] = new { bids, asks, source = "book" };
+        }
+        return result;
+    }
+
     private FillEstimate Estimate(string symbol, string exchange, decimal quoteUsd, bool isBuy)
     {
         var key = $"{exchange}:{symbol}";
