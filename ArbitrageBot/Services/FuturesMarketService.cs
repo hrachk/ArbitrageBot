@@ -28,7 +28,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private readonly object _subLock = new();
     private bool _started;
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
+    private DateTime _lastFundingRefreshUtc = DateTime.MinValue;
+    private readonly SemaphoreSlim _fundingLock = new(1, 1);
 
     public IReadOnlyDictionary<string, string> ConnectionStatus => _status;
     public bool IsReady => _started && _tickers.Count > 0;
@@ -47,6 +49,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         _markets = markets;
         _options = options.Value;
         _logger = logger;
+
+        // Bitget shared APIs require ProductType for USDT-M perps
+        ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
     }
 
     public async Task StartAsync(CancellationToken ct = default)
@@ -175,9 +181,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             {
                 try
                 {
+                    var req = new SubscribeBookTickerRequest(symbol);
+                    if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+                    {
+                        req.ExchangeParameters = new ExchangeParameters(
+                            new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"));
+                    }
+
                     var result = await _socket.SubscribeToBookTickerUpdatesAsync(
                         name,
-                        new SubscribeBookTickerRequest(symbol),
+                        req,
                         update =>
                         {
                             var d = update.Data;
@@ -456,43 +470,74 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     private async Task RefreshFundingCacheAsync(CancellationToken ct)
     {
-        var need = false;
-        foreach (var symbol in _markets.Symbols)
-        foreach (var ex in _markets.Exchanges)
-        {
-            var key = $"{ex}:{symbol}";
-            if (!_fundingCache.TryGetValue(key, out var e) || DateTime.UtcNow - e.at >= FundingCacheTtl)
-            { need = true; break; }
-        }
-        if (!need) return;
+        // Global throttle: at most one full refresh per TTL window
+        if (DateTime.UtcNow - _lastFundingRefreshUtc < FundingCacheTtl)
+            return;
 
-        foreach (var symbolStr in _markets.Symbols)
-        {
-            if (ct.IsCancellationRequested) break;
-            SharedSymbol symbol;
-            try { symbol = ParsePerp(symbolStr); }
-            catch { continue; }
+        if (!await _fundingLock.WaitAsync(0, ct))
+            return; // another refresh in progress
 
-            try
+        try
+        {
+            if (DateTime.UtcNow - _lastFundingRefreshUtc < FundingCacheTtl)
+                return;
+
+            // Prefer core venues for funding; Bitget/Gate often need extra params and burn rate limits
+            var fundingExchanges = _markets.Exchanges
+                .Where(e => e is not null &&
+                    !e.Equals("Bitget", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Equals("GateIo", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (fundingExchanges.Count == 0)
+                fundingExchanges = _markets.Exchanges.ToList();
+
+            _logger.LogInformation("Funding cache refresh for {N} symbols × {E} exchanges (TTL {Ttl}m)",
+                _markets.Symbols.Count, fundingExchanges.Count, FundingCacheTtl.TotalMinutes);
+
+            foreach (var symbolStr in _markets.Symbols)
             {
-                var results = await _rest.GetFundingRateHistoryAsync(
-                    new GetFundingRateHistoryRequest(symbol),
-                    _markets.Exchanges,
-                    ct);
+                if (ct.IsCancellationRequested) break;
+                SharedSymbol symbol;
+                try { symbol = ParsePerp(symbolStr); }
+                catch { continue; }
 
-                foreach (var r in results)
+                try
                 {
-                    if (!r.Success || r.Data == null || r.Data.Length == 0)
-                        continue;
-                    var last = r.Data.OrderByDescending(x => x.Timestamp).FirstOrDefault();
-                    if (last == null) continue;
-                    _fundingCache[$"{r.Exchange}:{symbolStr}"] = (last.FundingRate, DateTime.UtcNow);
+                    var results = await _rest.GetFundingRateHistoryAsync(
+                        new GetFundingRateHistoryRequest(symbol),
+                        fundingExchanges,
+                        ct);
+
+                    foreach (var r in results)
+                    {
+                        if (!r.Success || r.Data == null || r.Data.Length == 0)
+                        {
+                            if (!r.Success)
+                                _logger.LogDebug("Funding {Ex}:{Sym} fail: {Err}", r.Exchange, symbolStr, r.Error?.Message);
+                            continue;
+                        }
+                        var last = r.Data.OrderByDescending(x => x.Timestamp).FirstOrDefault();
+                        if (last == null) continue;
+                        _fundingCache[$"{r.Exchange}:{symbolStr}"] = (last.FundingRate, DateTime.UtcNow);
+                    }
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Funding refresh failed for {S}", symbolStr);
+                }
+
+                // Soft rate-limit guard between symbols (Binance /fapi/v1/fundingRate is tight)
+                await Task.Delay(350, ct);
             }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Funding refresh failed for {S}", symbolStr);
-            }
+
+            _lastFundingRefreshUtc = DateTime.UtcNow;
+            _logger.LogInformation("Funding cache entries: {Count}", _fundingCache.Count);
+        }
+        finally
+        {
+            _fundingLock.Release();
         }
     }
 
