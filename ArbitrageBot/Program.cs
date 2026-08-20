@@ -37,6 +37,12 @@ try
         options.OutputOriginalData = false;
     });
 
+    // Shared API exchange parameters (USDT-M) — required before discovery/WS
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
+
     builder.Services.AddSingleton<ArbitrageState>();
     builder.Services.AddSingleton<ActiveMarketContext>();
     builder.Services.AddSingleton<ISymbolDiscoveryService, SymbolDiscoveryService>();

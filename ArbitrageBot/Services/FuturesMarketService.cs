@@ -50,9 +50,12 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         _options = options.Value;
         _logger = logger;
 
-        // Bitget shared APIs require ProductType for USDT-M perps
+        // Exchange-specific Shared API parameters for USDT-M perps
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
         ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
+        ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
+        ExchangeParameters.SetStaticParameter("Gate", "SettleAsset", "usdt");
     }
 
     public async Task StartAsync(CancellationToken ct = default)
@@ -187,6 +190,13 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     {
                         req.ExchangeParameters = new ExchangeParameters(
                             new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"));
+                    }
+                    else if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase) ||
+                             name.Equals("GateIo", StringComparison.OrdinalIgnoreCase) ||
+                             name.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+                    {
+                        req.ExchangeParameters = new ExchangeParameters(
+                            new ExchangeParameter("GateIo", "SettleAsset", "usdt"));
                     }
 
                     var result = await _socket.SubscribeToBookTickerUpdatesAsync(

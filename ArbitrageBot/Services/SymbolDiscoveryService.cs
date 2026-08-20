@@ -62,7 +62,11 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         {
             if (_options.IsFuturesCross)
             {
-                _logger.LogInformation("Discovery: futures tickers on {Ex} (exclude majors {Maj})",
+            ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
+        ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
+
+                        _logger.LogInformation("Discovery: futures tickers on {Ex} (exclude majors {Maj})",
                     string.Join(",", exchanges), string.Join(",", excluded));
                 var fut = await _rest.GetFuturesTickersAsync(new GetTickersRequest(), exchanges, ct);
                 foreach (var exResult in fut)
