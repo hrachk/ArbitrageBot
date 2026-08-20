@@ -43,6 +43,9 @@ try
     builder.Services.AddSingleton<IOrderBookService, OrderBookService>();
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
     builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();
+    builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
+    builder.Services.Configure<ExchangeCredentialsOptions>(
+        builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();
     builder.Services.AddSignalR();
 
@@ -105,6 +108,22 @@ try
             paper.GetRecentTrades(40),
             paper.GetBalances());
         return Results.Ok(new { reset = true, mode = "SpotInventory", balances = paper.GetBalances() });
+    });
+
+    
+    app.MapGet("/api/settings", (ISettingsStore store, IOptions<ArbitrageOptions> opt) =>
+        Results.Json(store.GetPublicSettings(opt.Value)));
+
+    app.MapPost("/api/settings/trading", async (TradingUiSettings body, ISettingsStore store) =>
+    {
+        await store.SaveTradingAsync(body);
+        return Results.Ok(new { saved = true });
+    });
+
+    app.MapPost("/api/settings/exchanges/{name}", async (string name, ExchangeCredential body, ISettingsStore store) =>
+    {
+        await store.SaveExchangeCredentialAsync(name, body);
+        return Results.Ok(new { saved = true, exchange = name });
     });
 
     app.MapFallbackToFile("index.html");

@@ -1,44 +1,28 @@
-# ArbitrageBot — Futures Cross-Exchange
+# ArbitrageBot (.NET 10)
 
-**StrategyMode: `FuturesCross`** (default)
+Cross-exchange **FuturesCross** scanner + paper execution on live order books.
 
-LONG perpetual on the cheaper exchange + SHORT on the richer exchange.  
-Only **USDT margin** on each venue — **no coin transfers**.
+## Web Console (professional UI)
 
-## How it works
+| Section | Purpose |
+|---------|---------|
+| **Dashboard** | KPIs, strategy, exchange health, top signals, recent trades |
+| **Market** | Opportunities + multi-venue order books + bid/ask matrix |
+| **Reports** | Margin, open hedges, full trade ledger, day PnL |
+| **Settings** | Trading params + per-exchange API key forms (masked) |
 
-1. Discover liquid USDT-M style symbols (or use static list)
-2. WebSocket **perp order books** (Binance / Bybit / OKX)
-3. Depth-aware VWAP spread, minus taker fees
-4. **Paper**: open hedge when net % ≥ threshold; close on convergence or max hold
-5. Live UI via SignalR
+Secrets: `ArbitrageBot/data/local-settings.json` (gitignored) or User Secrets. Never returned to the browser.
 
-## Config (`appsettings.json`)
+### Roadmap live
 
-```json
-"StrategyMode": "FuturesCross",
-"MinProfitPercent": 0.08,
-"QuoteSize": 500,
-"FuturesPaperLeverage": 2,
-"FuturesMaxOpenPositions": 3,
-"FuturesMaxHoldMinutes": 30,
-"FuturesCloseBelowNetPercent": 0.02,
-"PaperAutoExecute": true
-```
-
-Spot inventory mode: `"StrategyMode": "SpotInventory"`.
-
-## Run
+1. Paper on live books (current)
+2. Read-only keys → balances
+3. Trade keys + risk limits
+4. Per-exchange enable
 
 ```bash
 git pull origin Develop
 cd ArbitrageBot && dotnet run
 ```
 
-http://localhost:5050
-
-## Roadmap
-
-- ✅ FuturesCross paper (open/close hedge)
-- ⬜ Funding rate in net edge
-- ⬜ Live API keys + risk limits
+Open http://localhost:5050 — sidebar: Dashboard / Market / Reports / Settings.
