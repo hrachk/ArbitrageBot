@@ -1,5 +1,7 @@
 AB.pages.market = {
   selected: '',
+  depthFp: '',
+  lastDepthPaint: 0,
   chart: null,
   candleSeries: null,
   chartSymbol: '',
@@ -118,6 +120,8 @@ AB.pages.market = {
     });
 
     this.renderDepth(data);
+    this.depthFp = JSON.stringify(data.orderBookDepth?.[this.selected] || {}).slice(0, 800);
+    this.lastDepthPaint = Date.now();
     this.renderPositions(fp);
 
     // ticker tape
@@ -203,8 +207,14 @@ AB.pages.market = {
 
   onTick(data, tick) {
     if (!data) return;
-    // keep selection; only refresh depth + tape + last from tickers
-    this.renderDepth(data);
+    // Throttle DOM depth paint — prevents infinite flicker (data is WS memory, not REST)
+    const now = Date.now();
+    const fp = JSON.stringify(data.orderBookDepth?.[this.selected] || {}).slice(0, 800);
+    if (fp !== this.depthFp && now - this.lastDepthPaint > 700) {
+      this.depthFp = fp;
+      this.lastDepthPaint = now;
+      this.renderDepth(data);
+    }
     const books = data.bookTickers || {};
     const rows = [];
     for (const [symbol, byE] of Object.entries(books)) {
@@ -215,21 +225,22 @@ AB.pages.market = {
         rows.push({ symbol, ex, ...t, spr });
       }
     }
-    if (AB.$('m_bookBody')) {
-      AB.$('m_bookBody').innerHTML = rows.length ? rows.map(r => `<tr>
-        <td class="mono" style="color:var(--cyan)">${r.symbol}</td><td>${r.ex}</td>
-        <td class="mono pos">${AB.fmt(r.bestBid)}</td>
-        <td class="mono neg">${AB.fmt(r.bestAsk)}</td>
-        <td class="mono muted">${AB.fmt(r.spr, 4)}%</td>
-      </tr>`).join('') : AB.$('m_bookBody').innerHTML;
-    }
-    // update last from mid of first venue
+    // Update last price often (cheap); tape table only with depth throttle
     if (this.selected && books[this.selected]) {
       const first = Object.values(books[this.selected])[0];
       if (first && AB.$('m_last')) {
         const mid = (Number(first.bestBid) + Number(first.bestAsk)) / 2;
         AB.$('m_last').textContent = AB.fmt(mid, mid < 1 ? 6 : 4);
       }
+    }
+    if (now - this.lastDepthPaint < 50 && AB.$('m_bookBody') && rows.length) {
+      // painted depth this tick — refresh tape once
+      AB.$('m_bookBody').innerHTML = rows.map(r => `<tr>
+        <td class="mono" style="color:var(--cyan)">${r.symbol}</td><td>${r.ex}</td>
+        <td class="mono pos">${AB.fmt(r.bestBid)}</td>
+        <td class="mono neg">${AB.fmt(r.bestAsk)}</td>
+        <td class="mono muted">${AB.fmt(r.spr, 4)}%</td>
+      </tr>`).join('');
     }
   },
 

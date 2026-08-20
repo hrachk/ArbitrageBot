@@ -6,8 +6,8 @@ using ArbitrageBot.Configuration;
 namespace ArbitrageBot.Services;
 
 /// <summary>
-/// Pushes live book/ticker/status to the UI over SignalR between full scan cycles.
-/// Exchange data itself comes from WebSocket order books / book-tickers (FuturesMarketService).
+/// Pushes live book/ticker/status to UI over SignalR.
+/// Depth/tickers are read from in-memory WS state only — no exchange REST in this loop.
 /// </summary>
 public sealed class RealtimeBroadcastService : BackgroundService
 {
@@ -17,6 +17,9 @@ public sealed class RealtimeBroadcastService : BackgroundService
     private readonly ActiveMarketContext _markets;
     private readonly ArbitrageOptions _options;
     private readonly ILogger<RealtimeBroadcastService> _logger;
+
+    /// <summary>UI refresh interval. Higher = less flicker, still real-time enough.</summary>
+    private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(900);
 
     public RealtimeBroadcastService(
         IFuturesMarketService futures,
@@ -36,24 +39,27 @@ public sealed class RealtimeBroadcastService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Realtime broadcast started (WS books → SignalR every ~300ms)");
+        _logger.LogInformation(
+            "Realtime broadcast started (in-memory WS books → SignalR every {Ms}ms; no REST in this loop)",
+            TickInterval.TotalMilliseconds);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 if (_options.IsFuturesCross && _futures.IsReady)
                 {
-                    // Keep state depth/status fresh for snapshot consumers
                     var status = _futures.ConnectionStatus;
                     _state.SetConnectionStatus(status);
 
-                    var symbols = _markets.Symbols.Take(12).ToList();
+                    // Only a few symbols for UI payload size — not REST
+                    var symbols = _markets.Symbols.Take(8).ToList();
                     var depthMap = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                     var tickers = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
 
                     foreach (var sym in symbols)
                     {
-                        depthMap[sym] = _futures.GetDepth(sym, 14);
+                        depthMap[sym] = _futures.GetDepth(sym, 12);
                         var books = _futures.GetBookTickers(sym);
                         tickers[sym] = books.ToDictionary(
                             kv => kv.Key,
@@ -77,7 +83,8 @@ public sealed class RealtimeBroadcastService : BackgroundService
                     await _hub.Clients.All.SendAsync("MarketTick", new
                     {
                         utc = DateTime.UtcNow,
-                        transport = "exchange-ws → signalr",
+                        transport = "exchange-ws-memory → signalr",
+                        restInTick = false,
                         streamsLive = live,
                         streamsTotal = status.Count,
                         connectionStatus = status,
@@ -92,7 +99,7 @@ public sealed class RealtimeBroadcastService : BackgroundService
                 _logger.LogDebug(ex, "Realtime tick failed");
             }
 
-            await Task.Delay(300, stoppingToken);
+            await Task.Delay(TickInterval, stoppingToken);
         }
     }
 }
