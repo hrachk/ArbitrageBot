@@ -1,4 +1,25 @@
 AB.pages.reports = {
+  async loadDays() {
+    try {
+      const days = await AB.api.get('/api/analytics/days?maxDays=10');
+      const body = AB.$('r_daysBody');
+      if (!body) return;
+      body.innerHTML = (days || []).map(d => {
+        const day = d.dayUtc || d.DayUtc || '—';
+        return `<tr>
+          <td class="mono">${day}</td>
+          <td class="mono">${d.scans ?? d.Scans ?? 0}</td>
+          <td class="mono">${d.opens ?? d.Opens ?? 0}</td>
+          <td class="mono">${d.closes ?? d.Closes ?? 0}</td>
+          <td class="mono">${d.skips ?? d.Skips ?? 0}</td>
+          <td>${AB.fmtUsd(d.realizedPnlUsd ?? d.RealizedPnlUsd ?? 0)}</td>
+          <td class="mono">${AB.fmt(d.bestOpenPctSeen ?? d.BestOpenPctSeen, 3)}%</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center">No history yet</td></tr>';
+    } catch (e) {
+      console.warn(e);
+    }
+  },
   render(data) {
     const fp = data.futuresPaper || data.paper || {};
     const trades = fp.trades || [];
@@ -29,6 +50,36 @@ AB.pages.reports = {
       <td class="muted">${p.openedAt ? new Date(p.openedAt).toLocaleString() : '—'}</td>
     </tr>`).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No open hedges</td></tr>';
 
+    // analytics from snapshot
+    const an = data.paperAnalytics || {};
+    if (AB.$('r_daySummary')) {
+      AB.$('r_daySummary').innerHTML = [
+        `<div><span class="muted">Day</span> ${an.dayUtc || '—'}</div>`,
+        `<div>scans <b>${an.scans ?? 0}</b> · avg candidates <b>${an.avgCandidates ?? 0}</b></div>`,
+        `<div>opens <b class="pos">${an.opens ?? 0}</b> · closes <b>${an.closes ?? 0}</b> · skips <b>${an.skips ?? 0}</b></div>`,
+        `<div>realized ${AB.fmtUsd(an.realizedPnlUsd)} · best open ${AB.fmt(an.bestOpenPctSeen,3)}% · best RT ${AB.fmt(an.bestRtPctSeen,3)}%</div>`,
+      ].join('');
+    }
+    const reasons = an.skipReasons || [];
+    if (AB.$('r_skipReasons')) {
+      AB.$('r_skipReasons').innerHTML = reasons.length
+        ? reasons.map(r => `<div class="mono" style="margin:4px 0"><span class="muted">${r.reason}</span> × <b>${r.count}</b></div>`).join('')
+        : '<span class="muted">No skips recorded yet</span>';
+    }
+    const skips = data.paperRecentSkips || [];
+    if (AB.$('r_skipBody')) {
+      AB.$('r_skipBody').innerHTML = skips.length ? skips.map(s => {
+        const t = s.utc ? new Date(s.utc).toISOString().slice(11,19) : '—';
+        return `<tr>
+          <td class="muted mono">${t}</td>
+          <td style="font-size:11px">${s.reason || ''}</td>
+          <td class="mono" style="color:var(--cyan)">${s.symbol || '—'}</td>
+          <td class="mono">${s.openNet != null ? Number(s.openNet).toFixed(3) : '—'}</td>
+          <td class="mono">${s.rtNet != null ? Number(s.rtNet).toFixed(3) : '—'}</td>
+        </tr>`;
+      }).join('') : '<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">Waiting for scans…</td></tr>';
+    }
+
     AB.$('r_tradeBody').innerHTML = trades.length ? trades.map(t => `<tr>
       <td class="muted">${t.openedAt ? new Date(t.openedAt).toLocaleString() : '—'}</td>
       <td class="mono">${t.symbol}</td>
@@ -39,5 +90,5 @@ AB.pages.reports = {
       <td class="muted" style="font-size:11px">${t.message||''}</td>
     </tr>`).join('') : '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Trade history empty</td></tr>';
   },
-  onShow(d) { if (d) this.render(d); }
+  onShow(d) { if (d) this.render(d); this.loadDays(); }
 };

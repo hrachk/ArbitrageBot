@@ -52,6 +52,7 @@ try
     builder.Services.AddSingleton<IMarketDataService, MarketDataService>();
     builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();
     builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
+    builder.Services.AddSingleton<IPaperAnalyticsStore, PaperAnalyticsStore>();
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();
@@ -196,6 +197,11 @@ try
             });
         return Results.Json(new { exchange = result.Exchange, symbol, interval, bars });
     });
+
+    app.MapGet("/api/analytics/summary", (IPaperAnalyticsStore a) => Results.Json(a.GetLiveSummary()));
+    app.MapGet("/api/analytics/events", (IPaperAnalyticsStore a, int take = 80) => Results.Json(a.GetRecentEvents(take)));
+    app.MapGet("/api/analytics/skips", (IPaperAnalyticsStore a, int take = 40) => Results.Json(a.GetRecentSkips(take)));
+    app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 14) => Results.Json(a.GetDaySummaries(maxDays)));
 
     app.MapFallbackToFile("index.html");
 

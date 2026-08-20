@@ -150,6 +150,7 @@
 
       <!-- REPORTS -->
       <section class="page" data-page="reports">
+        <div class="alert info" id="r_analyticsNote">Paper analytics persist under data/paper/ — keep bot running 1–3 days for day summaries.</div>
         <div class="grid grid-6" style="margin-bottom:14px">
           <div class="card"><div class="kpi-label">Realized</div><div class="kpi-value" id="r_realized">—</div></div>
           <div class="card"><div class="kpi-label">Day PnL</div><div class="kpi-value" id="r_day">—</div></div>
@@ -157,6 +158,34 @@
           <div class="card"><div class="kpi-label">Open</div><div class="kpi-value mono" id="r_open">0</div></div>
           <div class="card"><div class="kpi-label">Leverage</div><div class="kpi-value mono" id="r_lev">5x</div></div>
           <div class="card"><div class="kpi-label">Stop</div><div class="kpi-value mono" id="r_stop">—</div></div>
+        </div>
+        <div class="grid grid-2" style="margin-bottom:14px">
+          <div class="card">
+            <h3>Day summary (UTC)</h3>
+            <div id="r_daySummary" class="mono" style="font-size:12px;line-height:1.7">—</div>
+          </div>
+          <div class="card">
+            <h3>Skip reasons (today)</h3>
+            <div id="r_skipReasons" style="font-size:12px">—</div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:14px">
+          <h3>Recent skips / diagnostics</h3>
+          <div class="scroll" style="max-height:220px">
+            <table>
+              <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
+              <tbody id="r_skipBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:14px">
+          <h3>Multi-day history</h3>
+          <div class="scroll" style="max-height:160px">
+            <table>
+              <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best open</th></tr></thead>
+              <tbody id="r_daysBody"></tbody>
+            </table>
+          </div>
         </div>
         <h3 style="font-size:13px;color:var(--muted);margin:0 0 8px">Paper margin by venue</h3>
         <div class="grid grid-3" id="r_margin" style="margin-bottom:14px"></div>

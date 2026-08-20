@@ -13,6 +13,7 @@ public class FuturesPaperService : IFuturesPaperService
 {
     private readonly ArbitrageOptions _options;
     private readonly ILogger<FuturesPaperService> _logger;
+    private readonly IPaperAnalyticsStore _analytics;
     private readonly object _lock = new();
     private readonly ConcurrentDictionary<string, decimal> _margin = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FuturesPaperPosition> _positions = [];
@@ -26,10 +27,14 @@ public class FuturesPaperService : IFuturesPaperService
     public int OpenCount { get { lock (_lock) return _positions.Count; } }
     public int TradeAttempts { get; private set; }
 
-    public FuturesPaperService(IOptions<ArbitrageOptions> options, ILogger<FuturesPaperService> logger)
+    public FuturesPaperService(
+        IOptions<ArbitrageOptions> options,
+        ILogger<FuturesPaperService> logger,
+        IPaperAnalyticsStore analytics)
     {
         _options = options.Value;
         _logger = logger;
+        _analytics = analytics;
     }
 
     public void Initialize(IEnumerable<string> exchanges) => Reset(exchanges);
@@ -127,8 +132,10 @@ public class FuturesPaperService : IFuturesPaperService
                 OpenFeesUsd = openFees,
                 IsOpen = true,
                 Status = "Open",
-                Message = $"Hedge opened | RT+fund {opp.NetAfterFundingPercent:F3}%"
+                Message = $"Hedge opened | open {opp.NetSpreadPercent:F3}% RT {opp.NetRoundTripPercent:F3}%"
             };
+
+            _analytics.RecordOpen(trade, opp);
 
             _positions.Add(new FuturesPaperPosition
             {
@@ -221,7 +228,7 @@ public class FuturesPaperService : IFuturesPaperService
                 if (trade != null)
                 {
                     var idx = _trades.IndexOf(trade);
-                    _trades[idx] = trade with
+                    var closedTrade = trade with
                     {
                         ClosedAt = DateTime.UtcNow,
                         LongExit = longBid,
@@ -237,6 +244,8 @@ public class FuturesPaperService : IFuturesPaperService
                         },
                         Message = $"PnL {pnl:F4} USD | width {currentWidth:F3}% | {reason}"
                     };
+                    _trades[idx] = closedTrade;
+                    _analytics.RecordClose(closedTrade);
                 }
 
                 closed++;
@@ -287,21 +296,26 @@ public class FuturesPaperService : IFuturesPaperService
         }
     }
 
-    private FuturesPaperTrade Fail(FuturesOpportunity opp, string msg) => new()
-    {
-        Symbol = opp.Symbol,
-        LongExchange = opp.LongExchange,
-        ShortExchange = opp.ShortExchange,
-        BaseQty = opp.BaseQty,
-        LongEntry = opp.LongAskVwap,
-        ShortEntry = opp.ShortBidVwap,
-        IsOpen = false,
-        Status = "Skipped",
-        Message = msg
-    };
 
     private void Trim()
     {
         if (_trades.Count > 200) _trades.RemoveRange(200, _trades.Count - 200);
+    }
+
+    private FuturesPaperTrade Fail(FuturesOpportunity opp, string message)
+    {
+        _analytics.RecordSkip(opp, message);
+        return new FuturesPaperTrade
+        {
+            Symbol = opp.Symbol,
+            LongExchange = opp.LongExchange,
+            ShortExchange = opp.ShortExchange,
+            BaseQty = opp.BaseQty,
+            LongEntry = opp.LongAskVwap,
+            ShortEntry = opp.ShortBidVwap,
+            IsOpen = false,
+            Status = "Skipped",
+            Message = message
+        };
     }
 }

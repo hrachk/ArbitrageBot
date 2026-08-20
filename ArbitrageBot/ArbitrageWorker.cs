@@ -19,6 +19,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ArbitrageState _state;
     private readonly IHubContext<ArbitrageHub> _hub;
     private readonly ILogger<ArbitrageWorker> _logger;
+    private readonly IPaperAnalyticsStore _analytics;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
 
     public ArbitrageWorker(
@@ -32,7 +33,8 @@ public class ArbitrageWorker : BackgroundService
         IOptions<ArbitrageOptions> options,
         ArbitrageState state,
         IHubContext<ArbitrageHub> hub,
-        ILogger<ArbitrageWorker> logger)
+        ILogger<ArbitrageWorker> logger,
+        IPaperAnalyticsStore analytics)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -45,6 +47,7 @@ public class ArbitrageWorker : BackgroundService
         _state = state;
         _hub = hub;
         _logger = logger;
+        _analytics = analytics;
 
         _state.StrategyMode = _options.StrategyMode;
         _state.Mode = _options.PaperTrading ? "PAPER" : "LIVE";
@@ -177,12 +180,20 @@ public class ArbitrageWorker : BackgroundService
             return (l.BestBid, s.BestAsk);
         }, _options.FuturesCloseBelowNetPercent);
 
+        decimal? bestOpen = opps.Count > 0 ? opps.Max(x => x.NetSpreadPercent) : null;
+        decimal? bestRt = opps.Count > 0 ? opps.Max(x => x.NetRoundTripPercent) : null;
+        _analytics.RecordScan(opps.Count, bestOpen, bestRt, _options.MinProfitPercent);
+
         if (opps.Count > 0)
         {
             _logger.LogInformation("Futures scan: {N} candidate(s), best RT={Best:F3}% open={Open:F3}%",
-                opps.Count,
-                opps.Max(x => x.NetRoundTripPercent),
-                opps.Max(x => x.NetSpreadPercent));
+                opps.Count, bestRt, bestOpen);
+        }
+        else
+        {
+            // No candidates above threshold — record diagnostic skip for visibility
+            _analytics.RecordSkip(null, "no-candidates-above-min",
+                $"minOpen={_options.MinProfitPercent:F3}% requireRT={_options.FuturesRequireRoundTripEdge}");
         }
 
         if (opps.Count > 0 && _options.PaperTrading && _options.PaperAutoExecute)
@@ -196,9 +207,14 @@ public class ArbitrageWorker : BackgroundService
                     _logger.LogInformation("Opened futures paper hedge: {T}", o.ToString());
                     break;
                 }
-                _logger.LogDebug("Paper skip {Sym}: {Msg}", o.Symbol, trade.Message);
+                _logger.LogInformation("Paper skip {Sym}: {Msg} open={Open:F3}% RT={Rt:F3}%",
+                    o.Symbol, trade.Message, o.NetSpreadPercent, o.NetRoundTripPercent);
             }
         }
+
+        // Expose analytics on state for UI
+        _state.PaperAnalytics = _analytics.GetLiveSummary();
+        _state.PaperRecentSkips = _analytics.GetRecentSkips(25);
 
         PushFuturesPaper();
     }

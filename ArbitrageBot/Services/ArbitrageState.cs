@@ -40,6 +40,8 @@ public class ArbitrageState
     public IReadOnlyDictionary<string, Dictionary<string, decimal>> PaperBalances { get; private set; } =
         new Dictionary<string, Dictionary<string, decimal>>(StringComparer.OrdinalIgnoreCase);
     public PaperTrade? LastPaperTrade { get; private set; }
+    public object? PaperAnalytics { get; set; }
+    public object? PaperRecentSkips { get; set; }
 
     public void UpdateScan(IReadOnlyList<ArbitrageOpportunity> opportunities, Dictionary<string, Dictionary<string, BookTicker>>? tickersBySymbol = null)
     {
@@ -155,6 +157,8 @@ public class ArbitrageState
                 strategyNote = StrategyNote,
                 strategyMode = StrategyMode,
                 futuresPaper = FuturesPaper,
+                paperAnalytics = PaperAnalytics,
+                paperRecentSkips = PaperRecentSkips,
                 dynamicSymbols = DynamicSymbols,
                 discoveredSymbols = DiscoveredSymbols,
                 discoverySource = DiscoverySource,
