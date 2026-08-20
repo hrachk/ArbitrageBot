@@ -55,7 +55,7 @@ public class ArbitrageWorker : BackgroundService
         _state.QuoteSize = _options.QuoteSize;
         _state.DynamicSymbols = _options.DynamicSymbols;
         _state.StrategyNote = _options.IsFuturesCross
-            ? "FuturesCross (realistic paper): LONG cheap perp + SHORT rich perp. Round-trip fees + funding. Majors BTC/ETH/BNB excluded — mid-alts only. Margin only, no transfers."
+            ? "PROFESSIONAL PAPER: LONG cheap / SHORT rich on 5 venues. Size~2k USDT/leg, lev 5x, multi-open. Collect stats 1–3d before live. Majors excluded. Not real orders."
             : "Spot inventory arb: buy cheap / sell rich with pre-funded balances.";
     }
 
@@ -198,14 +198,19 @@ public class ArbitrageWorker : BackgroundService
 
         if (opps.Count > 0 && _options.PaperTrading && _options.PaperAutoExecute)
         {
+            // Professional paper: fill several hedges per cycle (until max positions / skips)
+            var openedThisCycle = 0;
+            var maxPerCycle = Math.Max(1, _options.FuturesMaxOpenPositions);
             foreach (var o in opps.OrderByDescending(x => x.NetSpreadPercent))
             {
+                if (openedThisCycle >= maxPerCycle) break;
                 var trade = _futPaper.TryOpen(o);
                 if (trade is null) continue;
                 if (trade.Status == "Open")
                 {
-                    _logger.LogInformation("Opened futures paper hedge: {T}", o.ToString());
-                    break;
+                    openedThisCycle++;
+                    _logger.LogInformation("Opened futures paper hedge ({N}): {T}", openedThisCycle, o.ToString());
+                    continue;
                 }
                 _logger.LogInformation("Paper skip {Sym}: {Msg} open={Open:F3}% RT={Rt:F3}%",
                     o.Symbol, trade.Message, o.NetSpreadPercent, o.NetRoundTripPercent);

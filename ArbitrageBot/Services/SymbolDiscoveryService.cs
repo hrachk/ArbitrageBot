@@ -84,6 +84,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         await MergeHttpBinanceAsync(volumes, excluded, ct);
         await MergeHttpBybitAsync(volumes, excluded, ct);
         await MergeHttpOkxAsync(volumes, excluded, ct);
+        await MergeHttpBitgetAsync(volumes, excluded, ct);
+        await MergeHttpGateAsync(volumes, excluded, ct);
 
         // Optional supplemental via library for Bitget/Gate if configured
         try
@@ -297,6 +299,92 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "OKX public ticker fetch failed");
+        }
+    }
+
+
+    private async Task MergeHttpBitgetAsync(
+        Dictionary<string, Dictionary<string, decimal>> volumes,
+        HashSet<string> excluded,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync(
+                "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Bitget tickers HTTP {Code}", (int)resp.StatusCode);
+                return;
+            }
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return;
+            var n = 0;
+            foreach (var el in data.EnumerateArray())
+            {
+                var sym = el.TryGetProperty("symbol", out var s) ? s.GetString() ?? "" : "";
+                if (!sym.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)) continue;
+                var baseAsset = BaseOf(sym);
+                if (excluded.Contains(baseAsset)) continue;
+                // usdtVolume or quoteVolume
+                var volStr = el.TryGetProperty("usdtVolume", out var uv) ? uv.GetString()
+                    : el.TryGetProperty("quoteVolume", out var qv) ? qv.GetString() : null;
+                if (!decimal.TryParse(volStr,
+                        System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var vol) || vol <= 0)
+                    continue;
+                AddVol(volumes, sym, "Bitget", vol);
+                n++;
+            }
+            _logger.LogInformation("Bitget USDT-FUTURES: {N} tickers with volume", n);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bitget public ticker fetch failed");
+        }
+    }
+
+    private async Task MergeHttpGateAsync(
+        Dictionary<string, Dictionary<string, decimal>> volumes,
+        HashSet<string> excluded,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync("https://api.gateio.ws/api/v4/futures/usdt/tickers", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("GateIo tickers HTTP {Code}", (int)resp.StatusCode);
+                return;
+            }
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var n = 0;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                // contract like BTC_USDT
+                var contract = el.TryGetProperty("contract", out var c) ? c.GetString() ?? "" : "";
+                if (!contract.EndsWith("_USDT", StringComparison.OrdinalIgnoreCase)) continue;
+                var baseAsset = contract.Split('_')[0];
+                if (excluded.Contains(baseAsset)) continue;
+                var sym = baseAsset + "USDT";
+                // volume_24h_quote or volume_24h_settle
+                var volStr = el.TryGetProperty("volume_24h_quote", out var vq) ? vq.GetString()
+                    : el.TryGetProperty("volume_24h_settle", out var vs) ? vs.GetString()
+                    : el.TryGetProperty("volume_24h", out var v) ? v.GetString() : null;
+                if (!decimal.TryParse(volStr,
+                        System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var vol) || vol <= 0)
+                    continue;
+                AddVol(volumes, sym, "GateIo", vol);
+                n++;
+            }
+            _logger.LogInformation("GateIo USDT futures: {N} tickers with volume", n);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "GateIo public ticker fetch failed");
         }
     }
 
