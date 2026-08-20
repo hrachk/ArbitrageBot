@@ -16,6 +16,7 @@ public class FuturesPaperService : IFuturesPaperService
     private readonly ILogger<FuturesPaperService> _logger;
     private readonly IPaperAnalyticsStore _analytics;
     private readonly IWebHostEnvironment _env;
+    private readonly RuntimeRiskConfig _runtime;
     private readonly object _lock = new();
     private static readonly JsonSerializerOptions SnapshotJson = new() { WriteIndented = true };
     private readonly ConcurrentDictionary<string, decimal> _margin = new(StringComparer.OrdinalIgnoreCase);
@@ -34,13 +35,17 @@ public class FuturesPaperService : IFuturesPaperService
         IOptions<ArbitrageOptions> options,
         ILogger<FuturesPaperService> logger,
         IPaperAnalyticsStore analytics,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        RuntimeRiskConfig runtime)
     {
         _options = options.Value;
         _logger = logger;
         _analytics = analytics;
         _env = env;
+        _runtime = runtime;
     }
+
+    private ArbitrageOptions R => _runtime.Snapshot;
 
     private string SnapshotPath => Path.Combine(_env.ContentRootPath, "data", "paper", "open-state.json");
 
@@ -60,7 +65,7 @@ public class FuturesPaperService : IFuturesPaperService
         lock (_lock)
         {
             _margin.Clear();
-            var start = _options.PaperStartingQuote > 0 ? _options.PaperStartingQuote : 10_000m;
+            var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
             foreach (var ex in exchanges)
                 _margin[ex] = start;
             _positions.Clear();
@@ -81,16 +86,16 @@ public class FuturesPaperService : IFuturesPaperService
         lock (_lock)
         {
             TradeAttempts++;
-            if (!_options.PaperTrading) return Fail(opp, "Paper disabled");
+            if (!R.PaperTrading) return Fail(opp, "Paper disabled");
 
-            var cooldown = _options.PaperCooldownMs > 0 ? _options.PaperCooldownMs : 8000;
+            var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
             if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
                 return Fail(opp, $"Cooldown {cooldown}ms");
 
-            if (_options.PaperRequireFullFill && !opp.FullyFilled)
+            if (R.PaperRequireFullFill && !opp.FullyFilled)
                 return Fail(opp, "Require full fill");
 
-            var maxPos = _options.FuturesMaxOpenPositions > 0 ? _options.FuturesMaxOpenPositions : 3;
+            var maxPos = R.FuturesMaxOpenPositions > 0 ? R.FuturesMaxOpenPositions : 3;
             if (_positions.Count >= maxPos)
                 return Fail(opp, $"Max open positions {maxPos}");
 
@@ -105,14 +110,14 @@ public class FuturesPaperService : IFuturesPaperService
                 DailyRealizedPnlUsd = 0;
             }
 
-            var dayLimit = _options.FuturesDailyLossLimitUsd;
+            var dayLimit = R.FuturesDailyLossLimitUsd;
             if (dayLimit < 0 && DailyRealizedPnlUsd <= dayLimit)
                 return Fail(opp, $"Daily loss limit {dayLimit:F0} USDT hit ({DailyRealizedPnlUsd:F2})");
 
-            var leverage = _options.FuturesPaperLeverage > 0 ? _options.FuturesPaperLeverage : 5m;
+            var leverage = R.FuturesPaperLeverage > 0 ? R.FuturesPaperLeverage : 5m;
             if (leverage > 10m) leverage = 10m; // hard cap for paper safety
 
-            var notionalCap = _options.FuturesMaxNotionalUsd > 0 ? _options.FuturesMaxNotionalUsd : 2500m;
+            var notionalCap = R.FuturesMaxNotionalUsd > 0 ? R.FuturesMaxNotionalUsd : 2500m;
             if (opp.NotionalUsd > notionalCap)
                 return Fail(opp, $"Notional {opp.NotionalUsd:F0} > max {notionalCap:F0}");
 
@@ -125,7 +130,7 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Low margin on {opp.ShortExchange}");
 
             // Per-venue usage cap: do not lock more than X% of current free margin in one hedge leg
-            var usage = _options.FuturesMaxMarginUsagePercent > 0 ? _options.FuturesMaxMarginUsagePercent : 0.25m;
+            var usage = R.FuturesMaxMarginUsagePercent > 0 ? R.FuturesMaxMarginUsagePercent : 0.25m;
             if (usage > 1m) usage = 1m;
             if (marginEach > longBal * usage)
                 return Fail(opp, $"Margin leg > {usage:P0} free on {opp.LongExchange}");
@@ -181,6 +186,72 @@ public class FuturesPaperService : IFuturesPaperService
         }
     }
 
+
+    public FuturesPaperTrade? ForceClose(
+        Guid tradeId,
+        Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks)
+    {
+        lock (_lock)
+        {
+            var pos = _positions.FirstOrDefault(p => p.TradeId == tradeId);
+            if (pos == null) return null;
+            var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
+            if (marks == null) return FailClose("no marks");
+            var (longBid, shortAsk) = marks.Value;
+            if (longBid <= 0 || shortAsk <= 0) return FailClose("bad marks");
+
+            var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
+            var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
+            var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
+            var pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
+                      + (longBid - pos.LongEntry) * pos.BaseQty
+                      - closeFees;
+            var marginEach = pos.LockedMarginUsd > 0
+                ? pos.LockedMarginUsd
+                : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
+
+            _margin.AddOrUpdate(pos.LongExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
+            _margin.AddOrUpdate(pos.ShortExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
+            RealizedPnlUsd += pnl;
+            if (DateTime.UtcNow.Date != _dayUtc) { _dayUtc = DateTime.UtcNow.Date; DailyRealizedPnlUsd = 0; }
+            DailyRealizedPnlUsd += pnl;
+            _positions.Remove(pos);
+
+            FuturesPaperTrade? closedTrade = null;
+            var trade = _trades.FirstOrDefault(x => x.Id == pos.TradeId);
+            if (trade != null)
+            {
+                var idx = _trades.IndexOf(trade);
+                closedTrade = trade with
+                {
+                    ClosedAt = DateTime.UtcNow,
+                    LongExit = longBid,
+                    ShortExit = shortAsk,
+                    CloseFeesUsd = closeFees,
+                    RealizedPnlUsd = pnl,
+                    IsOpen = false,
+                    Status = "Closed(manual)",
+                    Message = $"Manual close | PnL {pnl:F4} USD"
+                };
+                _trades[idx] = closedTrade;
+                _analytics.RecordClose(closedTrade);
+            }
+            SaveOpenState();
+            _logger.LogInformation("FUT PAPER MANUAL CLOSE {Sym} pnl={Pnl:F4}", pos.Symbol, pnl);
+            return closedTrade;
+        }
+
+        FuturesPaperTrade FailClose(string msg) => new()
+        {
+            Symbol = "?",
+            LongExchange = "?",
+            ShortExchange = "?",
+            Status = "Skipped",
+            Message = msg,
+            IsOpen = false
+        };
+    }
+
     public int TryCloseConverged(
         Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks,
         decimal closeWhenNetBelowPercent)
@@ -198,8 +269,8 @@ public class FuturesPaperService : IFuturesPaperService
                 // Close: sell long at bid, buy back short at ask
                 var exitSpreadPct = (longBid - shortAsk) / shortAsk * 100m; // usually negative when converged
                 // Entry locked edge roughly (shortEntry - longEntry); exit cost is crossing
-                var longFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
-                var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
+                var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
+                var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
                 var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
                 var pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
                           + (longBid - pos.LongEntry) * pos.BaseQty
@@ -209,7 +280,7 @@ public class FuturesPaperService : IFuturesPaperService
                     ? (shortAsk - longBid) / longBid * 100m
                     : 0m;
 
-                var holdMin = _options.FuturesMaxHoldMinutes > 0 ? _options.FuturesMaxHoldMinutes : 30;
+                var holdMin = R.FuturesMaxHoldMinutes > 0 ? R.FuturesMaxHoldMinutes : 30;
                 var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
 
                 // Converged: width below threshold OR shrunk to <= 40% of entry width
@@ -220,7 +291,7 @@ public class FuturesPaperService : IFuturesPaperService
 
                 // Risk: force close on stop-loss (unrealized)
                 pos.UnrealizedPnlUsd = pnl; // approximate mark with current exit prices
-                var stop = _options.FuturesStopLossUsd;
+                var stop = R.FuturesStopLossUsd;
                 var stopHit = stop < 0 && pnl <= stop;
 
                 if (!converged && !timedOut && !stopHit) continue;
@@ -303,8 +374,8 @@ public class FuturesPaperService : IFuturesPaperService
                 var (longBid, shortAsk) = marks.Value;
                 if (longBid <= 0 || shortAsk <= 0) continue;
                 // Close long at bid, cover short at ask
-                var longFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m) / 100m;
-                var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m) / 100m;
+                var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m) / 100m;
+                var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m) / 100m;
                 var longPnl = (longBid - pos.LongEntry) * pos.BaseQty - pos.LongEntry * pos.BaseQty * longFee - longBid * pos.BaseQty * longFee;
                 var shortPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty - pos.ShortEntry * pos.BaseQty * shortFee - shortAsk * pos.BaseQty * shortFee;
                 pos.UnrealizedPnlUsd = longPnl + shortPnl;
@@ -351,7 +422,7 @@ public class FuturesPaperService : IFuturesPaperService
             lock (_lock)
             {
                 _margin.Clear();
-                var start = _options.PaperStartingQuote > 0 ? _options.PaperStartingQuote : 10_000m;
+                var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
                 foreach (var ex in exchanges)
                     _margin[ex] = start;
                 if (snap.Margin != null)

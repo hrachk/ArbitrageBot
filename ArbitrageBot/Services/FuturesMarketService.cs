@@ -19,6 +19,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private readonly IExchangeRestClient _rest;
     private readonly ActiveMarketContext _markets;
     private readonly ArbitrageOptions _options;
+    private readonly RuntimeRiskConfig _runtime;
     private readonly ILogger<FuturesMarketService> _logger;
 
     private readonly ConcurrentDictionary<string, ISymbolOrderBook> _books = new(StringComparer.OrdinalIgnoreCase);
@@ -41,7 +42,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         IExchangeRestClient rest,
         ActiveMarketContext markets,
         IOptions<ArbitrageOptions> options,
-        ILogger<FuturesMarketService> logger)
+        ILogger<FuturesMarketService> logger,
+        RuntimeRiskConfig runtime)
     {
         _factory = factory;
         _socket = socket;
@@ -49,6 +51,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         _markets = markets;
         _options = options.Value;
         _logger = logger;
+        _runtime = runtime;
 
         // Exchange-specific Shared API parameters for USDT-M perps
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
@@ -365,7 +368,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             await RefreshFundingCacheAsync(ct);
 
         var list = new List<FuturesOpportunity>();
-        var notional = _options.QuoteSize > 0 ? _options.QuoteSize : 500m;
+        var notional = _runtime.Snapshot.QuoteSize > 0 ? _runtime.Snapshot.QuoteSize : 500m;
 
         foreach (var symbol in _markets.Symbols)
         {
@@ -404,14 +407,15 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
                     // Funding: positive rate => longs pay shorts. Hedge funding PnL % ≈ (FR_short - FR_long) * periods * 100
-                    var periods = _options.FuturesFundingPeriods > 0 ? _options.FuturesFundingPeriods : 1;
+                    var periods = _runtime.Snapshot.FuturesFundingPeriods > 0 ? _runtime.Snapshot.FuturesFundingPeriods : 1;
                     decimal fundPct = 0;
                     if (_options.FuturesIncludeFunding && frLong is not null && frShort is not null)
                         fundPct = (frShort.Value - frLong.Value) * periods * 100m;
 
                     var netAfterFund = netRt + fundPct;
-                    var thresholdMetric = _options.FuturesRequireRoundTripEdge
-                        ? (_options.FuturesIncludeFunding ? netAfterFund : netRt)
+                    var ro = _runtime.Snapshot;
+                    var thresholdMetric = ro.FuturesRequireRoundTripEdge
+                        ? (ro.FuturesIncludeFunding ? netAfterFund : netRt)
                         : netOpen;
 
                     var estPnl = (shortVwap - longVwap) * qty
@@ -419,7 +423,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         - shortVwap * qty * (shortFee / 100m) * 2m
                         + notional * fundPct / 100m;
 
-                    if (thresholdMetric < _options.MinProfitPercent) continue;
+                    if (thresholdMetric < _runtime.Snapshot.MinProfitPercent) continue;
 
                     list.Add(new FuturesOpportunity
                     {

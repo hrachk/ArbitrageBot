@@ -53,6 +53,7 @@ try
     builder.Services.AddSingleton<IPaperExecutionService, PaperExecutionService>();
     builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
     builder.Services.AddSingleton<IPaperAnalyticsStore, PaperAnalyticsStore>();
+    builder.Services.AddSingleton<RuntimeRiskConfig>();
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();
@@ -122,13 +123,67 @@ try
     });
 
     
-    app.MapGet("/api/settings", (ISettingsStore store, IOptions<ArbitrageOptions> opt) =>
-        Results.Json(store.GetPublicSettings(opt.Value)));
+    app.MapGet("/api/settings", (ISettingsStore store, RuntimeRiskConfig risk) =>
+        Results.Json(store.GetPublicSettings(risk.Snapshot)));
 
-    app.MapPost("/api/settings/trading", async (TradingUiSettings body, ISettingsStore store) =>
+    app.MapPost("/api/settings/trading", async (TradingUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
     {
         await store.SaveTradingAsync(body);
-        return Results.Ok(new { saved = true });
+        risk.ApplyTrading(body);
+        return Results.Ok(new { saved = true, appliedRuntime = true });
+    });
+
+    app.MapPost("/api/settings/risk", async (RiskUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
+    {
+        risk.ApplyRisk(body);
+        // persist overlapping trading fields
+        await store.SaveTradingAsync(new TradingUiSettings
+        {
+            StrategyMode = risk.Snapshot.StrategyMode,
+            PaperTrading = risk.Snapshot.PaperTrading,
+            PaperAutoExecute = risk.Snapshot.PaperAutoExecute,
+            MinProfitPercent = risk.Snapshot.MinProfitPercent,
+            QuoteSize = risk.Snapshot.QuoteSize,
+            FuturesPaperLeverage = risk.Snapshot.FuturesPaperLeverage,
+            FuturesMaxOpenPositions = risk.Snapshot.FuturesMaxOpenPositions,
+            FuturesStopLossUsd = risk.Snapshot.FuturesStopLossUsd,
+            FuturesDailyLossLimitUsd = risk.Snapshot.FuturesDailyLossLimitUsd
+        });
+        return Results.Ok(new { saved = true, appliedRuntime = true, risk = risk.Snapshot });
+    });
+
+    app.MapGet("/api/settings/risk", (RuntimeRiskConfig risk) => Results.Json(new
+    {
+        minProfitPercent = risk.Snapshot.MinProfitPercent,
+        quoteSize = risk.Snapshot.QuoteSize,
+        leverage = risk.Snapshot.FuturesPaperLeverage,
+        maxOpenPositions = risk.Snapshot.FuturesMaxOpenPositions,
+        maxHoldMinutes = risk.Snapshot.FuturesMaxHoldMinutes,
+        closeBelowNetPercent = risk.Snapshot.FuturesCloseBelowNetPercent,
+        maxMarginUsagePercent = risk.Snapshot.FuturesMaxMarginUsagePercent,
+        maxNotionalUsd = risk.Snapshot.FuturesMaxNotionalUsd,
+        stopLossUsd = risk.Snapshot.FuturesStopLossUsd,
+        dailyLossLimitUsd = risk.Snapshot.FuturesDailyLossLimitUsd,
+        paperCooldownMs = risk.Snapshot.PaperCooldownMs,
+        paperRequireFullFill = risk.Snapshot.PaperRequireFullFill,
+        requireRoundTripEdge = risk.Snapshot.FuturesRequireRoundTripEdge,
+        includeFunding = risk.Snapshot.FuturesIncludeFunding
+    }));
+
+    app.MapPost("/api/paper/close/{tradeId:guid}", (
+        Guid tradeId,
+        IFuturesPaperService paper,
+        IFuturesMarketService market) =>
+    {
+        var result = paper.ForceClose(tradeId, (symbol, longEx, shortEx) =>
+        {
+            var books = market.GetBookTickers(symbol);
+            if (!books.TryGetValue(longEx, out var l) || !books.TryGetValue(shortEx, out var s))
+                return null;
+            return (l.BestBid, s.BestAsk);
+        });
+        if (result == null) return Results.NotFound(new { error = "position not found" });
+        return Results.Ok(result);
     });
 
     app.MapPost("/api/settings/exchanges/{name}", async (string name, ExchangeCredential body, ISettingsStore store) =>

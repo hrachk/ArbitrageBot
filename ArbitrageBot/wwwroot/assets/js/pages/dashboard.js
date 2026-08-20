@@ -46,25 +46,11 @@ AB.pages.dashboard = {
 
     // recent trades
     const trades = fp.trades || [];
-    // open positions cards
     const positions = fp.positions || [];
     if (AB.$('d_positions')) {
-      AB.$('d_positions').innerHTML = positions.length ? positions.map(p => `
-        <div class="pos-card">
-          <div>
-            <div class="title mono">${p.symbol}</div>
-            <div class="sub">
-              <span class="pos-side long">LONG ${p.longExchange}</span>
-              <span class="pos-side short">SHORT ${p.shortExchange}</span>
-              · qty ${AB.fmt(p.baseQty, 5)}
-              · hold ${p.holdSeconds != null ? Math.floor(p.holdSeconds/60)+'m' : '—'}
-            </div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-size:16px;font-weight:700">${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</div>
-            <div class="sub mono">width ${AB.fmt(p.currentWidthPercent, 3)}%</div>
-          </div>
-        </div>`).join('') : '<div class="empty-state">Нет открытых paper-хеджей</div>';
+      AB.$('d_positions').innerHTML = positions.length
+        ? positions.map(p => AB.posCardHtml(p)).join('')
+        : '<div class="empty-state">Нет открытых paper-хеджей</div>';
     }
 
     AB.$('d_tradeBody').innerHTML = trades.length ? trades.slice(0,10).map(t => {

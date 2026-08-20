@@ -21,6 +21,17 @@ AB.pages.settings = {
     AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 3;
     AB.$('s_stop').value = t.futuresStopLossUsd ?? -30;
     AB.$('s_dayLimit').value = t.futuresDailyLossLimitUsd ?? -100;
+    // risk extras from /api/settings/risk if present later
+    AB.api.get('/api/settings/risk').then(r => {
+      if (AB.$('s_hold')) AB.$('s_hold').value = r.maxHoldMinutes ?? 20;
+      if (AB.$('s_closeWidth')) AB.$('s_closeWidth').value = r.closeBelowNetPercent ?? 0.02;
+      if (AB.$('s_marginUse')) AB.$('s_marginUse').value = r.maxMarginUsagePercent ?? 0.25;
+      if (AB.$('s_maxNotional')) AB.$('s_maxNotional').value = r.maxNotionalUsd ?? 6000;
+      if (AB.$('s_cooldown')) AB.$('s_cooldown').value = r.paperCooldownMs ?? 4000;
+      if (AB.$('s_fullFill')) AB.$('s_fullFill').checked = !!r.paperRequireFullFill;
+      if (AB.$('s_reqRt')) AB.$('s_reqRt').checked = !!r.requireRoundTripEdge;
+      if (AB.$('s_funding')) AB.$('s_funding').checked = r.includeFunding !== false;
+    }).catch(()=>{});
 
     const conns = s.connections || {};
     AB.$('s_exchanges').innerHTML = Object.entries(conns).map(([name, c]) => `
@@ -78,7 +89,7 @@ AB.pages.settings = {
 };
 
 document.getElementById('btnSaveTrading')?.addEventListener('click', async () => {
-  const body = {
+  const trading = {
     strategyMode: AB.$('s_strategy').value,
     paperTrading: AB.$('s_paper').checked,
     paperAutoExecute: AB.$('s_auto').checked,
@@ -89,10 +100,27 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     futuresStopLossUsd: parseFloat(AB.$('s_stop').value),
     futuresDailyLossLimitUsd: parseFloat(AB.$('s_dayLimit').value)
   };
+  const risk = {
+    minProfitPercent: trading.minProfitPercent,
+    quoteSize: trading.quoteSize,
+    leverage: trading.futuresPaperLeverage,
+    maxOpenPositions: trading.futuresMaxOpenPositions,
+    stopLossUsd: trading.futuresStopLossUsd,
+    dailyLossLimitUsd: trading.futuresDailyLossLimitUsd,
+    maxHoldMinutes: parseInt(AB.$('s_hold')?.value || '20', 10),
+    closeBelowNetPercent: parseFloat(AB.$('s_closeWidth')?.value || '0.02'),
+    maxMarginUsagePercent: parseFloat(AB.$('s_marginUse')?.value || '0.25'),
+    maxNotionalUsd: parseFloat(AB.$('s_maxNotional')?.value || '6000'),
+    paperCooldownMs: parseInt(AB.$('s_cooldown')?.value || '4000', 10),
+    paperRequireFullFill: !!AB.$('s_fullFill')?.checked,
+    requireRoundTripEdge: !!AB.$('s_reqRt')?.checked,
+    includeFunding: !!AB.$('s_funding')?.checked
+  };
   try {
-    await AB.api.post('/api/settings/trading', body);
+    await AB.api.post('/api/settings/trading', trading);
+    await AB.api.post('/api/settings/risk', risk);
     AB.$('s_msg').className = 'alert ok';
-    AB.$('s_msg').textContent = 'Trading settings saved to local store. Restart worker / process to apply runtime options fully (Phase 1: persistence; live apply next).';
+    AB.$('s_msg').textContent = 'Trading + risk applied at runtime (paper engine uses new limits immediately).';
     AB.$('s_msg').classList.remove('hidden');
   } catch (e) {
     AB.$('s_msg').className = 'alert warn';

@@ -8,67 +8,42 @@ AB.pages.market = {
   chartInterval: '15m',
   loadingChart: false,
 
-  ensureChart() {
-    const el = AB.$('m_chart');
-    if (!el || typeof LightweightCharts === 'undefined') return;
-    if (this.chart) return;
-    this.chart = LightweightCharts.createChart(el, {
-      layout: {
-        background: { color: '#0a101c' },
-        textColor: '#94a3b8',
-      },
-      grid: {
-        vertLines: { color: '#1e293b' },
-        horzLines: { color: '#1e293b' },
-      },
-      rightPriceScale: { borderColor: '#1e293b' },
-      timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false },
-      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-      height: 380,
-      width: el.clientWidth,
-    });
-    this.candleSeries = this.chart.addCandlestickSeries({
-      upColor: '#34d399',
-      downColor: '#fb7185',
-      borderUpColor: '#34d399',
-      borderDownColor: '#fb7185',
-      wickUpColor: '#34d399',
-      wickDownColor: '#fb7185',
-    });
-    window.addEventListener('resize', () => {
-      if (this.chart && el) this.chart.applyOptions({ width: el.clientWidth });
-    });
-  },
+  tvWidget: null,
 
-  async loadChart(symbol, interval) {
-    if (!symbol || this.loadingChart) return;
-    if (symbol === this.chartSymbol && interval === this.chartInterval && this.candleSeries) return;
-    this.loadingChart = true;
-    this.ensureChart();
+  loadChart(symbol, interval) {
+    if (!symbol || typeof TradingView === 'undefined') return;
+    const iv = ({ '1m': '1', '5m': '5', '15m': '15', '1h': '60' })[interval] || '15';
+    if (symbol === this.chartSymbol && iv === this.chartInterval && this.tvWidget) return;
+    this.chartSymbol = symbol;
+    this.chartInterval = iv;
+    const el = AB.$('tv_chart');
+    if (!el) return;
+    el.innerHTML = '';
+    // USDT-M perpetual on TradingView
+    const tvSymbol = 'BINANCE:' + symbol.replace('USDT', '') + 'USDT.P';
     try {
-      const data = await AB.api.get(`/api/klines/${encodeURIComponent(symbol)}?interval=${interval}&limit=150`);
-      const bars = (data.bars || []).map(b => ({
-        time: b.time,
-        open: Number(b.open),
-        high: Number(b.high),
-        low: Number(b.low),
-        close: Number(b.close),
-      }));
-      if (this.candleSeries && bars.length) {
-        this.candleSeries.setData(bars);
-        this.chart.timeScale().fitContent();
-        this.chartSymbol = symbol;
-        this.chartInterval = interval;
-        const last = bars[bars.length - 1];
-        AB.$('m_last').textContent = AB.fmt(last.close, last.close < 1 ? 6 : 4);
-        AB.$('m_last').style.color = last.close >= last.open ? 'var(--emerald)' : 'var(--rose)';
-        AB.$('m_chartSrc').textContent = (data.exchange || 'chart') + ' · ' + interval;
-      }
+      this.tvWidget = new TradingView.widget({
+        autosize: true,
+        symbol: tvSymbol,
+        interval: iv,
+        timezone: 'Etc/UTC',
+        theme: 'dark',
+        style: '1',
+        locale: 'en',
+        toolbar_bg: '#0a101c',
+        enable_publishing: false,
+        hide_top_toolbar: false,
+        hide_legend: false,
+        save_image: false,
+        container_id: 'tv_chart',
+        backgroundColor: '#0a101c',
+        gridColor: 'rgba(30,41,59,0.5)',
+        studies: ['Volume@tv-basicstudies'],
+      });
+      AB.$('m_chartSrc').textContent = tvSymbol + ' · ' + interval;
     } catch (e) {
-      AB.$('m_chartSrc').textContent = 'chart error';
       console.warn(e);
-    } finally {
-      this.loadingChart = false;
+      AB.$('m_chartSrc').textContent = 'TradingView error';
     }
   },
 
@@ -190,24 +165,10 @@ AB.pages.market = {
     const el = AB.$('m_positions');
     if (!el) return;
     if (!positions.length) {
-      el.innerHTML = '<div class="muted" style="padding:12px">No open paper hedges</div>';
+      el.innerHTML = '<div class="empty-state">No open paper hedges</div>';
       return;
     }
-    el.innerHTML = positions.map(p => `<div class="pos-card">
-      <div>
-        <div class="title mono">${p.symbol}</div>
-        <div class="sub">
-          <span class="pos-side long">LONG ${p.longExchange}</span>
-          <span class="pos-side short">SHORT ${p.shortExchange}</span>
-          · entry L ${AB.fmt(p.longEntry)} / S ${AB.fmt(p.shortEntry)}
-        </div>
-        <div class="sub">qty ${AB.fmt(p.baseQty, 5)} · hold ${p.holdSeconds != null ? Math.floor(p.holdSeconds/60)+'m '+ (p.holdSeconds%60)+'s' : '—'}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:16px;font-weight:700">${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</div>
-        <div class="sub mono">width ${AB.fmt(p.currentWidthPercent, 3)}% · entry ${AB.fmt(p.entryWidthPercent, 3)}%</div>
-      </div>
-    </div>`).join('');
+    el.innerHTML = positions.map(p => AB.posCardHtml(p)).join('');
   },
 
   onTick(data, tick) {
@@ -250,12 +211,8 @@ AB.pages.market = {
   },
 
   onShow(data) {
-    this.ensureChart();
     if (data) this.render(data);
-    setTimeout(() => {
-      if (this.chart && AB.$('m_chart'))
-        this.chart.applyOptions({ width: AB.$('m_chart').clientWidth });
-    }, 50);
+    if (this.selected) this.loadChart(this.selected, AB.$('m_interval')?.value || '15m');
   }
 };
 

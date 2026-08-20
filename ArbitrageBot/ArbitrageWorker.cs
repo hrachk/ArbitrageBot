@@ -20,6 +20,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly IHubContext<ArbitrageHub> _hub;
     private readonly ILogger<ArbitrageWorker> _logger;
     private readonly IPaperAnalyticsStore _analytics;
+    private readonly RuntimeRiskConfig _runtime;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
 
@@ -35,7 +36,8 @@ public class ArbitrageWorker : BackgroundService
         ArbitrageState state,
         IHubContext<ArbitrageHub> hub,
         ILogger<ArbitrageWorker> logger,
-        IPaperAnalyticsStore analytics)
+        IPaperAnalyticsStore analytics,
+        RuntimeRiskConfig runtime)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -49,6 +51,7 @@ public class ArbitrageWorker : BackgroundService
         _hub = hub;
         _logger = logger;
         _analytics = analytics;
+        _runtime = runtime;
 
         _state.StrategyMode = _options.StrategyMode;
         _state.Mode = _options.PaperTrading ? "PAPER" : "LIVE";
@@ -179,11 +182,11 @@ public class ArbitrageWorker : BackgroundService
                 return null;
             // close long at bid, cover short at ask
             return (l.BestBid, s.BestAsk);
-        }, _options.FuturesCloseBelowNetPercent);
+        }, _runtime.Snapshot.FuturesCloseBelowNetPercent);
 
         decimal? bestOpen = opps.Count > 0 ? opps.Max(x => x.NetSpreadPercent) : null;
         decimal? bestRt = opps.Count > 0 ? opps.Max(x => x.NetRoundTripPercent) : null;
-        _analytics.RecordScan(opps.Count, bestOpen, bestRt, _options.MinProfitPercent);
+        _analytics.RecordScan(opps.Count, bestOpen, bestRt, _runtime.Snapshot.MinProfitPercent);
 
         if (opps.Count > 0)
         {
@@ -194,7 +197,7 @@ public class ArbitrageWorker : BackgroundService
         {
             _lastNoCandDiagUtc = DateTime.UtcNow;
             _analytics.RecordSkip(null, "no-candidates-above-min",
-                $"minOpen={_options.MinProfitPercent:F3}% requireRT={_options.FuturesRequireRoundTripEdge}");
+                $"minOpen={_runtime.Snapshot.MinProfitPercent:F3}% requireRT={_runtime.Snapshot.FuturesRequireRoundTripEdge}");
         }
 
         if (opps.Count > 0 && _options.PaperTrading && _options.PaperAutoExecute)
@@ -287,6 +290,7 @@ public class ArbitrageWorker : BackgroundService
             closeBelowNetPercent = _options.FuturesCloseBelowNetPercent,
             positions = positions.Select(p => new
             {
+                tradeId = p.TradeId,
                 p.Symbol,
                 p.LongExchange,
                 p.ShortExchange,
@@ -298,7 +302,9 @@ public class ArbitrageWorker : BackgroundService
                 currentWidthPercent = p.CurrentWidthPercent,
                 entryWidthPercent = p.EntryWidthPercent,
                 openedAt = p.OpenedAt,
-                holdSeconds = (int)(DateTime.UtcNow - p.OpenedAt).TotalSeconds
+                holdSeconds = (int)(DateTime.UtcNow - p.OpenedAt).TotalSeconds,
+                leverage = p.Leverage,
+                lockedMarginUsd = p.LockedMarginUsd
             }).ToList(),
             trades = trades.Select(t => new
             {

@@ -73,6 +73,39 @@ AB.onSnapshot = (data) => {
 };
 
 AB.pages = {};
+AB.closePaper = async (tradeId) => {
+  if (!tradeId || !confirm('Close this paper hedge at market marks?')) return;
+  try {
+    await AB.api.post('/api/paper/close/' + tradeId);
+    const s = await AB.api.get('/api/snapshot');
+    AB.onSnapshot(s);
+  } catch (e) {
+    alert('Close failed: ' + e.message);
+  }
+};
+AB.posCardHtml = (p) => {
+  const u = p.unrealizedPnlUsd ?? p.unrealizedPnl;
+  const hold = p.holdSeconds != null ? (Math.floor(p.holdSeconds/60) + 'm ' + (p.holdSeconds%60) + 's') : '—';
+  const id = p.tradeId || p.id || p.Id || '';
+  return `<div class="pos-card">
+    <div>
+      <div class="title mono">${p.symbol}</div>
+      <div class="sub">
+        <span class="pos-side long">LONG ${p.longExchange}</span>
+        <span class="pos-side short">SHORT ${p.shortExchange}</span>
+      </div>
+      <div class="sub mono" style="margin-top:6px">
+        entry L ${AB.fmt(p.longEntry)} / S ${AB.fmt(p.shortEntry)} · qty ${AB.fmt(p.baseQty, 5)}
+      </div>
+      <div class="sub">hold ${hold} · width ${AB.fmt(p.currentWidthPercent, 3)}% (entry ${AB.fmt(p.entryWidthPercent, 3)}%)</div>
+    </div>
+    <div style="text-align:right;display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+      <div style="font-size:16px;font-weight:700">${AB.fmtUsd(u)}</div>
+      <button class="btn danger" style="padding:6px 10px" onclick="AB.closePaper('${id}')">Close</button>
+    </div>
+  </div>`;
+};
+
 
 AB.startSignalR = async () => {
   const connection = new signalR.HubConnectionBuilder()
