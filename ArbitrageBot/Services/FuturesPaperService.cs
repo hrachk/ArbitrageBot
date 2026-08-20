@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Models;
 using Microsoft.Extensions.Options;
@@ -14,7 +15,9 @@ public class FuturesPaperService : IFuturesPaperService
     private readonly ArbitrageOptions _options;
     private readonly ILogger<FuturesPaperService> _logger;
     private readonly IPaperAnalyticsStore _analytics;
+    private readonly IWebHostEnvironment _env;
     private readonly object _lock = new();
+    private static readonly JsonSerializerOptions SnapshotJson = new() { WriteIndented = true };
     private readonly ConcurrentDictionary<string, decimal> _margin = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FuturesPaperPosition> _positions = [];
     private readonly List<FuturesPaperTrade> _trades = [];
@@ -30,14 +33,27 @@ public class FuturesPaperService : IFuturesPaperService
     public FuturesPaperService(
         IOptions<ArbitrageOptions> options,
         ILogger<FuturesPaperService> logger,
-        IPaperAnalyticsStore analytics)
+        IPaperAnalyticsStore analytics,
+        IWebHostEnvironment env)
     {
         _options = options.Value;
         _logger = logger;
         _analytics = analytics;
+        _env = env;
     }
 
-    public void Initialize(IEnumerable<string> exchanges) => Reset(exchanges);
+    private string SnapshotPath => Path.Combine(_env.ContentRootPath, "data", "paper", "open-state.json");
+
+    /// <summary>
+    /// Start paper engine: restore open hedges from disk if present, else fresh balances.
+    /// </summary>
+    public void Initialize(IEnumerable<string> exchanges)
+    {
+        var list = exchanges.ToList();
+        if (TryRestore(list))
+            return;
+        Reset(list);
+    }
 
     public void Reset(IEnumerable<string> exchanges)
     {
@@ -55,6 +71,7 @@ public class FuturesPaperService : IFuturesPaperService
             _dayUtc = DateTime.UtcNow.Date;
             TradeAttempts = 0;
             _lastOpenUtc = DateTime.MinValue;
+            ClearOpenStateFile();
             _logger.LogInformation("Futures paper margin initialized: {Start} USDT x {N} exchanges", start, _margin.Count);
         }
     }
@@ -157,6 +174,7 @@ public class FuturesPaperService : IFuturesPaperService
             _trades.Insert(0, trade);
             Trim();
             _lastOpenUtc = DateTime.UtcNow;
+            SaveOpenState();
             _logger.LogInformation("FUT PAPER OPEN {Sym} L:{L} S:{S} qty={Q:F6} lev={Lev}x margin={M:F2} edge={E:F3}%",
                 opp.Symbol, opp.LongExchange, opp.ShortExchange, opp.BaseQty, leverage, marginEach, opp.NetSpreadPercent);
             return trade;
@@ -249,6 +267,7 @@ public class FuturesPaperService : IFuturesPaperService
                 }
 
                 closed++;
+                SaveOpenState();
                 _logger.LogInformation("FUT PAPER CLOSE {Sym} pnl={Pnl:F4} reason={R} lev={Lev}x",
                     pos.Symbol, pnl, reason, pos.Leverage > 0 ? pos.Leverage : 5m);
             }
@@ -318,4 +337,136 @@ public class FuturesPaperService : IFuturesPaperService
             Message = message
         };
     }
+
+    private bool TryRestore(IReadOnlyList<string> exchanges)
+    {
+        try
+        {
+            if (!File.Exists(SnapshotPath)) return false;
+            var json = File.ReadAllText(SnapshotPath);
+            var snap = JsonSerializer.Deserialize<PaperOpenSnapshot>(json, SnapshotJson);
+            if (snap == null || snap.Positions == null || snap.Positions.Count == 0)
+                return false;
+
+            lock (_lock)
+            {
+                _margin.Clear();
+                var start = _options.PaperStartingQuote > 0 ? _options.PaperStartingQuote : 10_000m;
+                foreach (var ex in exchanges)
+                    _margin[ex] = start;
+                if (snap.Margin != null)
+                {
+                    foreach (var kv in snap.Margin)
+                        _margin[kv.Key] = kv.Value;
+                }
+
+                _positions.Clear();
+                _trades.Clear();
+                foreach (var p in snap.Positions)
+                {
+                    _positions.Add(p);
+                    // synthetic open trade so close path finds TradeId
+                    _trades.Add(new FuturesPaperTrade
+                    {
+                        Id = p.TradeId == Guid.Empty ? Guid.NewGuid() : p.TradeId,
+                        OpenedAt = p.OpenedAt,
+                        Symbol = p.Symbol,
+                        LongExchange = p.LongExchange,
+                        ShortExchange = p.ShortExchange,
+                        BaseQty = p.BaseQty,
+                        LongEntry = p.LongEntry,
+                        ShortEntry = p.ShortEntry,
+                        IsOpen = true,
+                        Status = "Open",
+                        Message = "Restored after restart"
+                    });
+                    if (p.TradeId == Guid.Empty)
+                        p.TradeId = _trades[^1].Id;
+                }
+
+                RealizedPnlUsd = snap.RealizedPnlUsd;
+                DailyRealizedPnlUsd = snap.DailyRealizedPnlUsd;
+                _dayUtc = snap.DayUtc == default ? DateTime.UtcNow.Date : snap.DayUtc.Date;
+                TradeAttempts = snap.TradeAttempts;
+                _lastOpenUtc = snap.LastOpenUtc;
+            }
+
+            _logger.LogInformation(
+                "Restored {N} open paper hedge(s) from {Path} (realized={R:F2})",
+                snap.Positions.Count, SnapshotPath, snap.RealizedPnlUsd);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not restore paper open-state — starting fresh");
+            return false;
+        }
+    }
+
+    private void SaveOpenState()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SnapshotPath)!);
+            PaperOpenSnapshot snap;
+            lock (_lock)
+            {
+                snap = new PaperOpenSnapshot
+                {
+                    SavedUtc = DateTime.UtcNow,
+                    RealizedPnlUsd = RealizedPnlUsd,
+                    DailyRealizedPnlUsd = DailyRealizedPnlUsd,
+                    DayUtc = _dayUtc,
+                    TradeAttempts = TradeAttempts,
+                    LastOpenUtc = _lastOpenUtc,
+                    Margin = _margin.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase),
+                    Positions = _positions.Select(p => new FuturesPaperPosition
+                    {
+                        Symbol = p.Symbol,
+                        LongExchange = p.LongExchange,
+                        ShortExchange = p.ShortExchange,
+                        BaseQty = p.BaseQty,
+                        LongEntry = p.LongEntry,
+                        ShortEntry = p.ShortEntry,
+                        OpenedAt = p.OpenedAt,
+                        TradeId = p.TradeId,
+                        EntryWidthPercent = p.EntryWidthPercent,
+                        LockedMarginUsd = p.LockedMarginUsd,
+                        Leverage = p.Leverage,
+                        UnrealizedPnlUsd = p.UnrealizedPnlUsd,
+                        CurrentWidthPercent = p.CurrentWidthPercent
+                    }).ToList()
+                };
+            }
+            File.WriteAllText(SnapshotPath, JsonSerializer.Serialize(snap, SnapshotJson));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to save paper open-state");
+        }
+    }
+
+    private void ClearOpenStateFile()
+    {
+        try
+        {
+            if (File.Exists(SnapshotPath))
+                File.Delete(SnapshotPath);
+        }
+        catch { /* ignore */ }
+    }
+
+    private sealed class PaperOpenSnapshot
+    {
+        public DateTime SavedUtc { get; set; }
+        public decimal RealizedPnlUsd { get; set; }
+        public decimal DailyRealizedPnlUsd { get; set; }
+        public DateTime DayUtc { get; set; }
+        public int TradeAttempts { get; set; }
+        public DateTime LastOpenUtc { get; set; }
+        public Dictionary<string, decimal>? Margin { get; set; }
+        public List<FuturesPaperPosition>? Positions { get; set; }
+    }
+
+
 }
