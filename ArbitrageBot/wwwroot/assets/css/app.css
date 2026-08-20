@@ -155,3 +155,44 @@ label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px
 
 .ex-card { display: flex; flex-direction: column; gap: 10px; }
 .ex-head { display: flex; justify-content: space-between; align-items: center; }
+
+/* —— Market terminal —— */
+.term-grid {
+  display: grid;
+  grid-template-columns: 1fr minmax(320px, 380px);
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .term-grid { grid-template-columns: 1fr; }
+}
+.term-chart-wrap { padding: 8px; }
+.term-ob-panel {
+  position: sticky; top: 68px;
+  max-height: calc(100vh - 80px);
+  display: flex; flex-direction: column;
+}
+.term-ob-stack {
+  overflow-y: auto; flex: 1;
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 480px;
+}
+.ob-venue {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0a101c;
+  padding: 8px;
+}
+.ob-venue-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px; font-size: 12px;
+}
+.ob-levels { max-height: 220px; overflow-y: auto; }
+.pos-cards { display: flex; flex-direction: column; gap: 8px; min-height: 48px; }
+.pos-card {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: grid; grid-template-columns: 1fr auto; gap: 6px;
+  background: rgba(15,23,42,.6);
+}
+.pos-card .title { font-weight: 600; font-size: 13px; }
+.pos-card .sub { font-size: 11px; color: var(--muted); }

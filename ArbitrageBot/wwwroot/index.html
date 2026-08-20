@@ -84,29 +84,62 @@
         </div>
       </section>
 
-      <!-- MARKET -->
+      <!-- MARKET — trading terminal -->
       <section class="page" data-page="market">
-        <div class="grid" style="grid-template-columns: 1.2fr 0.8fr; gap:14px">
-          <div class="card">
-            <h3>Live opportunities</h3>
-            <div class="scroll" style="max-height:360px">
-              <table>
-                <thead><tr><th>Symbol</th><th>Long→Short</th><th>VWAP</th><th>Gross</th><th>Net</th><th>$</th></tr></thead>
-                <tbody id="m_oppBody"></tbody>
-              </table>
+        <div class="term-toolbar card" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+            <select id="m_symbol" style="width:auto;min-width:140px;font-weight:600"></select>
+            <div>
+              <span class="muted" style="font-size:10px">LAST</span>
+              <div class="mono" style="font-size:20px;font-weight:600" id="m_last">—</div>
             </div>
+            <div>
+              <span class="muted" style="font-size:10px">BEST NET</span>
+              <div id="m_bestNet">—</div>
+            </div>
+            <div class="muted mono" style="font-size:11px" id="m_route">—</div>
           </div>
-          <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-              <h3 style="margin:0">Order books</h3>
-              <select id="m_symbol" style="width:auto;min-width:120px"></select>
-            </div>
-            <div id="m_depth" class="scroll" style="max-height:360px"></div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select id="m_interval" style="width:auto">
+              <option value="1m">1m</option>
+              <option value="5m">5m</option>
+              <option value="15m" selected>15m</option>
+              <option value="1h">1h</option>
+            </select>
+            <span class="tag" id="m_chartSrc">chart</span>
           </div>
         </div>
-        <div class="card" style="margin-top:14px">
-          <h3>Best bid / ask matrix</h3>
-          <div class="scroll" style="max-height:280px">
+
+        <div class="term-grid">
+          <div class="term-left">
+            <div class="card term-chart-wrap">
+              <div id="m_chart" style="height:380px;width:100%"></div>
+            </div>
+            <div class="card" style="margin-top:12px">
+              <h3>Signals · selected pair & all</h3>
+              <div class="scroll" style="max-height:200px">
+                <table>
+                  <thead><tr><th>Symbol</th><th>Long→Short</th><th>Open net</th><th>RT net</th><th>Est $</th><th>Fill</th></tr></thead>
+                  <tbody id="m_oppBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card" style="margin-top:12px">
+              <h3>Open paper positions</h3>
+              <div id="m_positions" class="pos-cards"></div>
+            </div>
+          </div>
+          <div class="term-right">
+            <div class="card term-ob-panel">
+              <h3 style="margin-bottom:8px">Order books <span class="muted" style="font-weight:400">· live depth</span></h3>
+              <div id="m_depth" class="term-ob-stack"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Cross-exchange ticker tape</h3>
+          <div class="scroll" style="max-height:180px">
             <table>
               <thead><tr><th>Symbol</th><th>Exchange</th><th>Bid</th><th>Ask</th><th>Spread</th></tr></thead>
               <tbody id="m_bookBody"></tbody>
@@ -198,6 +231,7 @@
   </div>
 </div>
 
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="/assets/js/core.js"></script>
 <script src="/assets/js/pages/dashboard.js"></script>
 <script src="/assets/js/pages/market.js"></script>

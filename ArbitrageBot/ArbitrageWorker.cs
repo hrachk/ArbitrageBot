@@ -177,16 +177,26 @@ public class ArbitrageWorker : BackgroundService
             return (l.BestBid, s.BestAsk);
         }, _options.FuturesCloseBelowNetPercent);
 
+        if (opps.Count > 0)
+        {
+            _logger.LogInformation("Futures scan: {N} candidate(s), best RT={Best:F3}% open={Open:F3}%",
+                opps.Count,
+                opps.Max(x => x.NetRoundTripPercent),
+                opps.Max(x => x.NetSpreadPercent));
+        }
+
         if (opps.Count > 0 && _options.PaperTrading && _options.PaperAutoExecute)
         {
-            foreach (var o in opps)
+            foreach (var o in opps.OrderByDescending(x => x.NetSpreadPercent))
             {
-                var t = _futPaper.TryOpen(o);
-                if (t is { Status: "Open" })
+                var trade = _futPaper.TryOpen(o);
+                if (trade is null) continue;
+                if (trade.Status == "Open")
                 {
                     _logger.LogInformation("Opened futures paper hedge: {T}", o.ToString());
                     break;
                 }
+                _logger.LogDebug("Paper skip {Sym}: {Msg}", o.Symbol, trade.Message);
             }
         }
 

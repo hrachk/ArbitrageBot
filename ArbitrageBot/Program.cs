@@ -3,6 +3,8 @@ using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
 using ArbitrageBot.Services;
 using CryptoClients.Net;
+using CryptoClients.Net.Interfaces;
+using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
 using Serilog;
 
@@ -124,6 +126,68 @@ try
     {
         await store.SaveExchangeCredentialAsync(name, body);
         return Results.Ok(new { saved = true, exchange = name });
+    });
+
+    
+    app.MapGet("/api/klines/{symbol}", async (
+        string symbol,
+        IExchangeRestClient rest,
+        string? exchange,
+        string interval = "15m",
+        int limit = 120,
+        CancellationToken ct = default) =>
+    {
+        exchange ??= "Binance";
+        var baseAsset = symbol.ToUpperInvariant();
+        if (baseAsset.EndsWith("USDT")) baseAsset = baseAsset[..^4];
+        else if (baseAsset.EndsWith("USDC")) baseAsset = baseAsset[..^4];
+        var shared = new CryptoExchange.Net.SharedApis.SharedSymbol(
+            CryptoExchange.Net.SharedApis.TradingMode.PerpetualLinear, baseAsset, "USDT");
+
+        var iv = interval.ToLowerInvariant() switch
+        {
+            "1m" => CryptoExchange.Net.SharedApis.SharedKlineInterval.OneMinute,
+            "5m" => CryptoExchange.Net.SharedApis.SharedKlineInterval.FiveMinutes,
+            "15m" => CryptoExchange.Net.SharedApis.SharedKlineInterval.FifteenMinutes,
+            "1h" => CryptoExchange.Net.SharedApis.SharedKlineInterval.OneHour,
+            "4h" => CryptoExchange.Net.SharedApis.SharedKlineInterval.FourHours,
+            _ => CryptoExchange.Net.SharedApis.SharedKlineInterval.FifteenMinutes
+        };
+
+        var result = await rest.GetKlinesAsync(
+            exchange,
+            new CryptoExchange.Net.SharedApis.GetKlinesRequest(shared, iv),
+            null,
+            ct);
+
+        if (!result.Success || result.Data == null)
+        {
+            // fallback Binance
+            if (!exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase))
+            {
+                result = await rest.GetKlinesAsync(
+                    "Binance",
+                    new CryptoExchange.Net.SharedApis.GetKlinesRequest(shared, iv),
+                    null,
+                    ct);
+            }
+        }
+
+        if (!result.Success || result.Data == null)
+            return Results.BadRequest(new { error = result.Error?.Message ?? "no klines" });
+
+        var bars = result.Data
+            .OrderBy(x => x.OpenTime)
+            .TakeLast(Math.Clamp(limit, 20, 500))
+            .Select(k => new
+            {
+                time = new DateTimeOffset(k.OpenTime).ToUnixTimeSeconds(),
+                open = k.OpenPrice,
+                high = k.HighPrice,
+                low = k.LowPrice,
+                close = k.ClosePrice
+            });
+        return Results.Json(new { exchange = result.Exchange, symbol, interval, bars });
     });
 
     app.MapFallbackToFile("index.html");
