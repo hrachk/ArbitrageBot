@@ -46,41 +46,60 @@
     <div class="content">
       <!-- DASHBOARD -->
       <section class="page active" data-page="dashboard">
-        <div class="alert info">Paper mode on live market data. No real orders until Settings → LIVE + trade keys (next phase).</div>
+        <div class="alert info">
+          <b>PAPER · live market data</b> — ордера на биржу не отправляются. Long дешёвый perp + Short дорогой.
+          Закрытие: сходимость спреда · timeout · stop-loss. Аналитика → <code>data/paper/</code>.
+        </div>
+        <div class="hero">
+          <div class="card">
+            <h3>Статус системы</h3>
+            <p id="d_strategy" class="muted" style="margin:0 0 10px;font-size:13px;line-height:1.55"></p>
+            <div class="muted" style="font-size:12px" id="d_discovery"></div>
+            <div class="legend-row" id="d_pairs"></div>
+          </div>
+          <div class="card">
+            <h3>Как читать</h3>
+            <div class="muted" style="font-size:12.5px;line-height:1.65">
+              <div><span class="pos">● LONG</span> — покупка ask на дешёвой бирже</div>
+              <div><span class="neg">● SHORT</span> — продажа bid на дорогой</div>
+              <div><span class="tag">Net open</span> — после 1-way fees · <span class="tag">RT</span> — с close fees</div>
+              <div style="margin-top:6px">UI: <b>Snapshot</b> ~1s (скан) · <b>MarketTick</b> ~0.9s (стаканы из WS-памяти)</div>
+            </div>
+          </div>
+        </div>
         <div class="grid grid-6" style="margin-bottom:14px">
-          <div class="card"><div class="kpi-label">Scans</div><div class="kpi-value mono" id="d_scans">0</div></div>
-          <div class="card"><div class="kpi-label">Signals</div><div class="kpi-value mono pos" id="d_opps">0</div></div>
-          <div class="card"><div class="kpi-label">Best net</div><div class="kpi-value" id="d_best">—</div></div>
-          <div class="card"><div class="kpi-label">Realized PnL</div><div class="kpi-value" id="d_pnl">0</div></div>
-          <div class="card"><div class="kpi-label">Open hedges</div><div class="kpi-value mono" id="d_open">0</div></div>
-          <div class="card"><div class="kpi-label">Day PnL</div><div class="kpi-value" id="d_day">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Scans</div><div class="kpi-value mono" id="d_scans">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Signals</div><div class="kpi-value mono pos" id="d_opps">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Best net</div><div class="kpi-value" id="d_best">—</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Realized PnL</div><div class="kpi-value" id="d_pnl">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Open hedges</div><div class="kpi-value mono" id="d_open">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Day PnL</div><div class="kpi-value" id="d_day">0</div></div>
         </div>
-        <div class="card" style="margin-bottom:14px">
-          <h3>Strategy</h3>
-          <p id="d_strategy" class="muted" style="margin:0 0 8px;font-size:13px;line-height:1.5"></p>
-          <div class="muted" style="font-size:12px" id="d_discovery"></div>
-          <div style="margin-top:10px;display:flex;flex-wrap:gap:6px" id="d_pairs"></div>
-        </div>
+        <div class="section-title">Exchange streams (WebSocket)</div>
         <div class="grid grid-3" id="d_health" style="margin-bottom:14px"></div>
         <div class="grid grid-2">
           <div class="card">
-            <h3>Top signals</h3>
-            <div class="scroll">
+            <h3>Top signals · live</h3>
+            <div class="scroll" style="max-height:320px">
               <table>
-                <thead><tr><th>Symbol</th><th>Route</th><th>Net</th><th>Est $</th><th>Fill</th></tr></thead>
+                <thead><tr><th>Symbol</th><th>Long → Short</th><th>Net</th><th>Est $</th><th>Fill</th></tr></thead>
                 <tbody id="d_oppBody"></tbody>
               </table>
             </div>
           </div>
           <div class="card">
             <h3>Recent paper trades</h3>
-            <div class="scroll">
+            <div class="scroll" style="max-height:320px">
               <table>
                 <thead><tr><th>Time</th><th>Symbol</th><th>PnL</th><th>Status</th></tr></thead>
                 <tbody id="d_tradeBody"></tbody>
               </table>
             </div>
           </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h3>Open positions</h3>
+          <div id="d_positions" class="pos-cards"><div class="empty-state">Нет открытых paper-хеджей</div></div>
         </div>
       </section>
 
@@ -150,7 +169,7 @@
 
       <!-- REPORTS -->
       <section class="page" data-page="reports">
-        <div class="alert info" id="r_analyticsNote">Paper analytics persist under data/paper/ — keep bot running 1–3 days for day summaries.</div>
+        <div class="alert info" id="r_analyticsNote"><b>Отчёты paper</b> — сводка дня, причины skip, история. Файлы: <code>data/paper/</code>. Держите процесс 1–3 дня для статистики.</div>
         <div class="grid grid-6" style="margin-bottom:14px">
           <div class="card"><div class="kpi-label">Realized</div><div class="kpi-value" id="r_realized">—</div></div>
           <div class="card"><div class="kpi-label">Day PnL</div><div class="kpi-value" id="r_day">—</div></div>

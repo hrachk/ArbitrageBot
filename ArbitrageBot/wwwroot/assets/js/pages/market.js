@@ -196,11 +196,16 @@ AB.pages.market = {
     el.innerHTML = positions.map(p => `<div class="pos-card">
       <div>
         <div class="title mono">${p.symbol}</div>
-        <div class="sub"><span class="pos">${p.longExchange}</span> LONG · <span class="neg">${p.shortExchange}</span> SHORT · qty ${AB.fmt(p.baseQty, 6)}</div>
+        <div class="sub">
+          <span class="pos-side long">LONG ${p.longExchange}</span>
+          <span class="pos-side short">SHORT ${p.shortExchange}</span>
+          · entry L ${AB.fmt(p.longEntry)} / S ${AB.fmt(p.shortEntry)}
+        </div>
+        <div class="sub">qty ${AB.fmt(p.baseQty, 5)} · hold ${p.holdSeconds != null ? Math.floor(p.holdSeconds/60)+'m '+ (p.holdSeconds%60)+'s' : '—'}</div>
       </div>
       <div style="text-align:right">
-        <div>${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</div>
-        <div class="sub mono">width ${AB.fmt(p.currentWidthPercent, 3)}%</div>
+        <div style="font-size:16px;font-weight:700">${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</div>
+        <div class="sub mono">width ${AB.fmt(p.currentWidthPercent, 3)}% · entry ${AB.fmt(p.entryWidthPercent, 3)}%</div>
       </div>
     </div>`).join('');
   },
