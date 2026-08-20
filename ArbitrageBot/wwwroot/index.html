@@ -240,44 +240,113 @@
         <div class="grid grid-2">
           <div class="card">
             <h3>Trading parameters</h3>
+            <p class="muted" style="font-size:12px;margin:0 0 14px;line-height:1.55">
+              Профессиональный набор для <b>FuturesCross paper</b>. Изменения применяются <b>сразу в runtime</b> (без рестарта).
+              Live-ордера по-прежнему выключены.
+            </p>
+
+            <div class="section-title">Preset</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+              <button type="button" class="btn" id="presetConservative" title="Меньше сделок, жёстче риск">Conservative</button>
+              <button type="button" class="btn primary" id="presetBalanced" title="Баланс sample size / риск">Balanced (paper)</button>
+              <button type="button" class="btn" id="presetAggressive" title="Больше сделок для сбора статистики">Aggressive paper</button>
+            </div>
+
+            <div class="section-title">Mode</div>
             <div class="form-row">
-              <div class="field"><label>Strategy</label>
-                <select id="s_strategy"><option>FuturesCross</option><option>SpotInventory</option></select>
+              <div class="field">
+                <label>Strategy</label>
+                <select id="s_strategy">
+                  <option value="FuturesCross">FuturesCross — long cheap / short rich (no transfer)</option>
+                  <option value="SpotInventory">SpotInventory — (legacy, not primary)</option>
+                </select>
               </div>
-              <div class="field" style="display:flex;flex-direction:column;justify-content:end;gap:8px">
-                <label style="display:flex;gap:8px;align-items:center"><input id="s_paper" type="checkbox"/> Paper trading</label>
-                <label style="display:flex;gap:8px;align-items:center"><input id="s_auto" type="checkbox"/> Auto-execute paper</label>
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="field"><label>Min net profit %</label><input id="s_minProfit" type="number" step="0.01"/></div>
-              <div class="field"><label>Quote size (USDT)</label><input id="s_size" type="number" step="1"/></div>
-            </div>
-            <div class="form-row">
-              <div class="field"><label>Leverage</label><input id="s_lev" type="number" step="1" min="1" max="10"/></div>
-              <div class="field"><label>Max open positions</label><input id="s_maxPos" type="number" step="1"/></div>
-            </div>
-            <div class="form-row">
-              <div class="field"><label>Stop loss USD</label><input id="s_stop" type="number" step="1"/></div>
-              <div class="field"><label>Daily loss limit USD</label><input id="s_dayLimit" type="number" step="1"/></div>
-            </div>
-            <div class="form-row">
-              <div class="field"><label>Max hold (min)</label><input id="s_hold" type="number" step="1"/></div>
-              <div class="field"><label>Close when width ≤ %</label><input id="s_closeWidth" type="number" step="0.01"/></div>
-            </div>
-            <div class="form-row">
-              <div class="field"><label>Max margin usage (0–1)</label><input id="s_marginUse" type="number" step="0.01" min="0.05" max="0.9"/></div>
-              <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number" step="100"/></div>
-            </div>
-            <div class="form-row">
-              <div class="field"><label>Cooldown ms</label><input id="s_cooldown" type="number" step="500"/></div>
-              <div class="field" style="display:flex;flex-direction:column;gap:8px;justify-content:end">
-                <label style="display:flex;gap:8px;align-items:center"><input id="s_fullFill" type="checkbox"/> Require full fill</label>
-                <label style="display:flex;gap:8px;align-items:center"><input id="s_reqRt" type="checkbox"/> Require RT edge</label>
-                <label style="display:flex;gap:8px;align-items:center"><input id="s_funding" type="checkbox"/> Include funding</label>
+              <div class="field" style="display:flex;flex-direction:column;justify-content:end;gap:10px;padding-bottom:4px">
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_paper" type="checkbox"/> Paper trading (demo balance)</label>
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_auto" type="checkbox"/> Auto-execute hedges</label>
               </div>
             </div>
-            <button class="btn primary" id="btnSaveTrading">Save trading + risk (runtime)</button>
+
+            <div class="section-title">Entry · size</div>
+            <div class="form-row">
+              <div class="field">
+                <label>Min open edge % <span class="muted">(after open fees)</span></label>
+                <input id="s_minProfit" type="number" step="0.005" min="0.01" max="1"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Порог входа. Ниже — больше сигналов, выше шум.</div>
+              </div>
+              <div class="field">
+                <label>Quote size (USDT notional / leg)</label>
+                <input id="s_size" type="number" step="50" min="50"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Номинал одной ноги. Влияет на slippage и PnL.</div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label>Leverage (paper)</label>
+                <input id="s_lev" type="number" step="1" min="1" max="10"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Маржа ≈ notional / lev на каждой бирже.</div>
+              </div>
+              <div class="field">
+                <label>Max concurrent hedges</label>
+                <input id="s_maxPos" type="number" step="1" min="1" max="20"/>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label>Max notional USD / trade</label>
+                <input id="s_maxNotional" type="number" step="100" min="100"/>
+              </div>
+              <div class="field">
+                <label>Entry cooldown (ms)</label>
+                <input id="s_cooldown" type="number" step="500" min="0"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Пауза между открытиями.</div>
+              </div>
+            </div>
+
+            <div class="section-title">Risk limits</div>
+            <div class="form-row">
+              <div class="field">
+                <label>Stop-loss (USD / hedge)</label>
+                <input id="s_stop" type="number" step="1"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Отрицательное: −80 = закрыть при uPnL ≤ −80.</div>
+              </div>
+              <div class="field">
+                <label>Daily loss limit (USD)</label>
+                <input id="s_dayLimit" type="number" step="1"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Блокирует новые входы после лимита.</div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label>Max margin usage (fraction)</label>
+                <input id="s_marginUse" type="number" step="0.01" min="0.05" max="0.90"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">0.25 = макс. 25% free margin на ногу.</div>
+              </div>
+              <div class="field">
+                <label>Max hold (minutes)</label>
+                <input id="s_hold" type="number" step="1" min="1"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Timeout close независимо от спреда.</div>
+              </div>
+            </div>
+
+            <div class="section-title">Exit · quality filters</div>
+            <div class="form-row">
+              <div class="field">
+                <label>Close when width ≤ %</label>
+                <input id="s_closeWidth" type="number" step="0.005" min="0"/>
+                <div class="muted" style="font-size:10px;margin-top:4px">Сходимость спреда (или ≤40% entry width).</div>
+              </div>
+              <div class="field" style="display:flex;flex-direction:column;gap:10px;justify-content:center">
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_fullFill" type="checkbox"/> Require full book fill (stricter)</label>
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_reqRt" type="checkbox"/> Require round-trip net edge</label>
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_funding" type="checkbox"/> Include funding in metrics</label>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;align-items:center">
+              <button class="btn primary" id="btnSaveTrading">Apply trading parameters</button>
+              <span class="muted" style="font-size:11px">Пишется в local store + RuntimeRiskConfig</span>
+            </div>
           </div>
           <div class="card">
             <h3>Roadmap: live keys</h3>
