@@ -15,7 +15,7 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("Starting ArbitrageBot Web (Paper Execution)...");
+    Log.Information("Starting ArbitrageBot Web (WS order books + SignalR realtime)...");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -49,6 +49,7 @@ try
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();
+    builder.Services.AddHostedService<RealtimeBroadcastService>();
     builder.Services.AddSignalR();
 
     var app = builder.Build();

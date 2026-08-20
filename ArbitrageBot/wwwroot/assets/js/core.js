@@ -81,6 +81,24 @@ AB.startSignalR = async () => {
     .configureLogging(signalR.LogLevel.Warning)
     .build();
   connection.on('Snapshot', AB.onSnapshot);
+  connection.on('MarketTick', (tick) => {
+    AB.state.lastTick = tick;
+    // merge live books into snapshot for UI without waiting for scan
+    if (AB.state.snapshot && tick) {
+      if (tick.bookTickers) AB.state.snapshot.bookTickers = tick.bookTickers;
+      if (tick.orderBookDepth) AB.state.snapshot.orderBookDepth = tick.orderBookDepth;
+      if (tick.connectionStatus) AB.state.snapshot.connectionStatus = tick.connectionStatus;
+      AB.state.snapshot.streamsLive = tick.streamsLive;
+      AB.state.snapshot.streamsTotal = tick.streamsTotal;
+      AB.state.snapshot.wsTransport = tick.transport;
+    }
+    AB.$('connDot').className = 'dot on';
+    const live = tick?.streamsLive ?? 0, total = tick?.streamsTotal ?? 0;
+    AB.$('connText').textContent = live + '/' + total + ' WS';
+    // market page: refresh books/tape only (cheap)
+    if (AB.state.page === 'market' && AB.pages.market?.onTick)
+      AB.pages.market.onTick(AB.state.snapshot, tick);
+  });
   connection.onreconnecting(() => {
     AB.$('connDot').className = 'dot warn';
     AB.$('connText').textContent = '…';

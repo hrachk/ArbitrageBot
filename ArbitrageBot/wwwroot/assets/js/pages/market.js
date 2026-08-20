@@ -201,6 +201,38 @@ AB.pages.market = {
     </div>`).join('');
   },
 
+  onTick(data, tick) {
+    if (!data) return;
+    // keep selection; only refresh depth + tape + last from tickers
+    this.renderDepth(data);
+    const books = data.bookTickers || {};
+    const rows = [];
+    for (const [symbol, byE] of Object.entries(books)) {
+      if (this.selected && symbol !== this.selected) continue;
+      for (const [ex, t] of Object.entries(byE)) {
+        const mid = (Number(t.bestBid) + Number(t.bestAsk)) / 2;
+        const spr = mid > 0 ? (Number(t.bestAsk) - Number(t.bestBid)) / mid * 100 : 0;
+        rows.push({ symbol, ex, ...t, spr });
+      }
+    }
+    if (AB.$('m_bookBody')) {
+      AB.$('m_bookBody').innerHTML = rows.length ? rows.map(r => `<tr>
+        <td class="mono" style="color:var(--cyan)">${r.symbol}</td><td>${r.ex}</td>
+        <td class="mono pos">${AB.fmt(r.bestBid)}</td>
+        <td class="mono neg">${AB.fmt(r.bestAsk)}</td>
+        <td class="mono muted">${AB.fmt(r.spr, 4)}%</td>
+      </tr>`).join('') : AB.$('m_bookBody').innerHTML;
+    }
+    // update last from mid of first venue
+    if (this.selected && books[this.selected]) {
+      const first = Object.values(books[this.selected])[0];
+      if (first && AB.$('m_last')) {
+        const mid = (Number(first.bestBid) + Number(first.bestAsk)) / 2;
+        AB.$('m_last').textContent = AB.fmt(mid, mid < 1 ? 6 : 4);
+      }
+    }
+  },
+
   onShow(data) {
     this.ensureChart();
     if (data) this.render(data);
