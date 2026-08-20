@@ -58,6 +58,7 @@ try
     builder.Services.AddHostedService<ArbitrageWorker>();
     builder.Services.AddHostedService<RealtimeBroadcastService>();
     builder.Services.AddSignalR();
+    builder.Services.AddHttpClient("discovery");
 
     var app = builder.Build();
 
