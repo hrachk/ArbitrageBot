@@ -25,7 +25,7 @@ AB.pages.reports = {
     const trades = fp.trades || [];
     const positions = fp.positions || [];
 
-    AB.$('r_realized').innerHTML = AB.fmtUsd(fp.realizedPnl ?? fp.realizedPnlUsd);
+    AB.$('r_realized').innerHTML = AB.fmtUsd(fp.realizedPnlUsd ?? fp.realizedPnl);
     AB.$('r_day').innerHTML = AB.fmtUsd(fp.dailyRealizedPnlUsd);
     AB.$('r_attempts').textContent = fp.tradeCount ?? fp.tradeAttempts ?? 0;
     AB.$('r_open').textContent = positions.length;
@@ -45,7 +45,7 @@ AB.pages.reports = {
       <td class="mono">${p.symbol}</td>
       <td class="mono" style="font-size:11px">${p.longExchange}→${p.shortExchange}</td>
       <td class="mono">${AB.fmt(p.baseQty,6)}</td>
-      <td>${AB.fmtUsd(p.unrealizedPnlUsd)}</td>
+      <td>${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</td>
       <td class="mono muted">${AB.fmt(p.currentWidthPercent,3)}%</td>
       <td class="muted">${p.openedAt ? new Date(p.openedAt).toLocaleString() : '—'}</td>
     </tr>`).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No open hedges</td></tr>';

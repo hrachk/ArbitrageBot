@@ -21,6 +21,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ILogger<ArbitrageWorker> _logger;
     private readonly IPaperAnalyticsStore _analytics;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
+    private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
 
     public ArbitrageWorker(
         IMarketDataService spotMarket,
@@ -189,9 +190,9 @@ public class ArbitrageWorker : BackgroundService
             _logger.LogInformation("Futures scan: {N} candidate(s), best RT={Best:F3}% open={Open:F3}%",
                 opps.Count, bestRt, bestOpen);
         }
-        else
+        else if ((DateTime.UtcNow - _lastNoCandDiagUtc).TotalSeconds >= 30)
         {
-            // No candidates above threshold — record diagnostic skip for visibility
+            _lastNoCandDiagUtc = DateTime.UtcNow;
             _analytics.RecordSkip(null, "no-candidates-above-min",
                 $"minOpen={_options.MinProfitPercent:F3}% requireRT={_options.FuturesRequireRoundTripEdge}");
         }
@@ -270,7 +271,9 @@ public class ArbitrageWorker : BackgroundService
         _state.FuturesPaper = new
         {
             realizedPnl = _futPaper.RealizedPnlUsd,
+            realizedPnlUsd = _futPaper.RealizedPnlUsd,
             unrealizedPnl = _futPaper.UnrealizedHintUsd,
+            unrealizedPnlUsd = _futPaper.UnrealizedHintUsd,
             openCount = _futPaper.OpenCount,
             tradeAttempts = _futPaper.TradeAttempts,
             leverage = _options.FuturesPaperLeverage,
@@ -291,6 +294,7 @@ public class ArbitrageWorker : BackgroundService
                 p.LongEntry,
                 p.ShortEntry,
                 unrealizedPnl = p.UnrealizedPnlUsd,
+                unrealizedPnlUsd = p.UnrealizedPnlUsd,
                 currentWidthPercent = p.CurrentWidthPercent,
                 entryWidthPercent = p.EntryWidthPercent,
                 openedAt = p.OpenedAt,

@@ -199,7 +199,7 @@ AB.pages.market = {
         <div class="sub"><span class="pos">${p.longExchange}</span> LONG · <span class="neg">${p.shortExchange}</span> SHORT · qty ${AB.fmt(p.baseQty, 6)}</div>
       </div>
       <div style="text-align:right">
-        <div>${AB.fmtUsd(p.unrealizedPnlUsd)}</div>
+        <div>${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</div>
         <div class="sub mono">width ${AB.fmt(p.currentWidthPercent, 3)}%</div>
       </div>
     </div>`).join('');
