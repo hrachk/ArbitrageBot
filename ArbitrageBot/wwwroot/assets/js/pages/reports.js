@@ -38,20 +38,34 @@ AB.pages.reports = {
     const start = fp.paperStartingQuote || 50000;
     if (AB.$('r_margin')) {
       if (Object.keys(bd).length) {
-        AB.$('r_margin').innerHTML = Object.entries(bd).map(([ex, m]) => {
+        let sumEq = 0, sumFree = 0, sumLocked = 0, n = 0;
+        const cards = Object.entries(bd).map(([ex, m]) => {
           const free = Number(m.free ?? 0);
           const locked = Number(m.locked ?? 0);
           const equity = Number(m.equity ?? free + locked);
           const delta = Number(m.deltaFromStart ?? equity - start);
+          sumEq += equity; sumFree += free; sumLocked += locked; n++;
           return `<div class="kpi" style="margin:0">
-            <div class="kpi-l">${ex}</div>
-            <div class="mono" style="font-size:16px;font-weight:700;margin-top:6px">${AB.fmt(equity, 2)} <span class="muted" style="font-size:11px">equity</span></div>
+            <div class="kpi-l">${ex} · итоговый баланс</div>
+            <div class="mono" style="font-size:18px;font-weight:700;margin-top:6px">${AB.fmt(equity, 2)} <span class="muted" style="font-size:11px">USDT</span></div>
             <div class="muted mono" style="font-size:11px;margin-top:6px;line-height:1.5">
               free ${AB.fmt(free, 2)} · locked ${AB.fmt(locked, 2)}<br/>
-              start ${AB.fmt(start, 0)} · Δ ${delta >= 0 ? '+' : ''}${AB.fmt(delta, 2)}
+              start ${AB.fmt(start, 0)} · Δ <span class="${delta>=0?'pos':'neg'}">${delta >= 0 ? '+' : ''}${AB.fmt(delta, 2)}</span>
             </div>
           </div>`;
         }).join('');
+        const totalStart = start * Math.max(n, 1);
+        const totalDelta = sumEq - totalStart;
+        const totalCard = `<div class="kpi" style="margin:0;border-color:rgba(45,212,191,0.35)">
+            <div class="kpi-l">ALL VENUES · total equity</div>
+            <div class="mono" style="font-size:20px;font-weight:700;margin-top:6px;color:var(--accent)">${AB.fmt(sumEq, 2)} USDT</div>
+            <div class="muted mono" style="font-size:11px;margin-top:6px;line-height:1.5">
+              free ${AB.fmt(sumFree, 2)} · locked ${AB.fmt(sumLocked, 2)}<br/>
+              start ${AB.fmt(totalStart, 0)} · Δ <span class="${totalDelta>=0?'pos':'neg'}">${totalDelta >= 0 ? '+' : ''}${AB.fmt(totalDelta, 2)}</span>
+              · realized ${AB.fmt(fp.realizedPnlUsd ?? fp.realizedPnl ?? 0, 2)}
+            </div>
+          </div>`;
+        AB.$('r_margin').innerHTML = totalCard + cards;
       } else if (Object.keys(bal).length) {
         AB.$('r_margin').innerHTML = Object.entries(bal).map(([ex, v]) => {
           const usdt = typeof v === 'object' ? (v.USDT ?? Object.values(v)[0]) : v;

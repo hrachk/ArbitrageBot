@@ -21,6 +21,11 @@ public class ArbitrageState
     public IReadOnlyList<object> DiscoveredSymbols { get; set; } = [];
     public string DiscoverySource { get; set; } = "config-fallback";
     public string? DiscoveryMessage { get; set; }
+    /// <summary>Best gross/open net seen last scan (even if below threshold).</summary>
+    public decimal? LastBestGrossPercent { get; set; }
+    public decimal? LastBestNetOpenPercent { get; set; }
+    public int LastBooksReady { get; set; }
+    public int LastPairsCompared { get; set; }
 
     public IReadOnlyList<ArbitrageOpportunity> Opportunities { get; private set; } = [];
     public ConcurrentDictionary<string, ConcurrentDictionary<string, BookTicker>> BookTickers { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -163,6 +168,10 @@ public class ArbitrageState
                 discoveredSymbols = DiscoveredSymbols,
                 discoverySource = DiscoverySource,
                 discoveryMessage = DiscoveryMessage,
+                lastBestGrossPercent = LastBestGrossPercent,
+                lastBestNetOpenPercent = LastBestNetOpenPercent,
+                lastBooksReady = LastBooksReady,
+                lastPairsCompared = LastPairsCompared,
                 scanCount = ScanCount,
                 opportunitiesFoundTotal = OpportunitiesFoundTotal,
                 lastError = LastError,

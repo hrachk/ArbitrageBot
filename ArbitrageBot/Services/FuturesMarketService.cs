@@ -28,6 +28,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private readonly List<UpdateSubscription> _subs = [];
     private readonly object _subLock = new();
     private bool _started;
+    public decimal? LastScanBestGross { get; private set; }
+    public decimal? LastScanBestNetOpen { get; private set; }
+    public int LastScanBooksReady { get; private set; }
+    public int LastScanPairsCompared { get; private set; }
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
     private DateTime _lastFundingRefreshUtc = DateTime.MinValue;
@@ -369,6 +373,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
         var list = new List<FuturesOpportunity>();
         var notional = _runtime.Snapshot.QuoteSize > 0 ? _runtime.Snapshot.QuoteSize : 500m;
+        decimal? bestGross = null, bestNet = null;
+        var booksReady = 0;
+        var pairsCompared = 0;
+        foreach (var s0 in _markets.Symbols)
+            booksReady += GetBookTickers(s0).Count;
 
         foreach (var symbol in _markets.Symbols)
         {
@@ -397,10 +406,13 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var shortVwap = sellFill.VwapPrice;
                     if (shortVwap <= longVwap) continue;
 
+                    pairsCompared++;
                     var longFee = _options.EstimatedTakerFees.GetValueOrDefault(longEx, 0.05m);
                     var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(shortEx, 0.05m);
                     var gross = (shortVwap - longVwap) / longVwap * 100m;
                     var netOpen = gross - longFee - shortFee;
+                    if (bestGross is null || gross > bestGross) bestGross = gross;
+                    if (bestNet is null || netOpen > bestNet) bestNet = netOpen;
                     // Round-trip: open long+short + close long+short (4 taker touches)
                     var netRt = gross - 2m * (longFee + shortFee);
 
@@ -453,6 +465,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             }
         }
 
+        LastScanBestGross = bestGross;
+        LastScanBestNetOpen = bestNet;
+        LastScanBooksReady = booksReady;
+        LastScanPairsCompared = pairsCompared;
         return list.OrderByDescending(x => x.NetAfterFundingPercent).ToList();
     }
 

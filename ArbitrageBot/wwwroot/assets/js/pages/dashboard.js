@@ -29,11 +29,23 @@ AB.pages.dashboard = {
       if (banner) {
         const mode = data.mode || 'PAPER';
         const pause = data.isPaused ? ' · PAUSED' : '';
+        var bestNet = data.lastBestNetOpenPercent;
+        var bestGross = data.lastBestGrossPercent;
+        var why = '';
+        if (opps.length === 0 && bestNet != null) {
+          why = ' · best net now ' + AB.fmt(bestNet, 3) + '% (need ≥ ' + AB.fmt(data.minProfitPercent, 3) + '%)';
+          if (Number(bestNet) < Number(data.minProfitPercent))
+            why += ' — below threshold, no open';
+        }
         banner.innerHTML =
           '<b>' + mode + pause + '</b> — ' +
           exchanges.length + ' exchanges · ' + symbols.length + ' symbols · ' +
           'scan #' + (data.scanCount != null ? data.scanCount : 0) +
+          ' · books ' + (data.lastBooksReady != null ? data.lastBooksReady : '—') +
+          ' · pairs ' + (data.lastPairsCompared != null ? data.lastPairsCompared : '—') +
           ' · min edge ' + AB.fmt(data.minProfitPercent, 3) + '% · size ' + AB.fmt(data.quoteSize, 0) + ' USDT' +
+          (bestGross != null ? ' · best gross ' + AB.fmt(bestGross, 3) + '%' : '') +
+          why +
           (data.lastError ? ' · <span class="neg">' + data.lastError + '</span>' : '');
       }
 

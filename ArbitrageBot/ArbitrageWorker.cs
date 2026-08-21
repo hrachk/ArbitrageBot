@@ -139,6 +139,16 @@ public class ArbitrageWorker : BackgroundService
     private async Task RunFuturesCycleAsync(CancellationToken ct)
     {
         var opps = await _futMarket.ScanAsync(ct);
+        _state.LastBestGrossPercent = _futMarket is FuturesMarketService fms
+            ? fms.LastScanBestGross : null;
+        _state.LastBestNetOpenPercent = _futMarket is FuturesMarketService fms2
+            ? fms2.LastScanBestNetOpen : null;
+        _state.LastBooksReady = _futMarket is FuturesMarketService fms3
+            ? fms3.LastScanBooksReady : 0;
+        _state.LastPairsCompared = _futMarket is FuturesMarketService fms4
+            ? fms4.LastScanPairsCompared : 0;
+        _state.MinProfitPercent = _runtime.Snapshot.MinProfitPercent;
+        _state.QuoteSize = _runtime.Snapshot.QuoteSize;
 
         var tickersBySymbol = new Dictionary<string, Dictionary<string, BookTicker>>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in _markets.Symbols)
