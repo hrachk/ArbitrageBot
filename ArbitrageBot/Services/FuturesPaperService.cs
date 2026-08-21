@@ -203,15 +203,18 @@ public class FuturesPaperService : IFuturesPaperService
             var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
             var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
             var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
-            var pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
-                      + (longBid - pos.LongEntry) * pos.BaseQty
-                      - closeFees;
+            var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
+                          + (longBid - pos.LongEntry) * pos.BaseQty;
+            var tradeForFees = _trades.FirstOrDefault(x => x.Id == pos.TradeId);
+            var openFees = tradeForFees?.OpenFeesUsd ?? 0m;
+            var pnl = legsPnl - openFees - closeFees;
             var marginEach = pos.LockedMarginUsd > 0
                 ? pos.LockedMarginUsd
                 : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
 
-            _margin.AddOrUpdate(pos.LongExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
-            _margin.AddOrUpdate(pos.ShortExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
+            var walletCredit = marginEach + (legsPnl - closeFees) / 2m;
+            _margin.AddOrUpdate(pos.LongExchange, walletCredit, (_, v) => v + walletCredit);
+            _margin.AddOrUpdate(pos.ShortExchange, walletCredit, (_, v) => v + walletCredit);
             RealizedPnlUsd += pnl;
             if (DateTime.UtcNow.Date != _dayUtc) { _dayUtc = DateTime.UtcNow.Date; DailyRealizedPnlUsd = 0; }
             DailyRealizedPnlUsd += pnl;
@@ -272,9 +275,17 @@ public class FuturesPaperService : IFuturesPaperService
                 var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
                 var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
                 var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
-                var pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
-                          + (longBid - pos.LongEntry) * pos.BaseQty
-                          - closeFees;
+                // Gross mark-to-market of both legs before fees
+                var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
+                              + (longBid - pos.LongEntry) * pos.BaseQty;
+                // Open fees already left the wallet at entry — must be in realized
+                var openFees = 0m;
+                var existingTrade = _trades.FirstOrDefault(x => x.Id == pos.TradeId);
+                if (existingTrade != null)
+                    openFees = existingTrade.OpenFeesUsd;
+
+                // Economic PnL = legs − open fees − close fees (matches wallet equity change)
+                var pnl = legsPnl - openFees - closeFees;
 
                 var currentWidth = (shortAsk > 0 && longBid > 0)
                     ? (shortAsk - longBid) / longBid * 100m
@@ -289,8 +300,8 @@ public class FuturesPaperService : IFuturesPaperService
                 var belowAbs = currentWidth <= threshold;
                 var converged = belowAbs || shrunkALot;
 
-                // Risk: force close on stop-loss (unrealized)
-                pos.UnrealizedPnlUsd = pnl; // approximate mark with current exit prices
+                // Risk: force close on stop-loss (unrealized) — use full economic pnl
+                pos.UnrealizedPnlUsd = pnl;
                 var stop = R.FuturesStopLossUsd;
                 var stopHit = stop < 0 && pnl <= stop;
 
@@ -301,8 +312,12 @@ public class FuturesPaperService : IFuturesPaperService
                     ? pos.LockedMarginUsd
                     : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
 
-                _margin.AddOrUpdate(pos.LongExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
-                _margin.AddOrUpdate(pos.ShortExchange, marginEach + pnl / 2, (_, v) => v + marginEach + pnl / 2);
+                // Wallet: return locked margin; legs+close already netted in pnl; open fees were taken at open
+                // free += marginEach + (legsPnl - closeFees)/2  per side
+                // Equivalent: free += marginEach + (pnl + openFees)/2  since pnl = legs - open - close
+                var walletCredit = marginEach + (legsPnl - closeFees) / 2m;
+                _margin.AddOrUpdate(pos.LongExchange, walletCredit, (_, v) => v + walletCredit);
+                _margin.AddOrUpdate(pos.ShortExchange, walletCredit, (_, v) => v + walletCredit);
 
                 RealizedPnlUsd += pnl;
                 if (DateTime.UtcNow.Date != _dayUtc)
@@ -331,7 +346,7 @@ public class FuturesPaperService : IFuturesPaperService
                             "timeout" => "Closed(timeout)",
                             _ => "Closed(converge)"
                         },
-                        Message = $"PnL {pnl:F4} USD | width {currentWidth:F3}% | {reason}"
+                        Message = $"PnL {pnl:F4} (legs-fees) openFee={openFees:F2} closeFee={closeFees:F2} | {reason}"
                     };
                     _trades[idx] = closedTrade;
                     _analytics.RecordClose(closedTrade);

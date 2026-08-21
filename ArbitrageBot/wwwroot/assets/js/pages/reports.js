@@ -62,7 +62,7 @@ AB.pages.reports = {
             <div class="muted mono" style="font-size:11px;margin-top:6px;line-height:1.5">
               free ${AB.fmt(sumFree, 2)} · locked ${AB.fmt(sumLocked, 2)}<br/>
               start ${AB.fmt(totalStart, 0)} · Δ <span class="${totalDelta>=0?'pos':'neg'}">${totalDelta >= 0 ? '+' : ''}${AB.fmt(totalDelta, 2)}</span>
-              · realized ${AB.fmt(fp.realizedPnlUsd ?? fp.realizedPnl ?? 0, 2)}
+              · realized ${AB.fmt(fp.realizedPnlUsd ?? fp.realizedPnl ?? 0, 2)} · <b>истина = Δ equity</b>
             </div>
           </div>`;
         AB.$('r_margin').innerHTML = totalCard + cards;
