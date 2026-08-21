@@ -32,14 +32,37 @@ AB.pages.reports = {
     AB.$('r_lev').textContent = (fp.leverage || 5) + 'x';
     AB.$('r_stop').textContent = fp.stopLossUsd ?? '—';
 
-    // margins
+    // margins: free vs locked vs equity
+    const bd = fp.marginBreakdown || {};
     const bal = fp.margin || fp.balances || {};
-    AB.$('r_margin').innerHTML = Object.keys(bal).length
-      ? Object.entries(bal).map(([ex, v]) => {
+    const start = fp.paperStartingQuote || 50000;
+    if (AB.$('r_margin')) {
+      if (Object.keys(bd).length) {
+        AB.$('r_margin').innerHTML = Object.entries(bd).map(([ex, m]) => {
+          const free = Number(m.free ?? 0);
+          const locked = Number(m.locked ?? 0);
+          const equity = Number(m.equity ?? free + locked);
+          const delta = Number(m.deltaFromStart ?? equity - start);
+          return `<div class="kpi" style="margin:0">
+            <div class="kpi-l">${ex}</div>
+            <div class="mono" style="font-size:16px;font-weight:700;margin-top:6px">${AB.fmt(equity, 2)} <span class="muted" style="font-size:11px">equity</span></div>
+            <div class="muted mono" style="font-size:11px;margin-top:6px;line-height:1.5">
+              free ${AB.fmt(free, 2)} · locked ${AB.fmt(locked, 2)}<br/>
+              start ${AB.fmt(start, 0)} · Δ ${delta >= 0 ? '+' : ''}${AB.fmt(delta, 2)}
+            </div>
+          </div>`;
+        }).join('');
+      } else if (Object.keys(bal).length) {
+        AB.$('r_margin').innerHTML = Object.entries(bal).map(([ex, v]) => {
           const usdt = typeof v === 'object' ? (v.USDT ?? Object.values(v)[0]) : v;
-          return `<div class="card"><div class="kpi-label">${ex}</div><div class="mono kpi-value" style="font-size:18px">${AB.fmt(usdt,2)} <span class="muted" style="font-size:12px">USDT</span></div></div>`;
-        }).join('')
-      : '<div class="muted">No margin data</div>';
+          return `<div class="kpi" style="margin:0"><div class="kpi-l">${ex}</div>
+            <div class="mono" style="font-size:16px;margin-top:6px">${AB.fmt(usdt, 2)} free</div>
+            <div class="muted" style="font-size:11px;margin-top:4px">start ${AB.fmt(start, 0)} (locked not shown)</div></div>`;
+        }).join('');
+      } else {
+        AB.$('r_margin').innerHTML = '<div class="empty">No margin data</div>';
+      }
+    }
 
     AB.$('r_posBody').innerHTML = positions.length ? positions.map(p => `<tr>
       <td class="mono">${p.symbol}</td>

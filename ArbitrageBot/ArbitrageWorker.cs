@@ -276,6 +276,35 @@ public class ArbitrageWorker : BackgroundService
         var trades = _futPaper.GetTrades(40);
         var positions = _futPaper.GetOpenPositions();
         var margin = _futPaper.GetMarginBalances();
+        var startBal = _options.PaperStartingQuote > 0 ? _options.PaperStartingQuote : 50_000m;
+
+        // Per-venue: free (wallet) vs locked in open hedges
+        var lockedByEx = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pos in positions)
+        {
+            var leg = pos.LockedMarginUsd > 0
+                ? pos.LockedMarginUsd
+                : (pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m));
+            lockedByEx[pos.LongExchange] = lockedByEx.GetValueOrDefault(pos.LongExchange) + leg;
+            lockedByEx[pos.ShortExchange] = lockedByEx.GetValueOrDefault(pos.ShortExchange) + leg;
+        }
+
+        var marginBreakdown = margin.Keys.Union(lockedByEx.Keys).Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(ex => ex, ex =>
+            {
+                var free = margin.GetValueOrDefault(ex);
+                var locked = lockedByEx.GetValueOrDefault(ex);
+                // Equity ≈ free + locked (locked is still your capital) — uPnL is global hint not split per venue
+                return (object)new
+                {
+                    free,
+                    locked,
+                    equity = free + locked,
+                    starting = startBal,
+                    deltaFromStart = free + locked - startBal
+                };
+            }, StringComparer.OrdinalIgnoreCase);
+
         _state.FuturesPaper = new
         {
             realizedPnl = _futPaper.RealizedPnlUsd,
@@ -290,7 +319,9 @@ public class ArbitrageWorker : BackgroundService
             maxMarginUsagePercent = _options.FuturesMaxMarginUsagePercent,
             maxNotionalUsd = _options.FuturesMaxNotionalUsd,
             dailyRealizedPnlUsd = _futPaper.DailyRealizedPnlUsd,
+            paperStartingQuote = startBal,
             margin,
+            marginBreakdown,
             maxHoldMinutes = _options.FuturesMaxHoldMinutes,
             closeBelowNetPercent = _options.FuturesCloseBelowNetPercent,
             positions = positions.Select(p => new
