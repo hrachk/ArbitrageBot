@@ -180,8 +180,8 @@ table.data tr:hover td { background: rgba(255,255,255,0.015); }
 .banner.warn { background: rgba(251,191,36,0.06); border-color: rgba(251,191,36,0.25); color: #fcd34d; }
 .banner.ok { background: rgba(74,222,128,0.06); border-color: rgba(74,222,128,0.25); color: #86efac; }
 
-.page { display: none; }
-.page.active { display: block; }
+.page { display: none !important; }
+.page.active { display: block !important; min-height: 60vh; }
 
 /* Market terminal */
 .mkt-layout {
