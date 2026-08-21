@@ -59,7 +59,7 @@ public class ArbitrageWorker : BackgroundService
         _state.QuoteSize = _options.QuoteSize;
         _state.DynamicSymbols = _options.DynamicSymbols;
         _state.StrategyNote = _options.IsFuturesCross
-            ? "PROFESSIONAL PAPER: LONG cheap / SHORT rich on 5 venues. Size~2k USDT/leg, lev 5x, multi-open. Collect stats 1–3d before live. Majors excluded. Not real orders."
+            ? "REALISTIC PAPER (= live gates): LONG cheap / SHORT rich. Min open 0.10%, require RT edge, full fill, lev 3x, size 1k. Sparse signals expected. Stats valid for live decision."
             : "Spot inventory arb: buy cheap / sell rich with pre-funded balances.";
     }
 
