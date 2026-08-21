@@ -1,169 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ArbitrageBot Console</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/css/app.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ArbitrageBot · Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/assets/css/app.css"/>
 </head>
 <body>
-<div class="app">
+<div class="shell">
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-logo">AB</div>
-      <div>
-        <h1>ArbitrageBot</h1>
-        <p>FuturesCross · Console</p>
+      <div class="brand-mark">AB</div>
+      <div class="brand-text">
+        <strong>ArbitrageBot</strong>
+        <span>Futures cross · console</span>
       </div>
     </div>
     <nav class="nav">
-      <a href="#dashboard" data-page="dashboard" class="active"><span class="icon">◈</span> Dashboard</a>
-      <a href="#market" data-page="market"><span class="icon">▣</span> Market</a>
-      <a href="#reports" data-page="reports"><span class="icon">▤</span> Reports</a>
-      <a href="#settings" data-page="settings"><span class="icon">⚙</span> Settings</a>
+      <button type="button" class="nav-item active" data-page="dashboard"><span class="nav-ico">▣</span> Dashboard</button>
+      <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◈</span> Market</button>
+      <button type="button" class="nav-item" data-page="reports"><span class="nav-ico">▤</span> Reports</button>
+      <button type="button" class="nav-item" data-page="settings"><span class="nav-ico">⚙</span> Settings</button>
     </nav>
-    <div class="side-foot">
-      <div style="margin-bottom:8px"><span id="modeBadge" class="badge paper">PAPER</span></div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span id="connDot" class="dot"></span>
-        <span id="connText">Connecting…</span>
-      </div>
-      <div class="mono" style="margin-top:6px" id="lastScan">—</div>
+    <div class="side-meta">
+      <span class="pill paper" id="modeBadge">PAPER</span>
+      <div class="status-line"><span class="led" id="connDot"></span><span id="connText">Connecting…</span></div>
+      <div class="mono" id="lastScan">scan —</div>
     </div>
   </aside>
 
-  <div class="main">
+  <div class="workspace">
     <header class="topbar">
-      <h2 id="pageTitle">Dashboard</h2>
-      <div class="meta">
-        <button class="btn" id="btnPause">Pause / Resume</button>
-        <button class="btn ghost" id="btnResetPaper">Reset Paper</button>
+      <h1 id="pageTitle">Dashboard</h1>
+      <div class="topbar-right">
+        <span class="top-meta" id="topHint">waiting for data…</span>
+        <button type="button" class="btn sm" id="btnPause">Pause</button>
+        <button type="button" class="btn sm danger" id="btnResetPaper">Reset paper</button>
       </div>
     </header>
 
-    <div class="content">
+    <main class="main">
       <!-- DASHBOARD -->
       <section class="page active" data-page="dashboard">
-        <div class="alert info">
-          <b>PAPER · live market data</b> — ордера на биржу не отправляются. Long дешёвый perp + Short дорогой.
-          Закрытие: сходимость спреда · timeout · stop-loss. Аналитика → <code>data/paper/</code>.
+        <div class="banner info" id="d_banner">
+          <b>PAPER mode</b> — live WebSocket books, simulated execution. No real orders.
         </div>
-        <div class="hero">
-          <div class="card">
-            <h3>Статус системы</h3>
-            <p id="d_strategy" class="muted" style="margin:0 0 10px;font-size:13px;line-height:1.55"></p>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-l">Scans</div><div class="kpi-v" id="d_scans">0</div></div>
+          <div class="kpi"><div class="kpi-l">Signals</div><div class="kpi-v pos" id="d_opps">0</div></div>
+          <div class="kpi"><div class="kpi-l">Best net</div><div class="kpi-v" id="d_best">—</div></div>
+          <div class="kpi"><div class="kpi-l">Realized</div><div class="kpi-v" id="d_pnl">—</div></div>
+          <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="d_open">0</div></div>
+          <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="d_day">—</div></div>
+        </div>
+        <div class="g2" style="margin-bottom:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">System</h2></div>
+            <p id="d_strategy" class="muted" style="margin:0 0 8px"></p>
             <div class="muted" style="font-size:12px" id="d_discovery"></div>
-            <div class="legend-row" id="d_pairs"></div>
+            <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px" id="d_pairs"></div>
           </div>
-          <div class="card">
-            <h3>Как читать</h3>
-            <div class="muted" style="font-size:12.5px;line-height:1.65">
-              <div><span class="pos">● LONG</span> — покупка ask на дешёвой бирже</div>
-              <div><span class="neg">● SHORT</span> — продажа bid на дорогой</div>
-              <div><span class="tag">Net open</span> — после 1-way fees · <span class="tag">RT</span> — с close fees</div>
-              <div style="margin-top:6px">UI: <b>Snapshot</b> ~1s (скан) · <b>MarketTick</b> ~0.9s (стаканы из WS-памяти)</div>
-            </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">WebSocket health</h2></div>
+            <div class="g3" id="d_health"><div class="empty">Connecting streams…</div></div>
           </div>
         </div>
-        <div class="grid grid-6" style="margin-bottom:14px">
-          <div class="card kpi-card"><div class="kpi-label">Scans</div><div class="kpi-value mono" id="d_scans">0</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Signals</div><div class="kpi-value mono pos" id="d_opps">0</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Best net</div><div class="kpi-value" id="d_best">—</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Realized PnL</div><div class="kpi-value" id="d_pnl">0</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Open hedges</div><div class="kpi-value mono" id="d_open">0</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Day PnL</div><div class="kpi-value" id="d_day">0</div></div>
-        </div>
-        <div class="section-title">Exchange streams (WebSocket)</div>
-        <div class="grid grid-3" id="d_health" style="margin-bottom:14px"></div>
-        <div class="grid grid-2">
-          <div class="card">
-            <h3>Top signals · live</h3>
-            <div class="scroll" style="max-height:320px">
-              <table>
+        <div class="g2">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Top signals</h2><span class="panel-sub">net after open fees</span></div>
+            <div class="scroll">
+              <table class="data">
                 <thead><tr><th>Symbol</th><th>Long → Short</th><th>Net</th><th>Est $</th><th>Fill</th></tr></thead>
-                <tbody id="d_oppBody"></tbody>
+                <tbody id="d_oppBody"><tr><td colspan="5" class="empty">Waiting for scan…</td></tr></tbody>
               </table>
             </div>
           </div>
-          <div class="card">
-            <h3>Recent paper trades</h3>
-            <div class="scroll" style="max-height:320px">
-              <table>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Recent trades</h2></div>
+            <div class="scroll">
+              <table class="data">
                 <thead><tr><th>Time</th><th>Symbol</th><th>PnL</th><th>Status</th></tr></thead>
-                <tbody id="d_tradeBody"></tbody>
+                <tbody id="d_tradeBody"><tr><td colspan="4" class="empty">No trades yet</td></tr></tbody>
               </table>
             </div>
           </div>
         </div>
-        <div class="card" style="margin-top:14px">
-          <h3>Open positions</h3>
-          <div id="d_positions" class="pos-cards"><div class="empty-state">Нет открытых paper-хеджей</div></div>
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
+          <div id="d_positions" class="pos-list"><div class="empty">No open hedges</div></div>
         </div>
       </section>
 
-      <!-- MARKET — trading terminal -->
+      <!-- MARKET -->
       <section class="page" data-page="market">
-        <div class="term-toolbar card" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
-          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
-            <select id="m_symbol" style="width:auto;min-width:140px;font-weight:600"></select>
-            <div>
-              <span class="muted" style="font-size:10px">LAST</span>
-              <div class="mono" style="font-size:20px;font-weight:600" id="m_last">—</div>
-            </div>
-            <div>
-              <span class="muted" style="font-size:10px">BEST NET</span>
-              <div id="m_bestNet">—</div>
-            </div>
-            <div class="muted mono" style="font-size:11px" id="m_route">—</div>
-          </div>
-          <div style="display:flex;gap:6px;align-items:center">
-            <select id="m_interval" style="width:auto">
-              <option value="1m">1m</option>
-              <option value="5m">5m</option>
-              <option value="15m" selected>15m</option>
-              <option value="1h">1h</option>
+        <div class="mkt-toolbar">
+          <div class="left">
+            <select id="m_symbol"></select>
+            <select id="m_interval">
+              <option value="1">1m</option>
+              <option value="5">5m</option>
+              <option value="15" selected>15m</option>
+              <option value="60">1h</option>
+              <option value="240">4h</option>
             </select>
-            <span class="tag" id="m_chartSrc">chart</span>
+            <span class="price-pill" id="m_last">—</span>
+            <span class="muted mono" id="m_chartSrc" style="font-size:11px"></span>
+          </div>
+          <div class="right">
+            <span class="tag" id="m_streams">streams —</span>
           </div>
         </div>
-
-        <div class="term-grid">
-          <div class="term-left">
-            <div class="card term-chart-wrap">
-              <div class="section-title" style="margin:4px 8px 8px">TradingView · live chart</div>
-              <div id="tv_chart" style="height:420px;width:100%"></div>
-              <div class="muted" style="font-size:11px;padding:8px 8px 0">Символ мапится на BINANCE:{PAIR}.P (USDT-M perp). Смена пары перезагружает виджет.</div>
+        <div class="mkt-layout">
+          <div>
+            <div class="chart-box" id="tv_wrap">
+              <div class="chart-placeholder" id="tv_placeholder">Select a symbol to load chart…</div>
+              <iframe id="tv_frame" title="TradingView" style="display:none" allowtransparency="true" scrolling="no" allowfullscreen></iframe>
             </div>
-            <div class="card" style="margin-top:12px">
-              <h3>Signals · selected pair & all</h3>
-              <div class="scroll" style="max-height:200px">
-                <table>
-                  <thead><tr><th>Symbol</th><th>Long→Short</th><th>Open net</th><th>RT net</th><th>Est $</th><th>Fill</th></tr></thead>
-                  <tbody id="m_oppBody"></tbody>
+            <div class="panel" style="margin-top:12px">
+              <div class="panel-hd"><h2 class="panel-title">Signals</h2></div>
+              <div class="scroll" style="max-height:220px">
+                <table class="data">
+                  <thead><tr><th>Symbol</th><th>Route</th><th>Open%</th><th>RT%</th><th>Est $</th></tr></thead>
+                  <tbody id="m_oppBody"><tr><td colspan="5" class="empty">No signals</td></tr></tbody>
                 </table>
               </div>
             </div>
-            <div class="card" style="margin-top:12px">
-              <h3>Open paper positions</h3>
-              <div id="m_positions" class="pos-cards"></div>
+            <div class="panel" style="margin-top:12px">
+              <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
+              <div id="m_positions" class="pos-list"><div class="empty">No open hedges</div></div>
             </div>
           </div>
-          <div class="term-right">
-            <div class="card term-ob-panel">
-              <h3 style="margin-bottom:8px">Order books <span class="muted" style="font-weight:400">· live depth</span></h3>
-              <div id="m_depth" class="term-ob-stack"></div>
-            </div>
+          <div class="panel ob-panel">
+            <div class="panel-hd"><h2 class="panel-title">Order books</h2><span class="panel-sub">live WS</span></div>
+            <div id="m_depth"><div class="empty">Waiting for books…</div></div>
           </div>
         </div>
-
-        <div class="card" style="margin-top:12px">
-          <h3>Cross-exchange ticker tape</h3>
-          <div class="scroll" style="max-height:180px">
-            <table>
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-hd"><h2 class="panel-title">Cross-exchange tape</h2></div>
+          <div class="scroll" style="max-height:200px">
+            <table class="data">
               <thead><tr><th>Symbol</th><th>Exchange</th><th>Bid</th><th>Ask</th><th>Spread</th></tr></thead>
-              <tbody id="m_bookBody"></tbody>
+              <tbody id="m_bookBody"><tr><td colspan="5" class="empty">—</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -171,58 +150,60 @@
 
       <!-- REPORTS -->
       <section class="page" data-page="reports">
-        <div class="alert info" id="r_analyticsNote"><b>Отчёты paper</b> — сводка дня, причины skip, история. Файлы: <code>data/paper/</code>. Держите процесс 1–3 дня для статистики.</div>
-        <div class="grid grid-6" style="margin-bottom:14px">
-          <div class="card"><div class="kpi-label">Realized</div><div class="kpi-value" id="r_realized">—</div></div>
-          <div class="card"><div class="kpi-label">Day PnL</div><div class="kpi-value" id="r_day">—</div></div>
-          <div class="card"><div class="kpi-label">Attempts</div><div class="kpi-value mono" id="r_attempts">0</div></div>
-          <div class="card"><div class="kpi-label">Open</div><div class="kpi-value mono" id="r_open">0</div></div>
-          <div class="card"><div class="kpi-label">Leverage</div><div class="kpi-value mono" id="r_lev">5x</div></div>
-          <div class="card"><div class="kpi-label">Stop</div><div class="kpi-value mono" id="r_stop">—</div></div>
+        <div class="banner info">Paper analytics · files in <code class="mono">data/paper/</code></div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kpi-l">Realized</div><div class="kpi-v" id="r_realized">—</div></div>
+          <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
+          <div class="kpi"><div class="kpi-l">Attempts</div><div class="kpi-v" id="r_attempts">0</div></div>
+          <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="r_open">0</div></div>
+          <div class="kpi"><div class="kpi-l">Leverage</div><div class="kpi-v" id="r_lev">—</div></div>
+          <div class="kpi"><div class="kpi-l">Stop</div><div class="kpi-v" id="r_stop">—</div></div>
         </div>
-        <div class="grid grid-2" style="margin-bottom:14px">
-          <div class="card">
-            <h3>Day summary (UTC)</h3>
-            <div id="r_daySummary" class="mono" style="font-size:12px;line-height:1.7">—</div>
+        <div class="g2" style="margin-bottom:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
+            <div id="r_daySummary" class="mono muted" style="font-size:12px;line-height:1.7">—</div>
           </div>
-          <div class="card">
-            <h3>Skip reasons (today)</h3>
-            <div id="r_skipReasons" style="font-size:12px">—</div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
+            <div id="r_skipReasons">—</div>
           </div>
         </div>
-        <div class="card" style="margin-bottom:14px">
-          <h3>Recent skips / diagnostics</h3>
-          <div class="scroll" style="max-height:220px">
-            <table>
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Recent skips</h2></div>
+          <div class="scroll" style="max-height:200px">
+            <table class="data">
               <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
               <tbody id="r_skipBody"></tbody>
             </table>
           </div>
         </div>
-        <div class="card" style="margin-bottom:14px">
-          <h3>Multi-day history</h3>
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Multi-day</h2></div>
           <div class="scroll" style="max-height:160px">
-            <table>
-              <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best open</th></tr></thead>
+            <table class="data">
+              <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best</th></tr></thead>
               <tbody id="r_daysBody"></tbody>
             </table>
           </div>
         </div>
-        <h3 style="font-size:13px;color:var(--muted);margin:0 0 8px">Paper margin by venue</h3>
-        <div class="grid grid-3" id="r_margin" style="margin-bottom:14px"></div>
-        <div class="card" style="margin-bottom:14px">
-          <h3>Open positions</h3>
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Margin by venue</h2></div>
+          <div class="g3" id="r_margin"></div>
+        </div>
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
           <div class="scroll">
-            <table>
+            <table class="data">
               <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
               <tbody id="r_posBody"></tbody>
             </table>
           </div>
         </div>
-        <div class="card">
-          <h3>Trade ledger</h3>
-          <div class="scroll" style="max-height:480px">
-            <table>
+        <div class="panel">
+          <div class="panel-hd"><h2 class="panel-title">Trade ledger</h2></div>
+          <div class="scroll" style="max-height:400px">
+            <table class="data">
               <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
               <tbody id="r_tradeBody"></tbody>
             </table>
@@ -232,141 +213,76 @@
 
       <!-- SETTINGS -->
       <section class="page" data-page="settings">
-        <div id="s_msg" class="alert info hidden"></div>
-        <div class="alert warn">
-          API keys are stored in <span class="mono">data/local-settings.json</span> (gitignored) or User Secrets.
-          Secrets are never sent back to the browser. Live trading stays disabled until paper results are solid.
-        </div>
-        <div class="grid grid-2">
-          <div class="card">
-            <h3>Trading parameters</h3>
-            <p class="muted" style="font-size:12px;margin:0 0 14px;line-height:1.55">
-              Профессиональный набор для <b>FuturesCross paper</b>. Изменения применяются <b>сразу в runtime</b> (без рестарта).
-              Live-ордера по-прежнему выключены.
-            </p>
-
-            <div class="section-title">Preset</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
-              <button type="button" class="btn" id="presetConservative" title="Меньше сделок, жёстче риск">Conservative</button>
-              <button type="button" class="btn primary" id="presetBalanced" title="Баланс sample size / риск">Balanced (paper)</button>
-              <button type="button" class="btn" id="presetAggressive" title="Больше сделок для сбора статистики">Aggressive paper</button>
+        <div id="s_msg" class="banner info hidden"></div>
+        <div class="banner warn">Keys → <span class="mono">data/local-settings.json</span> (gitignored). Live trading stays off until paper is validated.</div>
+        <div class="g2">
+          <div class="panel" id="s_tradingPanel">
+            <div class="panel-hd"><h2 class="panel-title">Trading parameters</h2></div>
+            <div class="section-label">Preset</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+              <button type="button" class="btn sm" id="presetConservative">Conservative</button>
+              <button type="button" class="btn sm primary" id="presetBalanced">Balanced</button>
+              <button type="button" class="btn sm" id="presetAggressive">Aggressive</button>
             </div>
-
-            <div class="section-title">Mode</div>
+            <div class="section-label">Mode</div>
             <div class="form-row">
-              <div class="field">
-                <label>Strategy</label>
+              <div class="field"><label>Strategy</label>
                 <select id="s_strategy">
-                  <option value="FuturesCross">FuturesCross — long cheap / short rich (no transfer)</option>
-                  <option value="SpotInventory">SpotInventory — (legacy, not primary)</option>
+                  <option value="FuturesCross">FuturesCross</option>
+                  <option value="SpotInventory">SpotInventory</option>
                 </select>
               </div>
-              <div class="field" style="display:flex;flex-direction:column;justify-content:end;gap:10px;padding-bottom:4px">
-                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_paper" type="checkbox"/> Paper trading (demo balance)</label>
-                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_auto" type="checkbox"/> Auto-execute hedges</label>
+              <div class="field" style="display:flex;flex-direction:column;justify-content:end;gap:8px">
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_paper" type="checkbox"/> Paper trading</label>
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_auto" type="checkbox"/> Auto-execute</label>
               </div>
             </div>
-
-            <div class="section-title">Entry · size</div>
+            <div class="section-label">Entry · size</div>
             <div class="form-row">
-              <div class="field">
-                <label>Min open edge % <span class="muted">(after open fees)</span></label>
-                <input id="s_minProfit" type="number" step="0.005" min="0.01" max="1"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Порог входа. Ниже — больше сигналов, выше шум.</div>
-              </div>
-              <div class="field">
-                <label>Quote size (USDT notional / leg)</label>
-                <input id="s_size" type="number" step="50" min="50"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Номинал одной ноги. Влияет на slippage и PnL.</div>
-              </div>
+              <div class="field"><label>Min open edge %</label><input id="s_minProfit" type="number" step="0.005"/><div class="hint">After open fees</div></div>
+              <div class="field"><label>Quote size USDT</label><input id="s_size" type="number" step="50"/></div>
             </div>
             <div class="form-row">
-              <div class="field">
-                <label>Leverage (paper)</label>
-                <input id="s_lev" type="number" step="1" min="1" max="10"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Маржа ≈ notional / lev на каждой бирже.</div>
-              </div>
-              <div class="field">
-                <label>Max concurrent hedges</label>
-                <input id="s_maxPos" type="number" step="1" min="1" max="20"/>
-              </div>
+              <div class="field"><label>Leverage</label><input id="s_lev" type="number" min="1" max="10"/></div>
+              <div class="field"><label>Max open hedges</label><input id="s_maxPos" type="number"/></div>
             </div>
             <div class="form-row">
-              <div class="field">
-                <label>Max notional USD / trade</label>
-                <input id="s_maxNotional" type="number" step="100" min="100"/>
-              </div>
-              <div class="field">
-                <label>Entry cooldown (ms)</label>
-                <input id="s_cooldown" type="number" step="500" min="0"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Пауза между открытиями.</div>
-              </div>
+              <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number"/></div>
+              <div class="field"><label>Cooldown ms</label><input id="s_cooldown" type="number"/></div>
             </div>
-
-            <div class="section-title">Risk limits</div>
+            <div class="section-label">Risk</div>
             <div class="form-row">
-              <div class="field">
-                <label>Stop-loss (USD / hedge)</label>
-                <input id="s_stop" type="number" step="1"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Отрицательное: −80 = закрыть при uPnL ≤ −80.</div>
-              </div>
-              <div class="field">
-                <label>Daily loss limit (USD)</label>
-                <input id="s_dayLimit" type="number" step="1"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Блокирует новые входы после лимита.</div>
-              </div>
+              <div class="field"><label>Stop-loss USD</label><input id="s_stop" type="number"/><div class="hint">Negative number</div></div>
+              <div class="field"><label>Daily loss limit</label><input id="s_dayLimit" type="number"/></div>
             </div>
             <div class="form-row">
-              <div class="field">
-                <label>Max margin usage (fraction)</label>
-                <input id="s_marginUse" type="number" step="0.01" min="0.05" max="0.90"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">0.25 = макс. 25% free margin на ногу.</div>
-              </div>
-              <div class="field">
-                <label>Max hold (minutes)</label>
-                <input id="s_hold" type="number" step="1" min="1"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Timeout close независимо от спреда.</div>
-              </div>
+              <div class="field"><label>Max margin usage</label><input id="s_marginUse" type="number" step="0.01" min="0.05" max="0.9"/></div>
+              <div class="field"><label>Max hold minutes</label><input id="s_hold" type="number"/></div>
             </div>
-
-            <div class="section-title">Exit · quality filters</div>
+            <div class="section-label">Exit · filters</div>
             <div class="form-row">
-              <div class="field">
-                <label>Close when width ≤ %</label>
-                <input id="s_closeWidth" type="number" step="0.005" min="0"/>
-                <div class="muted" style="font-size:10px;margin-top:4px">Сходимость спреда (или ≤40% entry width).</div>
-              </div>
-              <div class="field" style="display:flex;flex-direction:column;gap:10px;justify-content:center">
-                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_fullFill" type="checkbox"/> Require full book fill (stricter)</label>
-                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_reqRt" type="checkbox"/> Require round-trip net edge</label>
-                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_funding" type="checkbox"/> Include funding in metrics</label>
+              <div class="field"><label>Close width ≤ %</label><input id="s_closeWidth" type="number" step="0.005"/></div>
+              <div class="field" style="display:flex;flex-direction:column;gap:8px;justify-content:center">
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_fullFill" type="checkbox"/> Full fill</label>
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_reqRt" type="checkbox"/> Require RT edge</label>
+                <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_funding" type="checkbox"/> Include funding</label>
               </div>
             </div>
-
-            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;align-items:center">
-              <button class="btn primary" id="btnSaveTrading">Apply trading parameters</button>
-              <span class="muted" style="font-size:11px">Пишется в local store + RuntimeRiskConfig</span>
-            </div>
+            <button type="button" class="btn primary" id="btnSaveTrading">Apply parameters</button>
           </div>
-          <div class="card">
-            <h3>Roadmap: live keys</h3>
-            <ol class="muted" style="font-size:13px;line-height:1.6;margin:0;padding-left:18px">
-              <li>Paper on live books (current)</li>
-              <li>Read-only keys → real balances / positions</li>
-              <li>Trade keys + hard risk limits</li>
-              <li>Per-exchange enable + permission</li>
-            </ol>
-            <p class="muted" style="font-size:12px;margin-top:12px">Supported venues: Binance, Bybit, OKX, Bitget, GateIo</p>
+          <div>
+            <div class="panel">
+              <div class="panel-hd"><h2 class="panel-title">Exchange API keys</h2></div>
+              <div id="s_exchanges"></div>
+            </div>
           </div>
         </div>
-        <h3 style="font-size:13px;color:var(--muted);margin:18px 0 10px">Exchange connections</h3>
-        <div class="grid grid-2" id="s_exchanges"></div>
       </section>
-    </div>
+    </main>
   </div>
 </div>
 
-<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 <script src="/assets/js/core.js"></script>
 <script src="/assets/js/pages/dashboard.js"></script>
 <script src="/assets/js/pages/market.js"></script>
