@@ -181,6 +181,9 @@ public class ArbitrageState
                     o.Symbol,
                     o.BuyExchange,
                     o.SellExchange,
+                    // FuturesCross aliases for UI
+                    longExchange = o.BuyExchange,
+                    shortExchange = o.SellExchange,
                     buyPriceTop = o.BuyPriceTop,
                     sellPriceTop = o.SellPriceTop,
                     buyPriceVwap = o.BuyPriceVwap,
@@ -193,7 +196,10 @@ public class ArbitrageState
                     o.BuyFeePercent,
                     o.SellFeePercent,
                     netProfitPercent = o.NetProfitPercent,
+                    netSpreadPercent = o.NetProfitPercent,
+                    netRoundTripPercent = o.NetProfitPercent,
                     netProfitQuote = o.NetProfitQuote,
+                    estNetPnlUsd = o.NetProfitQuote,
                     buySlippagePercent = o.BuySlippagePercent,
                     sellSlippagePercent = o.SellSlippagePercent,
                     detectedAt = o.DetectedAt

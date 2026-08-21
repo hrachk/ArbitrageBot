@@ -160,7 +160,8 @@ public class ArbitrageWorker : BackgroundService
             GrossSpreadVwapPercent = o.GrossSpreadPercent,
             BuyFeePercent = o.LongFeePercent,
             SellFeePercent = o.ShortFeePercent,
-            NetProfitPercent = o.NetAfterFundingPercent,
+            // UI/threshold display: open edge is primary; RT kept via Gross for now
+            NetProfitPercent = o.NetSpreadPercent,
             NetProfitQuote = o.EstNetPnlUsd,
             BuySlippagePercent = o.SlippagePercent / 2,
             SellSlippagePercent = o.SlippagePercent / 2

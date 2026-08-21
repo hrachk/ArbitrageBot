@@ -70,7 +70,13 @@ AB.onSnapshot = (data) => {
   }
   const page = AB.pages[AB.state.page];
   if (page?.render) page.render(data);
+  // Always keep dashboard primed so switching back is instant
+  if (AB.state.page !== 'dashboard' && AB.pages.dashboard?.render)
+    AB.pages.dashboard._last = data;
 };
+
+// Force dashboard render after scripts load if snapshot arrived early
+
 
 AB.pages = {};
 
@@ -180,9 +186,19 @@ document.getElementById('btnResetPaper')?.addEventListener('click', async () => 
 });
 
 AB.startSignalR();
-fetch('/api/snapshot').then(r => r.json()).then(AB.onSnapshot).catch(() => {
-  if (AB.$('connText')) AB.$('connText').textContent = 'No snapshot';
-});
+AB._boot = () => {
+  fetch('/api/snapshot').then(r => r.json()).then(data => {
+    AB.onSnapshot(data);
+    // re-render active page after all page modules registered
+    const page = AB.pages[AB.state.page];
+    if (page?.render) page.render(data);
+  }).catch(() => {
+    if (AB.$('connText')) AB.$('connText').textContent = 'No snapshot';
+  });
+};
+// pages scripts load after this file — defer boot
+if (document.readyState === 'complete') setTimeout(AB._boot, 0);
+else window.addEventListener('load', () => setTimeout(AB._boot, 0));
 
 if (location.hash) {
   const p = location.hash.replace('#', '');
