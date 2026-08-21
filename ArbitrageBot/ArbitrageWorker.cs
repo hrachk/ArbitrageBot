@@ -78,6 +78,9 @@ public class ArbitrageWorker : BackgroundService
         if (_options.IsFuturesCross)
         {
             _futPaper.Initialize(_markets.Exchanges);
+            PushFuturesPaper();
+            _state.PaperAnalytics = _analytics.GetLiveSummary();
+            _state.PaperRecentSkips = _analytics.GetRecentSkips(25);
             await _futMarket.StartAsync(stoppingToken);
             _logger.LogInformation("Futures books: {S}",
                 string.Join("; ", _futMarket.ConnectionStatus.Select(kv => $"{kv.Key}={kv.Value}")));
@@ -128,6 +131,7 @@ public class ArbitrageWorker : BackgroundService
             await Task.Delay(_options.ScanIntervalMs, stoppingToken);
         }
 
+        try { _futPaper.PersistNow(); } catch { /* ignore */ }
         if (_options.IsFuturesCross) await _futMarket.StopAsync(stoppingToken);
         else await _spotBooks.StopAsync(stoppingToken);
     }

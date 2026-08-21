@@ -409,69 +409,225 @@ public class FuturesPaperService : IFuturesPaperService
         };
     }
 
+
     private bool TryRestore(IReadOnlyList<string> exchanges)
     {
         try
         {
-            if (!File.Exists(SnapshotPath)) return false;
+            if (!File.Exists(SnapshotPath))
+            {
+                // Still try ledger-only history for UI
+                return TryLoadLedgerHistoryOnly(exchanges);
+            }
+
             var json = File.ReadAllText(SnapshotPath);
             var snap = JsonSerializer.Deserialize<PaperOpenSnapshot>(json, SnapshotJson);
-            if (snap == null || snap.Positions == null || snap.Positions.Count == 0)
-                return false;
+            if (snap == null)
+                return TryLoadLedgerHistoryOnly(exchanges);
+
+            var hasPos = snap.Positions is { Count: > 0 };
+            var hasTrades = snap.Trades is { Count: > 0 };
+            var hasPnl = snap.RealizedPnlUsd != 0 || snap.DailyRealizedPnlUsd != 0;
+            if (!hasPos && !hasTrades && !hasPnl)
+                return TryLoadLedgerHistoryOnly(exchanges);
 
             lock (_lock)
             {
                 _margin.Clear();
-                var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
+                var startBal = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
                 foreach (var ex in exchanges)
-                    _margin[ex] = start;
+                    _margin[ex] = startBal;
                 if (snap.Margin != null)
                 {
                     foreach (var kv in snap.Margin)
                         _margin[kv.Key] = kv.Value;
+                    // ensure all configured exchanges present
+                    foreach (var ex in exchanges)
+                        if (!_margin.ContainsKey(ex))
+                            _margin[ex] = startBal;
                 }
 
                 _positions.Clear();
                 _trades.Clear();
-                foreach (var p in snap.Positions)
+
+                if (snap.Trades is { Count: > 0 })
                 {
-                    _positions.Add(p);
-                    // synthetic open trade so close path finds TradeId
-                    _trades.Add(new FuturesPaperTrade
-                    {
-                        Id = p.TradeId == Guid.Empty ? Guid.NewGuid() : p.TradeId,
-                        OpenedAt = p.OpenedAt,
-                        Symbol = p.Symbol,
-                        LongExchange = p.LongExchange,
-                        ShortExchange = p.ShortExchange,
-                        BaseQty = p.BaseQty,
-                        LongEntry = p.LongEntry,
-                        ShortEntry = p.ShortEntry,
-                        IsOpen = true,
-                        Status = "Open",
-                        Message = "Restored after restart"
-                    });
-                    if (p.TradeId == Guid.Empty)
-                        p.TradeId = _trades[^1].Id;
+                    foreach (var tr in snap.Trades.OrderByDescending(x => x.OpenedAt).Take(200))
+                        _trades.Add(tr);
                 }
+
+                if (snap.Positions is { Count: > 0 })
+                {
+                    foreach (var pos in snap.Positions)
+                    {
+                        _positions.Add(pos);
+                        // ensure matching open trade exists
+                        if (!_trades.Any(t => t.Id == pos.TradeId))
+                        {
+                            var id = pos.TradeId == Guid.Empty ? Guid.NewGuid() : pos.TradeId;
+                            pos.TradeId = id;
+                            _trades.Insert(0, new FuturesPaperTrade
+                            {
+                                Id = id,
+                                OpenedAt = pos.OpenedAt,
+                                Symbol = pos.Symbol,
+                                LongExchange = pos.LongExchange,
+                                ShortExchange = pos.ShortExchange,
+                                BaseQty = pos.BaseQty,
+                                LongEntry = pos.LongEntry,
+                                ShortEntry = pos.ShortEntry,
+                                IsOpen = true,
+                                Status = "Open",
+                                Message = "Restored after restart"
+                            });
+                        }
+                    }
+                }
+
+                // Supplement from ledger file if trade list thin
+                MergeLedgerIntoTradesUnlocked();
 
                 RealizedPnlUsd = snap.RealizedPnlUsd;
                 DailyRealizedPnlUsd = snap.DailyRealizedPnlUsd;
                 _dayUtc = snap.DayUtc == default ? DateTime.UtcNow.Date : snap.DayUtc.Date;
+                if (_dayUtc.Date != DateTime.UtcNow.Date)
+                    DailyRealizedPnlUsd = 0;
                 TradeAttempts = snap.TradeAttempts;
                 _lastOpenUtc = snap.LastOpenUtc;
             }
 
             _logger.LogInformation(
-                "Restored {N} open paper hedge(s) from {Path} (realized={R:F2})",
-                snap.Positions.Count, SnapshotPath, snap.RealizedPnlUsd);
+                "Paper state restored: {Open} open, {Trades} trades in memory, realized={R:F2} from {Path}",
+                _positions.Count, _trades.Count, RealizedPnlUsd, SnapshotPath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not restore paper open-state — starting fresh");
+            _logger.LogWarning(ex, "Could not restore paper open-state — trying ledger only");
+            return TryLoadLedgerHistoryOnly(exchanges);
+        }
+    }
+
+    private bool TryLoadLedgerHistoryOnly(IReadOnlyList<string> exchanges)
+    {
+        try
+        {
+            var ledgerPath = Path.Combine(_env.ContentRootPath, "data", "paper", "trades-ledger.json");
+            if (!File.Exists(ledgerPath)) return false;
+            var list = JsonSerializer.Deserialize<List<JsonElement>>(File.ReadAllText(ledgerPath));
+            if (list == null || list.Count == 0) return false;
+
+            lock (_lock)
+            {
+                // fresh margin but keep history visible
+                _margin.Clear();
+                var startBal = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
+                foreach (var ex in exchanges)
+                    _margin[ex] = startBal;
+                _positions.Clear();
+                _trades.Clear();
+                decimal realized = 0;
+                foreach (var el in list.Take(200))
+                {
+                    var tr = TradeFromLedgerElement(el);
+                    if (tr == null) continue;
+                    _trades.Add(tr);
+                    if (tr.RealizedPnlUsd is decimal p) realized += p;
+                }
+                RealizedPnlUsd = realized;
+                DailyRealizedPnlUsd = 0;
+                _dayUtc = DateTime.UtcNow.Date;
+            }
+            _logger.LogInformation("Loaded {N} trades from ledger (no open-state snapshot)", _trades.Count);
+            SaveOpenState(); // write combined snapshot for next restart
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Ledger-only restore failed");
             return false;
         }
+    }
+
+    private void MergeLedgerIntoTradesUnlocked()
+    {
+        try
+        {
+            var ledgerPath = Path.Combine(_env.ContentRootPath, "data", "paper", "trades-ledger.json");
+            if (!File.Exists(ledgerPath)) return;
+            var list = JsonSerializer.Deserialize<List<JsonElement>>(File.ReadAllText(ledgerPath));
+            if (list == null) return;
+            var existing = _trades.Select(t => t.Id).ToHashSet();
+            foreach (var el in list)
+            {
+                var tr = TradeFromLedgerElement(el);
+                if (tr == null || existing.Contains(tr.Id)) continue;
+                _trades.Add(tr);
+                existing.Add(tr.Id);
+            }
+            _trades.Sort((a, b) => b.OpenedAt.CompareTo(a.OpenedAt));
+            if (_trades.Count > 200) _trades.RemoveRange(200, _trades.Count - 200);
+        }
+        catch { /* ignore */ }
+    }
+
+    private static FuturesPaperTrade? TradeFromLedgerElement(JsonElement el)
+    {
+        try
+        {
+            Guid id = Guid.Empty;
+            if (el.TryGetProperty("Id", out var idEl) || el.TryGetProperty("id", out idEl))
+                Guid.TryParse(idEl.ToString(), out id);
+            if (id == Guid.Empty) id = Guid.NewGuid();
+
+            string Sym(string a, string b) =>
+                el.TryGetProperty(a, out var x) ? x.GetString() ?? "" :
+                el.TryGetProperty(b, out var y) ? y.GetString() ?? "" : "";
+
+            decimal Dec(params string[] names)
+            {
+                foreach (var n in names)
+                    if (el.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number)
+                        return v.GetDecimal();
+                return 0;
+            }
+
+            DateTime opened = DateTime.UtcNow;
+            if (el.TryGetProperty("OpenedAt", out var oa) || el.TryGetProperty("openedAt", out oa))
+                DateTime.TryParse(oa.ToString(), out opened);
+            DateTime? closed = null;
+            if (el.TryGetProperty("ClosedAt", out var ca) || el.TryGetProperty("closedAt", out ca))
+            {
+                if (DateTime.TryParse(ca.ToString(), out var c) && c.Year > 2000)
+                    closed = c;
+            }
+
+            var status = Sym("Status", "status");
+            if (string.IsNullOrEmpty(status)) status = closed != null ? "Closed" : "Open";
+            decimal? pnl = null;
+            if (el.TryGetProperty("realizedPnlUsd", out var rp) || el.TryGetProperty("RealizedPnlUsd", out rp))
+            {
+                if (rp.ValueKind == JsonValueKind.Number) pnl = rp.GetDecimal();
+            }
+
+            return new FuturesPaperTrade
+            {
+                Id = id,
+                OpenedAt = opened,
+                ClosedAt = closed,
+                Symbol = Sym("Symbol", "symbol"),
+                LongExchange = Sym("LongExchange", "longExchange"),
+                ShortExchange = Sym("ShortExchange", "shortExchange"),
+                BaseQty = Dec("BaseQty", "baseQty"),
+                LongEntry = Dec("LongEntry", "longEntry"),
+                ShortEntry = Dec("ShortEntry", "shortEntry"),
+                RealizedPnlUsd = pnl,
+                IsOpen = status.Equals("Open", StringComparison.OrdinalIgnoreCase),
+                Status = status,
+                Message = Sym("Message", "message")
+            };
+        }
+        catch { return null; }
     }
 
     private void SaveOpenState()
@@ -506,10 +662,14 @@ public class FuturesPaperService : IFuturesPaperService
                         Leverage = p.Leverage,
                         UnrealizedPnlUsd = p.UnrealizedPnlUsd,
                         CurrentWidthPercent = p.CurrentWidthPercent
-                    }).ToList()
+                    }).ToList(),
+                    Trades = _trades.Take(150).ToList()
                 };
             }
-            File.WriteAllText(SnapshotPath, JsonSerializer.Serialize(snap, SnapshotJson));
+            var tmp = SnapshotPath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(snap, SnapshotJson));
+            File.Copy(tmp, SnapshotPath, overwrite: true);
+            File.Delete(tmp);
         }
         catch (Exception ex)
         {
@@ -527,6 +687,9 @@ public class FuturesPaperService : IFuturesPaperService
         catch { /* ignore */ }
     }
 
+    /// <summary>Flush disk state (call on shutdown).</summary>
+    public void PersistNow() => SaveOpenState();
+
     private sealed class PaperOpenSnapshot
     {
         public DateTime SavedUtc { get; set; }
@@ -537,7 +700,6 @@ public class FuturesPaperService : IFuturesPaperService
         public DateTime LastOpenUtc { get; set; }
         public Dictionary<string, decimal>? Margin { get; set; }
         public List<FuturesPaperPosition>? Positions { get; set; }
+        public List<FuturesPaperTrade>? Trades { get; set; }
     }
-
-
 }
