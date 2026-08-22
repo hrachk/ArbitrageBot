@@ -380,6 +380,35 @@ public sealed class LiveExecutionService : ILiveExecutionService
                     .ToList();
                 return (true, list, null, null, "Bitget.UsdtFutures");
             }
+
+            if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            {
+                var r = await rest.OKX.UnifiedApi.Account.GetAccountBalanceAsync(ct: ct).ConfigureAwait(false);
+                if (!r.Success)
+                    return (false, [], FormatErr(r.Error, r.OriginalData), Truncate(r.OriginalData), "OKX.Unified");
+
+                var list = new List<(string, decimal, decimal)>();
+                if (r.Data?.Details != null)
+                {
+                    foreach (var d in r.Data.Details)
+                    {
+                        var asset = d.Asset ?? "?";
+                        decimal Dec(string n)
+                        {
+                            var v = d.GetType().GetProperty(n)?.GetValue(d);
+                            if (v is decimal x) return x;
+                            if (v is decimal?) return ((decimal?)v) ?? 0;
+                            return 0;
+                        }
+                        var total = Dec("Equity") != 0 ? Dec("Equity") : Dec("CashBalance");
+                        if (total == 0) total = Dec("AvailableBalance") + Dec("FrozenBalance");
+                        var avail = Dec("AvailableBalance") != 0 ? Dec("AvailableBalance") : Dec("AvailableEquity");
+                        if (total == 0 && avail == 0) continue;
+                        list.Add((asset, avail, total));
+                    }
+                }
+                return (true, list.OrderByDescending(x => x.Item3).Take(40).ToList(), null, null, "OKX.Unified");
+            }
         }
         catch (Exception ex)
         {
@@ -438,15 +467,18 @@ public sealed class LiveExecutionService : ILiveExecutionService
             var result = await rest.GetPositionsAsync(exchange, req, ct).ConfigureAwait(false);
             if (!result.Success)
                 return new { error = result.Error?.Message, detail = Truncate(result.OriginalData) };
-            return (result.Data ?? []).Select(p => new
-            {
-                symbol = p.Symbol,
-                side = p.PositionSide.ToString(),
-                quantity = p.PositionSize,
-                entryPrice = p.AverageOpenPrice,
-                unrealizedPnl = p.UnrealizedPnl,
-                leverage = p.Leverage
-            }).Take(50).ToList();
+            // Only non-zero positions — exchanges often return many empty shells
+            return (result.Data ?? [])
+                .Where(p => p.PositionSize != 0)
+                .Select(p => new
+                {
+                    symbol = p.Symbol,
+                    side = p.PositionSide.ToString(),
+                    quantity = p.PositionSize,
+                    entryPrice = p.AverageOpenPrice,
+                    unrealizedPnl = p.UnrealizedPnl,
+                    leverage = p.Leverage
+                }).Take(50).ToList();
         }
         catch (Exception ex)
         {
@@ -457,9 +489,13 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private static ExchangeParameters BuildExchangeParameters(string exchange)
     {
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
-            return new ExchangeParameters(new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"));
-        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
-            return new ExchangeParameters(new ExchangeParameter("GateIo", "SettleAsset", "usdt"));
+            return new ExchangeParameters(
+                new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
+                new ExchangeParameter("Bitget", "MarginAsset", "USDT"),
+                new ExchangeParameter("Bitget", "marginCoin", "USDT"));
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
+            return new ExchangeParameters(new ExchangeParameter(exchange, "SettleAsset", "usdt"));
         return new ExchangeParameters();
     }
 
