@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using ArbitrageBot.Configuration;
+using Binance.Net.Objects.Models.Futures;
+using Bitget.Net.Enums;
+using Bybit.Net.Enums;
 using CryptoClients.Net;
 using CryptoClients.Net.Models;
 using CryptoExchange.Net.Authentication;
@@ -9,7 +12,7 @@ using Microsoft.Extensions.Options;
 namespace ArbitrageBot.Services;
 
 /// <summary>
-/// Phase 2: read-only futures balances + positions via CryptoClients unified REST.
+/// Phase 2: read-only balances via exchange-native APIs (Binance/Bybit/Bitget) + shared fallback.
 /// </summary>
 public sealed class LiveExecutionService : ILiveExecutionService
 {
@@ -18,7 +21,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private readonly ArbitrageOptions _options;
     private readonly ILogger<LiveExecutionService> _logger;
     private readonly ConcurrentDictionary<string, (DateTime at, object data)> _cache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(12);
 
     public LiveExecutionService(
         ISettingsStore settings,
@@ -43,12 +46,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
         var check = _guard.CheckOpenAllowed(0, request.NotionalUsd);
         if (!check.ok)
             return Task.FromResult<object>(new { ok = false, phase = 2, error = check.reason });
-        return Task.FromResult<object>(new
-        {
-            ok = false,
-            phase = 2,
-            error = "Phase 2 is read-only. Orders = Phase 3."
-        });
+        return Task.FromResult<object>(new { ok = false, phase = 2, error = "Phase 2 is read-only. Orders = Phase 3." });
     }
 
     public Task<object> TryCloseHedgeAsync(string tradeId, CancellationToken ct = default)
@@ -78,7 +76,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
             guard = _guard.Status(),
             totalUsdtApprox = totalUsdt,
             anyOk,
-            tip = "Save API key+secret per exchange in Settings. OKX/Bitget need passphrase. Prefer read-only keys.",
+            tip = "Binance/Bybit/Bitget use native USDT-M APIs. Keys need Futures read (+ passphrase for Bitget).",
             exchanges
         };
     }
@@ -98,7 +96,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 exchange,
                 ok = false,
                 hasKey = false,
-                error = "no api key/secret — open Settings → Exchange API keys → Save " + exchange
+                error = "no api key/secret — Settings → Save " + exchange
             });
         }
 
@@ -112,43 +110,43 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 ok = false,
                 hasKey = true,
                 permission = cred.Permission,
-                error = "passphrase required for " + exchange + " (Settings → Passphrase)"
+                error = "passphrase required for " + exchange
             });
         }
 
         try
         {
             var rest = CreateAuthedClient(exchange, cred);
-            var exParams = BuildExchangeParameters(exchange);
+            var native = await TryNativeBalancesAsync(rest, exchange, ct).ConfigureAwait(false);
 
-            // Explicit client selection avoids "Multiple API's available… specify TradingMode"
-            var (balOk, balances, balErr, modeUsed) = await TryGetBalancesAsync(rest, exchange, exParams, ct)
-                .ConfigureAwait(false);
-
-            if (!balOk)
+            if (!native.ok)
             {
-                _logger.LogWarning("Live balance {Ex}: {Err}", exchange, balErr);
-                return (false, 0, new
+                // Shared API fallback
+                var shared = await TrySharedBalancesAsync(rest, exchange, ct).ConfigureAwait(false);
+                if (!shared.ok)
                 {
-                    exchange,
-                    ok = false,
-                    hasKey = true,
-                    permission = cred.Permission,
-                    error = balErr,
-                    hint = HintForError(balErr)
-                });
+                    return (false, 0, new
+                    {
+                        exchange,
+                        ok = false,
+                        hasKey = true,
+                        permission = cred.Permission,
+                        error = native.err ?? shared.err ?? "balance failed",
+                        detail = native.detail ?? shared.detail,
+                        hint = HintForError(native.err ?? shared.err)
+                    });
+                }
+                native = shared;
             }
-
-            var balObjs = balances.Select(b => new { asset = b.asset, available = b.available, total = b.total }).ToList();
-            var usdt = balances
-                .Where(b => b.asset.Equals("USDT", StringComparison.OrdinalIgnoreCase)
-                            || b.asset.Equals("USD", StringComparison.OrdinalIgnoreCase)
-                            || b.asset.Equals("USDC", StringComparison.OrdinalIgnoreCase))
-                .Sum(b => b.total);
 
             object? positions = null;
             if (includePositions)
-                positions = await TryGetPositionsAsync(rest, exchange, exParams, ct).ConfigureAwait(false);
+                positions = await TrySharedPositionsAsync(rest, exchange, ct).ConfigureAwait(false);
+
+            var usdt = native.balances
+                .Where(b => b.asset.Equals("USDT", StringComparison.OrdinalIgnoreCase)
+                            || b.asset.Equals("USD", StringComparison.OrdinalIgnoreCase))
+                .Sum(b => b.total);
 
             var payload = new
             {
@@ -157,9 +155,9 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 hasKey = true,
                 permission = cred.Permission,
                 tradePermission = string.Equals(cred.Permission, "trade", StringComparison.OrdinalIgnoreCase),
-                accountMode = modeUsed,
+                accountMode = native.mode,
                 usdtTotal = usdt,
-                balances = balObjs,
+                balances = native.balances.Select(b => new { b.asset, b.available, b.total }).ToList(),
                 positions,
                 error = (string?)null
             };
@@ -184,84 +182,158 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private static ExchangeRestClient CreateAuthedClient(string exchange, ExchangeCredential cred)
     {
         var rest = new ExchangeRestClient();
-
-        // CryptoExchange.Net v12+: ApiCredentials is abstract — use HMAC* + CreateFrom
         try
         {
             ApiCredentials apiCred = string.IsNullOrEmpty(cred.Passphrase)
                 ? new HMACCredential(cred.ApiKey!, cred.ApiSecret!)
                 : new HMACPassCredential(cred.ApiKey!, cred.ApiSecret!, cred.Passphrase!);
-            var all = ExchangeCredentials.CreateFrom(exchange, apiCred);
-            rest.SetApiCredentials(all);
-            return rest;
+            rest.SetApiCredentials(ExchangeCredentials.CreateFrom(exchange, apiCred));
         }
-        catch (Exception)
+        catch
         {
-            // Fallback: per-exchange DynamicCredentials (all trading modes share same key on most venues)
-            foreach (var mode in new[] { TradingMode.PerpetualLinear, TradingMode.Spot })
-            {
-                try
-                {
-                    rest.SetApiCredentials(exchange, new DynamicCredentials(
-                        mode,
-                        cred.ApiKey!,
-                        cred.ApiSecret!,
-                        cred.Passphrase ?? "",
-                        ""));
-                }
-                catch { /* try next mode */ }
-            }
-            return rest;
+            rest.SetApiCredentials(exchange, new DynamicCredentials(
+                TradingMode.PerpetualLinear,
+                cred.ApiKey!,
+                cred.ApiSecret!,
+                cred.Passphrase ?? "",
+                ""));
         }
+        return rest;
     }
 
-    private static async Task<(bool ok, List<(string asset, decimal available, decimal total)> balances, string? err, string mode)>
-        TryGetBalancesAsync(ExchangeRestClient rest, string exchange, ExchangeParameters exParams, CancellationToken ct)
+    private async Task<(bool ok, List<(string asset, decimal available, decimal total)> balances, string? err, string? detail, string mode)>
+        TryNativeBalancesAsync(ExchangeRestClient rest, string exchange, CancellationToken ct)
     {
-        // Ordered attempts: USDT-M perp first, then unified, then spot (some keys only see spot)
-        var attempts = new (string label, Func<IBalanceRestClient?> client, GetBalancesRequest req)[]
+        try
         {
-            ("PerpetualLinear",
-                () => rest.GetBalancesClient(TradingMode.PerpetualLinear, exchange),
-                new GetBalancesRequest(TradingMode.PerpetualLinear, exParams)),
-            ("PerpetualLinearFutures",
-                () => rest.GetBalancesClient(SharedAccountType.PerpetualLinearFutures, exchange),
-                new GetBalancesRequest(SharedAccountType.PerpetualLinearFutures, exParams)),
-            ("Unified",
-                () => rest.GetBalancesClient(SharedAccountType.Unified, exchange),
-                new GetBalancesRequest(SharedAccountType.Unified, exParams)),
-            ("Spot",
-                () => rest.GetBalancesClient(TradingMode.Spot, exchange),
-                new GetBalancesRequest(TradingMode.Spot, exParams)),
-        };
+            if (exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase))
+            {
+                var r = await rest.Binance.UsdFuturesApi.Account.GetBalancesAsync(ct: ct).ConfigureAwait(false);
+                if (!r.Success)
+                    return (false, [], r.Error?.Message ?? "Binance UsdFutures balances failed",
+                        Truncate(r.OriginalData), "Binance.UsdFutures");
 
+                var list = (r.Data ?? Array.Empty<BinanceUsdFuturesAccountBalance>())
+                    .Where(b => b.WalletBalance != 0 || b.AvailableBalance != 0)
+                    .Select(b => (b.Asset, b.AvailableBalance, b.WalletBalance))
+                    .OrderByDescending(b => b.WalletBalance)
+                    .Take(40)
+                    .ToList();
+                // Success with zero assets is still OK (empty futures wallet)
+                return (true, list, null, null, "Binance.UsdFutures");
+            }
+
+            if (exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
+            {
+                // Unified first (UTA), then Contract
+                foreach (var accType in new[] { AccountType.Unified, AccountType.Contract, AccountType.Fund })
+                {
+                    var r = await rest.Bybit.V5Api.Account.GetBalancesAsync(accType, ct: ct).ConfigureAwait(false);
+                    if (!r.Success)
+                    {
+                        _logger.LogDebug("Bybit {T}: {E}", accType, r.Error?.Message);
+                        continue;
+                    }
+                    var list = new List<(string, decimal, decimal)>();
+                    if (r.Data?.List != null)
+                    {
+                        foreach (var acct in r.Data.List)
+                        {
+                            if (acct.Assets == null) continue;
+                            foreach (var a in acct.Assets)
+                            {
+                                var total = a.WalletBalance ?? a.Equity ?? a.UsdValue ?? 0m;
+                                var avail = a.AvailableToWithdraw ?? a.Free ?? 0m;
+                                if (total == 0 && avail == 0) continue;
+                                list.Add((a.Asset ?? "?", avail, total));
+                            }
+                        }
+                    }
+                    // also surface account-level total if no assets expanded
+                    if (list.Count == 0 && r.Data.List != null)
+                    {
+                        foreach (var acct in r.Data.List)
+                        {
+                            var tw = acct.TotalWalletBalance ?? acct.TotalEquity ?? 0m;
+                            var ta = acct.TotalAvailableBalance ?? 0m;
+                            if (tw != 0 || ta != 0)
+                                list.Add(("USDT", ta, tw));
+                        }
+                    }
+                    return (true, list.OrderByDescending(x => x.Item3).Take(40).ToList(), null, null, "Bybit." + accType);
+                }
+                return (false, [], "Bybit: Unified/Contract/Fund all failed", null, "Bybit");
+            }
+
+            if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+            {
+                var r = await rest.Bitget.FuturesApiV2.Account
+                    .GetBalancesAsync(BitgetProductTypeV2.UsdtFutures, ct).ConfigureAwait(false);
+                if (!r.Success)
+                    return (false, [], r.Error?.Message ?? "Bitget futures balances failed",
+                        Truncate(r.OriginalData), "Bitget.UsdtFutures");
+
+                var list = (r.Data ?? [])
+                    .Select(b =>
+                    {
+                        // property names may vary — use reflection-safe
+                        var asset = b.GetType().GetProperty("MarginCoin")?.GetValue(b)?.ToString()
+                                    ?? b.GetType().GetProperty("Asset")?.GetValue(b)?.ToString()
+                                    ?? "USDT";
+                        decimal Dec(string n)
+                        {
+                            var v = b.GetType().GetProperty(n)?.GetValue(b);
+                            return v is decimal d ? d : 0;
+                        }
+                        var total = Dec("Available") + Dec("Locked") + Dec("Equity");
+                        if (total == 0) total = Dec("AccountEquity");
+                        if (total == 0) total = Dec("Available");
+                        var avail = Dec("Available") != 0 ? Dec("Available") : Dec("MaxOpenPosAvailable");
+                        return (asset, avail, total != 0 ? total : avail);
+                    })
+                    .Where(x => x.Item3 != 0 || x.Item2 != 0)
+                    .ToList();
+                return (true, list, null, null, "Bitget.UsdtFutures");
+            }
+        }
+        catch (Exception ex)
+        {
+            return (false, [], ex.Message, null, "native-exception");
+        }
+
+        return (false, [], "no native handler", null, "none");
+    }
+
+    private static async Task<(bool ok, List<(string asset, decimal available, decimal total)> balances, string? err, string? detail, string mode)>
+        TrySharedBalancesAsync(ExchangeRestClient rest, string exchange, CancellationToken ct)
+    {
+        var exParams = BuildExchangeParameters(exchange);
         string? lastErr = null;
-        foreach (var (label, clientFactory, req) in attempts)
+        string? lastDetail = null;
+
+        foreach (var mode in new[] { TradingMode.PerpetualLinear, TradingMode.Spot })
         {
             try
             {
-                // Ensure TradingMode is non-null when request uses it
-                if (req.TradingMode == null && label.StartsWith("Perpetual", StringComparison.Ordinal))
-                    req.TradingMode = TradingMode.PerpetualLinear;
-
-                var client = clientFactory();
+                var client = rest.GetBalancesClient(mode, exchange);
+                var req = new GetBalancesRequest(mode, exParams);
                 var result = client != null
                     ? await client.GetBalancesAsync(req, ct).ConfigureAwait(false)
                     : await rest.GetBalancesAsync(exchange, req, ct).ConfigureAwait(false);
 
-                if (result.Success && result.Data != null)
+                if (result.Success)
                 {
-                    var list = result.Data
-                        .Select(b => (b.Asset, b.Available, b.Total))
+                    var list = (result.Data ?? [])
                         .Where(b => b.Total != 0 || b.Available != 0)
+                        .Select(b => (b.Asset, b.Available, b.Total))
                         .OrderByDescending(b => b.Total)
                         .Take(40)
-                        .Select(b => (b.Asset, b.Available, b.Total))
                         .ToList();
-                    return (true, list, null, label);
+                    return (true, list, null, null, "Shared." + mode);
                 }
 
-                lastErr = result.Error?.Message ?? "empty";
+                lastErr = result.Error?.Message ?? "shared fail";
+                lastDetail = Truncate(result.OriginalData);
             }
             catch (Exception ex)
             {
@@ -269,20 +341,18 @@ public sealed class LiveExecutionService : ILiveExecutionService
             }
         }
 
-        return (false, [], lastErr ?? "all balance attempts failed", "none");
+        return (false, [], lastErr, lastDetail, "Shared.none");
     }
 
-    private static async Task<object?> TryGetPositionsAsync(
-        ExchangeRestClient rest, string exchange, ExchangeParameters exParams, CancellationToken ct)
+    private static async Task<object?> TrySharedPositionsAsync(
+        ExchangeRestClient rest, string exchange, CancellationToken ct)
     {
         try
         {
-            var req = new GetPositionsRequest(TradingMode.PerpetualLinear, exParams);
+            var req = new GetPositionsRequest(TradingMode.PerpetualLinear, BuildExchangeParameters(exchange));
             var result = await rest.GetPositionsAsync(exchange, req, ct).ConfigureAwait(false);
-
             if (!result.Success)
-                return new { error = result.Error?.Message };
-
+                return new { error = result.Error?.Message, detail = Truncate(result.OriginalData) };
             return (result.Data ?? []).Select(p => new
             {
                 symbol = p.Symbol,
@@ -303,27 +373,27 @@ public sealed class LiveExecutionService : ILiveExecutionService
     {
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
             return new ExchangeParameters(new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"));
-        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
-            || exchange.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
             return new ExchangeParameters(new ExchangeParameter("GateIo", "SettleAsset", "usdt"));
         return new ExchangeParameters();
     }
 
+    private static string? Truncate(string? s, int max = 300)
+        => string.IsNullOrEmpty(s) ? null : (s.Length <= max ? s : s[..max] + "…");
+
     private static string? HintForError(string? err)
     {
-        if (string.IsNullOrEmpty(err)) return null;
-        if (err.Contains("Multiple API", StringComparison.OrdinalIgnoreCase))
-            return "Internal: TradingMode selection — retry after update";
-        if (err.Contains("Invalid API", StringComparison.OrdinalIgnoreCase)
-            || err.Contains("API-key", StringComparison.OrdinalIgnoreCase)
-            || err.Contains("signature", StringComparison.OrdinalIgnoreCase))
-            return "Check key/secret and that the key is active";
-        if (err.Contains("IP", StringComparison.OrdinalIgnoreCase)
-            || err.Contains("whitelist", StringComparison.OrdinalIgnoreCase))
-            return "Add server IP to exchange API whitelist";
+        if (string.IsNullOrEmpty(err)) return "Enable Futures on API key; check IP whitelist; Bitget needs passphrase";
+        if (err.Contains("Invalid", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("signature", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("API-key", StringComparison.OrdinalIgnoreCase))
+            return "Invalid key/secret or wrong key type";
+        if (err.Contains("IP", StringComparison.OrdinalIgnoreCase))
+            return "Whitelist this server IP on the exchange API settings";
         if (err.Contains("permission", StringComparison.OrdinalIgnoreCase)
-            || err.Contains("401", StringComparison.OrdinalIgnoreCase))
-            return "Enable Futures read on the API key";
+            || err.Contains("401", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("403", StringComparison.OrdinalIgnoreCase))
+            return "Enable USDT-M Futures Read on the API key";
         return null;
     }
 
