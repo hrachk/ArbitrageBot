@@ -129,3 +129,48 @@ AB.pages.reports = {
   },
   onShow(d) { if (d) this.render(d); this.loadDays(); }
 };
+
+
+AB.pages.reports.loadLiveBalances = async function () {
+  const el = AB.$('r_liveBal');
+  if (!el) return;
+  el.innerHTML = '<div class="empty">Loading live balances…</div>';
+  try {
+    const data = await AB.api.get('/api/live/balances');
+    const rows = data.exchanges || [];
+    if (!rows.length) {
+      el.innerHTML = '<div class="empty">No exchanges</div>';
+      return;
+    }
+    el.innerHTML = rows.map(function (x) {
+      if (!x.ok) {
+        return '<div class="kpi" style="margin:0;border-color:rgba(248,113,113,0.25)">' +
+          '<div class="kpi-l">' + x.exchange + '</div>' +
+          '<div class="neg" style="margin-top:6px;font-size:12px">' + (x.error || 'fail') + '</div>' +
+          (x.hint ? '<div class="muted" style="font-size:10px;margin-top:4px">' + x.hint + '</div>' : '') +
+          '</div>';
+      }
+      const usdt = x.usdtTotal != null ? x.usdtTotal : 0;
+      const posN = Array.isArray(x.positions) ? x.positions.length : 0;
+      return '<div class="kpi" style="margin:0;border-color:rgba(56,189,248,0.25)">' +
+        '<div class="kpi-l">' + x.exchange + ' · live</div>' +
+        '<div class="mono" style="font-size:18px;font-weight:700;margin-top:6px;color:var(--blue)">' + AB.fmt(usdt, 2) + ' USDT</div>' +
+        '<div class="muted mono" style="font-size:11px;margin-top:6px">perm ' + (x.permission || '—') +
+        ' · positions ' + posN + '</div></div>';
+    }).join('') +
+      '<div class="kpi" style="margin:0;border-color:rgba(45,212,191,0.3)">' +
+      '<div class="kpi-l">SUM USDT (approx)</div>' +
+      '<div class="mono" style="font-size:18px;font-weight:700;margin-top:6px;color:var(--accent)">' +
+      AB.fmt(data.totalUsdtApprox || 0, 2) + '</div></div>';
+  } catch (e) {
+    el.innerHTML = '<div class="empty neg">' + (e.message || e) + '</div>';
+  }
+};
+
+document.getElementById('btnRefreshLiveBal')?.addEventListener('click', () => AB.pages.reports.loadLiveBalances());
+const _repShow = AB.pages.reports.onShow;
+AB.pages.reports.onShow = function (d) {
+  if (typeof _repShow === 'function') _repShow.call(this, d);
+  else if (d && this.render) this.render(d);
+  this.loadLiveBalances();
+};

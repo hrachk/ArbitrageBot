@@ -297,6 +297,10 @@ try
 
     app.MapPost("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
         Results.Ok(await live.VerifyCredentialsAsync(ct)));
+    app.MapGet("/api/live/balances", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.GetLiveBalancesAsync(ct)));
+    app.MapGet("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.VerifyCredentialsAsync(ct)));
 
     app.MapFallbackToFile("index.html");
 

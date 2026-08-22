@@ -191,6 +191,15 @@
           <div class="panel-hd"><h2 class="panel-title">Margin by venue</h2><span class="panel-sub">equity = free + locked · not the same as Realized KPI</span></div>
           <div class="g3" id="r_margin"></div>
         </div>
+        <div class="panel" style="margin-bottom:12px;border-color:rgba(56,189,248,0.25)">
+          <div class="panel-hd">
+            <h2 class="panel-title">Live balances (read-only)</h2>
+            <button type="button" class="btn sm" id="btnRefreshLiveBal">Refresh</button>
+          </div>
+          <div class="muted" style="font-size:12px;margin-bottom:10px">Phase 2 · REST futures USDT from API keys. No orders.</div>
+          <div class="g3" id="r_liveBal"><div class="empty">Click Refresh or open Reports with keys saved</div></div>
+          <pre id="r_liveBalRaw" class="mono muted" style="font-size:10px;max-height:120px;overflow:auto;margin-top:10px;display:none"></pre>
+        </div>
         <div class="panel" style="margin-bottom:12px">
           <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
           <div class="scroll">

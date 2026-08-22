@@ -227,8 +227,9 @@ async function refreshLiveStatus() {
 
 document.getElementById('btnLiveVerify')?.addEventListener('click', async () => {
   try {
-    const r = await AB.api.post('/api/live/verify');
+    const r = await AB.api.get('/api/live/balances');
     if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+    if (AB.$('livePhase') && r.guard) AB.$('livePhase').textContent = r.guard.phase || '—';
   } catch (e) {
     if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
   }

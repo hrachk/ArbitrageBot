@@ -15,11 +15,11 @@ Canonical path from paper → real money. **Default remains PAPER.**
 - [x] `ILiveExecutionService` stub — **no real orders**
 - [x] Settings UI section: Live status + enable/kill
 
-## Phase 2 — Read-only production
-- [ ] Per-exchange balance/position fetch (USDT-M futures)
-- [ ] Fee tier from account
-- [ ] UI: live balances next to paper equity
-- [ ] Alert if key lacks futures permission
+## Phase 2 — Read-only production ✅
+- [x] Per-exchange balance/position fetch (USDT-M futures via CryptoClients)
+- [x] UI: Reports → Live balances + Settings verify
+- [x] Error hints for permission / IP whitelist
+- [ ] Fee tier from account (optional later)
 
 ## Phase 3 — Live execution (orders)
 - [ ] Place dual-leg hedge (LONG + SHORT) via CryptoClients futures API
