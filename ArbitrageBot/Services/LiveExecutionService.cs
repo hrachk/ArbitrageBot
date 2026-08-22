@@ -252,6 +252,8 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 rest.Bybit.SetApiCredentials(new BybitCredentials(key, secret));
             else if (name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
                 rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass));
+            else if (name.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+                rest.OKX.SetApiCredentials(new OKXCredentials(key, secret, pass));
         }
         catch
         {
@@ -261,25 +263,43 @@ public sealed class LiveExecutionService : ILiveExecutionService
         return rest;
     }
 
-    private static string FormatErr(dynamic? error, string? original = null)
+    private static string FormatErr(object? error, string? original = null)
     {
         if (error is null)
-            return string.IsNullOrEmpty(original) ? "unknown error" : "empty-msg detail=" + Truncate(original);
+            return string.IsNullOrEmpty(original) ? "unknown error" : Truncate(original) ?? "unknown";
+
+        var parts = new List<string>();
         try
         {
-            var msg = error.Message?.ToString() ?? "";
-            var code = error.ErrorCode?.ToString() ?? error.Code?.ToString() ?? "";
-            var parts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(code)) parts.Add("code=" + code);
-            if (!string.IsNullOrWhiteSpace(msg)) parts.Add(msg);
-            if (parts.Count == 0 && !string.IsNullOrEmpty(original))
-                parts.Add("detail=" + Truncate(original));
-            return parts.Count > 0 ? string.Join(" | ", parts) : "empty error object";
+            var et = error.GetType();
+            string? Prop(params string[] names)
+            {
+                foreach (var n in names)
+                {
+                    var p = et.GetProperty(n);
+                    var v = p?.GetValue(error)?.ToString();
+                    if (!string.IsNullOrWhiteSpace(v)) return v;
+                }
+                return null;
+            }
+            var code = Prop("ErrorCode", "Code");
+            var msg = Prop("Message", "ErrorDescription", "ErrorType");
+            if (code != null) parts.Add("code=" + code);
+            if (msg != null) parts.Add(msg);
+            var s = error.ToString();
+            if (parts.Count == 0 && !string.IsNullOrWhiteSpace(s) && s != et.FullName)
+                parts.Add(s);
         }
-        catch
+        catch (Exception ex)
         {
-            return error.ToString() ?? "error";
+            parts.Add("format-fail:" + ex.Message);
         }
+
+        if (parts.Count == 0 && !string.IsNullOrEmpty(original))
+            parts.Add(Truncate(original)!);
+        if (parts.Count == 0)
+            parts.Add("OKX/API rejected (check passphrase, IP whitelist, key permissions)");
+        return string.Join(" | ", parts);
     }
 
     private async Task<(bool ok, List<(string asset, decimal available, decimal total)> balances, string? err, string? detail, string mode)>
@@ -383,26 +403,42 @@ public sealed class LiveExecutionService : ILiveExecutionService
 
             if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
             {
-                var r = await rest.OKX.UnifiedApi.Account.GetAccountBalanceAsync(ct: ct).ConfigureAwait(false);
+                // Unified trading account balances (asset=null = all)
+                var r = await rest.OKX.UnifiedApi.Account.GetAccountBalanceAsync(asset: null!, ct: ct).ConfigureAwait(false);
                 if (!r.Success)
-                    return (false, [], FormatErr(r.Error, r.OriginalData), Truncate(r.OriginalData), "OKX.Unified");
+                {
+                    // Funding wallet fallback
+                    var f = await rest.OKX.UnifiedApi.Account.GetFundingBalanceAsync(asset: null!, ct: ct).ConfigureAwait(false);
+                    if (f.Success && f.Data != null)
+                    {
+                        var flist = f.Data
+                            .Where(b => b.Balance != 0 || b.Available != 0)
+                            .Select(b => (b.Asset ?? "?", b.Available, b.Balance))
+                            .OrderByDescending(x => x.Item3)
+                            .Take(40)
+                            .ToList();
+                        return (true, flist, null, null, "OKX.Funding");
+                    }
+                    var err = FormatErr(r.Error, r.OriginalData);
+                    if (f.Error != null) err += " | funding: " + FormatErr(f.Error, f.OriginalData);
+                    return (false, [], err, Truncate(r.OriginalData) ?? Truncate(f.OriginalData), "OKX.Unified");
+                }
 
                 var list = new List<(string, decimal, decimal)>();
+                // Account-level USDT equity if details empty
+                if (r.Data != null && (r.Data.Details == null || r.Data.Details.Length == 0))
+                {
+                    if (r.Data.TotalEquity != 0 || (r.Data.AvailableEquity ?? 0) != 0)
+                        list.Add(("USDT", r.Data.AvailableEquity ?? 0, r.Data.TotalEquity));
+                }
                 if (r.Data?.Details != null)
                 {
                     foreach (var d in r.Data.Details)
                     {
                         var asset = d.Asset ?? "?";
-                        decimal Dec(string n)
-                        {
-                            var v = d.GetType().GetProperty(n)?.GetValue(d);
-                            if (v is decimal x) return x;
-                            if (v is decimal?) return ((decimal?)v) ?? 0;
-                            return 0;
-                        }
-                        var total = Dec("Equity") != 0 ? Dec("Equity") : Dec("CashBalance");
-                        if (total == 0) total = Dec("AvailableBalance") + Dec("FrozenBalance");
-                        var avail = Dec("AvailableBalance") != 0 ? Dec("AvailableBalance") : Dec("AvailableEquity");
+                        var total = d.Equity ?? d.CashBalance ?? 0;
+                        if (total == 0) total = (d.AvailableBalance ?? 0) + (d.FrozenBalance ?? 0);
+                        var avail = d.AvailableBalance ?? d.AvailableEquity ?? 0;
                         if (total == 0 && avail == 0) continue;
                         list.Add((asset, avail, total));
                     }
