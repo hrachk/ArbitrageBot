@@ -54,6 +54,8 @@ try
     builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
     builder.Services.AddSingleton<IPaperAnalyticsStore, PaperAnalyticsStore>();
     builder.Services.AddSingleton<RuntimeRiskConfig>();
+    builder.Services.AddSingleton<LiveTradingGuard>();
+    builder.Services.AddSingleton<ILiveExecutionService, LiveExecutionService>();
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();
@@ -259,6 +261,43 @@ try
     app.MapGet("/api/analytics/skips", (IPaperAnalyticsStore a, int take = 40) => Results.Json(a.GetRecentSkips(take)));
     app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 14) => Results.Json(a.GetDaySummaries(maxDays)));
 
+// ─── Live trading control (Phase 1: gate + verify, no orders) ───
+    app.MapGet("/api/live/status", (LiveTradingGuard guard) => Results.Ok(guard.Status()));
+
+    app.MapPost("/api/live/enable", async (HttpRequest req, LiveTradingGuard guard, IOptions<ArbitrageOptions> opt) =>
+    {
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body);
+        var root = doc.RootElement;
+        var phrase = root.TryGetProperty("confirmPhrase", out var p) ? p.GetString() ?? "" : "";
+        var readOnly = !root.TryGetProperty("readOnly", out var r) || r.ValueKind != System.Text.Json.JsonValueKind.False;
+        var (ok, message) = guard.TryEnable(phrase, readOnly, opt.Value);
+        return ok ? Results.Ok(new { ok, message, status = guard.Status() })
+                  : Results.BadRequest(new { ok, message, status = guard.Status() });
+    });
+
+    app.MapPost("/api/live/disable", (LiveTradingGuard guard) =>
+    {
+        guard.Disable("api");
+        return Results.Ok(guard.Status());
+    });
+
+    app.MapPost("/api/live/kill", async (HttpRequest req, LiveTradingGuard guard) =>
+    {
+        var reason = "manual kill";
+        try
+        {
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body);
+            if (doc.RootElement.TryGetProperty("reason", out var r))
+                reason = r.GetString() ?? reason;
+        }
+        catch { /* empty body ok */ }
+        guard.Kill(reason);
+        return Results.Ok(guard.Status());
+    });
+
+    app.MapPost("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.VerifyCredentialsAsync(ct)));
+
     app.MapFallbackToFile("index.html");
 
     await app.RunAsync();
@@ -271,3 +310,4 @@ finally
 {
     await Log.CloseAndFlushAsync();
 }
+

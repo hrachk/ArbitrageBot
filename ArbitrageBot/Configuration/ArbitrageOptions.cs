@@ -71,6 +71,23 @@ public class ArbitrageOptions
     /// <summary>Use round-trip (open+close) fees for entry threshold.</summary>
     public bool FuturesRequireRoundTripEdge { get; set; } = true;
 
+
+    // ─── Live trading (OFF by default — paper remains default path) ───
+    /// <summary>Master switch. Must stay false until paper equity results are validated.</summary>
+    public bool LiveTradingEnabled { get; set; } = false;
+    /// <summary>If true, only verify balances/positions via API — never place orders.</summary>
+    public bool LiveReadOnlyMode { get; set; } = true;
+    /// <summary>Hard ceiling: max concurrent live hedges.</summary>
+    public int LiveMaxOpenPositions { get; set; } = 1;
+    /// <summary>Max notional USD per leg on live.</summary>
+    public decimal LiveMaxNotionalUsd { get; set; } = 200m;
+    /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
+    public decimal LiveDailyLossLimitUsd { get; set; } = -50m;
+    /// <summary>Per-hedge stop (USD, negative).</summary>
+    public decimal LiveStopLossUsd { get; set; } = -25m;
+    /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
+    public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
+
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
 

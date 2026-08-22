@@ -273,6 +273,32 @@
           <div>
             <div class="panel">
               <div class="panel-hd"><h2 class="panel-title">Exchange API keys</h2></div>
+              
+        <div class="panel" id="livePanel" style="margin-top:12px;border-color:rgba(248,113,113,0.35)">
+          <div class="panel-hd">
+            <h2 class="panel-title">Live trading (Phase 1)</h2>
+            <span class="panel-sub" id="livePhase">PAPER_ONLY</span>
+          </div>
+          <div class="banner warn" style="margin-bottom:12px">
+            <b>По умолчанию PAPER.</b> Ордера на биржу в Phase 1 <b>не отправляются</b>.
+            Сначала verify keys (read-only) → enable read-only → Phase 2–3 код ордеров.
+            Confirm phrase: <code class="mono">ENABLE LIVE TRADING</code>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Confirm phrase</label><input id="live_phrase" type="text" placeholder="ENABLE LIVE TRADING" autocomplete="off"/></div>
+            <div class="field" style="display:flex;flex-direction:column;justify-content:end;gap:8px">
+              <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="live_readonly" type="checkbox" checked/> Read-only (no orders)</label>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+            <button type="button" class="btn" id="btnLiveVerify">Verify keys</button>
+            <button type="button" class="btn primary" id="btnLiveEnable">Enable live</button>
+            <button type="button" class="btn" id="btnLiveDisable">Disable</button>
+            <button type="button" class="btn danger" id="btnLiveKill">KILL SWITCH</button>
+          </div>
+          <pre id="live_status" class="mono muted" style="font-size:11px;white-space:pre-wrap;max-height:220px;overflow:auto;margin:0">—</pre>
+        </div>
+
               <div id="s_exchanges"></div>
             </div>
           </div>

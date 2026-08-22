@@ -213,3 +213,62 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     AB.$('s_msg').classList.remove('hidden');
   }
 });
+
+
+async function refreshLiveStatus() {
+  try {
+    const st = await AB.api.get('/api/live/status');
+    if (AB.$('livePhase')) AB.$('livePhase').textContent = st.phase || '—';
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(st, null, 2);
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+}
+
+document.getElementById('btnLiveVerify')?.addEventListener('click', async () => {
+  try {
+    const r = await AB.api.post('/api/live/verify');
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});
+
+document.getElementById('btnLiveEnable')?.addEventListener('click', async () => {
+  const phrase = AB.$('live_phrase')?.value || '';
+  const readOnly = !!AB.$('live_readonly')?.checked;
+  if (!readOnly && !confirm('Enable LIVE ORDERS? Phase 1 still cannot place orders, but guard will allow Phase 3 code.')) return;
+  try {
+    const r = await AB.api.post('/api/live/enable', { confirmPhrase: phrase, readOnly });
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+    if (AB.$('livePhase') && r.status) AB.$('livePhase').textContent = r.status.phase || '—';
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});
+
+document.getElementById('btnLiveDisable')?.addEventListener('click', async () => {
+  try {
+    const r = await AB.api.post('/api/live/disable');
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+    await refreshLiveStatus();
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});
+
+document.getElementById('btnLiveKill')?.addEventListener('click', async () => {
+  if (!confirm('KILL SWITCH — disable all live immediately?')) return;
+  try {
+    const r = await AB.api.post('/api/live/kill', { reason: 'ui-kill' });
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});
+
+const _oldOnShow = AB.pages.settings.onShow;
+AB.pages.settings.onShow = function () {
+  if (typeof _oldOnShow === 'function') _oldOnShow.call(this);
+  refreshLiveStatus();
+};

@@ -21,6 +21,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ILogger<ArbitrageWorker> _logger;
     private readonly IPaperAnalyticsStore _analytics;
     private readonly RuntimeRiskConfig _runtime;
+    private readonly LiveTradingGuard _liveGuard;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
 
@@ -37,7 +38,8 @@ public class ArbitrageWorker : BackgroundService
         IHubContext<ArbitrageHub> hub,
         ILogger<ArbitrageWorker> logger,
         IPaperAnalyticsStore analytics,
-        RuntimeRiskConfig runtime)
+        RuntimeRiskConfig runtime,
+        LiveTradingGuard liveGuard)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -52,9 +54,10 @@ public class ArbitrageWorker : BackgroundService
         _logger = logger;
         _analytics = analytics;
         _runtime = runtime;
+        _liveGuard = liveGuard;
 
         _state.StrategyMode = _options.StrategyMode;
-        _state.Mode = _options.PaperTrading ? "PAPER" : "LIVE";
+        _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE" : (_liveGuard.IsEnabled ? "LIVE-RO" : "PAPER");
         _state.MinProfitPercent = _options.MinProfitPercent;
         _state.QuoteSize = _options.QuoteSize;
         _state.DynamicSymbols = _options.DynamicSymbols;
@@ -389,6 +392,7 @@ public class ArbitrageWorker : BackgroundService
     private void PushSnapshotExtras()
     {
         if (_options.IsFuturesCross) PushFuturesPaper();
+        _state.LiveStatus = _liveGuard.Status();
     }
 
     private async Task RefreshSymbolsAsync(CancellationToken ct)

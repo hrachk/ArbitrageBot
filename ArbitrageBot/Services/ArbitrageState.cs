@@ -21,6 +21,7 @@ public class ArbitrageState
     public IReadOnlyList<object> DiscoveredSymbols { get; set; } = [];
     public string DiscoverySource { get; set; } = "config-fallback";
     public string? DiscoveryMessage { get; set; }
+    public object? LiveStatus { get; set; }
     /// <summary>Best gross/open net seen last scan (even if below threshold).</summary>
     public decimal? LastBestGrossPercent { get; set; }
     public decimal? LastBestNetOpenPercent { get; set; }
@@ -168,6 +169,7 @@ public class ArbitrageState
                 discoveredSymbols = DiscoveredSymbols,
                 discoverySource = DiscoverySource,
                 discoveryMessage = DiscoveryMessage,
+                liveStatus = LiveStatus,
                 lastBestGrossPercent = LastBestGrossPercent,
                 lastBestNetOpenPercent = LastBestNetOpenPercent,
                 lastBooksReady = LastBooksReady,
