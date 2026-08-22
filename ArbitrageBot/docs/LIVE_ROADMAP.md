@@ -30,11 +30,13 @@ Canonical path from paper → real money. **Default remains PAPER.**
 - [ ] Harden partial fills / exchange-specific qty filters (next iteration)
 
 
-## Phase 4 — Safety hardening
-- [ ] Rate-limit guards per venue
-- [ ] Disconnect / book stale → no new opens
-- [ ] Telegram/webhook alerts on kill
-- [ ] Separate API keys: trade without withdraw
+## Phase 4 — Safety hardening ✅
+- [x] Rate-limit guards (global + per venue, LiveMinOrderIntervalMs)
+- [x] Book health required (Synced / book-ticker) before live open
+- [x] LiveAllowedExchanges (default 4: Binance, Bybit, OKX, Bitget — no GateIo)
+- [x] Webhook alerts on kill + live open (`LiveAlertWebhookUrl`)
+- [ ] Separate API keys: trade without withdraw (ops checklist, not code)
+
 
 ## Phase 5 — Gradual launch
 - [ ] 1 symbol, 2 venues, min size

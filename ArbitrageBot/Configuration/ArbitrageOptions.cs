@@ -87,6 +87,14 @@ public class ArbitrageOptions
     public decimal LiveStopLossUsd { get; set; } = -25m;
     /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
     public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
+    /// <summary>Reject live open if book status is not healthy (Synced/book-ticker).</summary>
+    public bool LiveRequireHealthyBooks { get; set; } = true;
+    /// <summary>Min ms between any live order attempts (global + per venue).</summary>
+    public int LiveMinOrderIntervalMs { get; set; } = 3000;
+    /// <summary>Optional webhook (Telegram bot or Discord) on kill/enable/errors.</summary>
+    public string? LiveAlertWebhookUrl { get; set; }
+    /// <summary>Exchanges allowed for live orders (empty = all configured).</summary>
+    public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget"];
 
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);

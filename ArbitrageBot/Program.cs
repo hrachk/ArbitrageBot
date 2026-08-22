@@ -56,6 +56,8 @@ try
     builder.Services.AddSingleton<RuntimeRiskConfig>();
     builder.Services.AddSingleton<LiveTradingGuard>();
     builder.Services.AddSingleton<LiveOrderEngine>();
+    builder.Services.AddSingleton<LiveSafetyService>();
+    builder.Services.AddHttpClient("live-alerts");
     builder.Services.AddSingleton<ILiveExecutionService, LiveExecutionService>();
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
@@ -299,6 +301,12 @@ try
         }
         catch { /* empty body ok */ }
         guard.Kill(reason);
+        try
+        {
+            var safety = app.Services.GetRequiredService<LiveSafetyService>();
+            _ = safety.AlertAsync("KILL SWITCH", reason, CancellationToken.None);
+        }
+        catch { /* ignore */ }
         return Results.Ok(guard.Status());
     });
 

@@ -22,6 +22,7 @@ public sealed class LiveOrderEngine
     private readonly LiveTradingGuard _guard;
     private readonly ArbitrageOptions _options;
     private readonly ILogger<LiveOrderEngine> _logger;
+    private readonly LiveSafetyService _safety;
     private readonly IWebHostEnvironment _env;
     private readonly object _lock = new();
     private readonly List<LiveHedgePosition> _open = [];
@@ -35,12 +36,14 @@ public sealed class LiveOrderEngine
         LiveTradingGuard guard,
         IOptions<ArbitrageOptions> options,
         IWebHostEnvironment env,
+        LiveSafetyService safety,
         ILogger<LiveOrderEngine> logger)
     {
         _settings = settings;
         _guard = guard;
         _options = options.Value;
         _env = env;
+        _safety = safety;
         _logger = logger;
         TryLoad();
     }
@@ -56,6 +59,10 @@ public sealed class LiveOrderEngine
         var check = _guard.CheckOpenAllowed(_open.Count, req.NotionalUsd);
         if (!check.ok)
             return new { ok = false, error = check.reason };
+
+        var safety = _safety.CanOpenLive(req.Symbol, req.LongExchange, req.ShortExchange, req.NotionalUsd);
+        if (!safety.ok)
+            return new { ok = false, error = "safety: " + safety.reason };
 
         if (req.BaseQty <= 0 || string.IsNullOrWhiteSpace(req.Symbol))
             return new { ok = false, error = "invalid qty/symbol" };
@@ -160,6 +167,11 @@ public sealed class LiveOrderEngine
             _open.Add(pos);
             SaveUnlocked();
         }
+
+        _safety.MarkOrderSent(pos.LongExchange, pos.ShortExchange);
+        _ = _safety.AlertAsync("LIVE OPEN",
+            $"{pos.Symbol} L={pos.LongExchange} S={pos.ShortExchange} qty={pos.BaseQty}",
+            CancellationToken.None);
 
         _logger.LogWarning("LIVE OPEN {Sym} L:{L} S:{S} qty={Q} longOid={Lo} shortOid={So}",
             pos.Symbol, pos.LongExchange, pos.ShortExchange, pos.BaseQty, pos.LongOrderId, pos.ShortOrderId);
