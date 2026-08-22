@@ -21,12 +21,14 @@ Canonical path from paper → real money. **Default remains PAPER.**
 - [x] Error hints for permission / IP whitelist
 - [ ] Fee tier from account (optional later)
 
-## Phase 3 — Live execution (orders)
-- [ ] Place dual-leg hedge (LONG + SHORT) via CryptoClients futures API
-- [ ] Partial fill / reject handling
-- [ ] Close path (converge / stop / timeout / manual)
-- [ ] Persist live trades separately from paper (`data/live/`)
-- [ ] Worker: only call live path when `CanPlaceOrders`
+## Phase 3 — Live execution (orders) ✅ skeleton
+- [x] Place dual-leg hedge (LONG + SHORT) via PlaceFuturesOrderAsync (market)
+- [x] Short-leg fail → attempt unwind long
+- [x] Close path (converge / stop / timeout / manual API)
+- [x] Persist `data/live/trades-ledger.json`
+- [x] Worker: live path only when `CanPlaceOrders`
+- [ ] Harden partial fills / exchange-specific qty filters (next iteration)
+
 
 ## Phase 4 — Safety hardening
 - [ ] Rate-limit guards per venue

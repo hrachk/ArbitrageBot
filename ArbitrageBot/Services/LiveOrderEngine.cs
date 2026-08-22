@@ -1,0 +1,403 @@
+using System.Text.Json;
+using ArbitrageBot.Configuration;
+using ArbitrageBot.Models;
+using Binance.Net;
+using Bitget.Net;
+using Bybit.Net;
+using CryptoClients.Net;
+using CryptoClients.Net.Models;
+using CryptoExchange.Net.Authentication;
+using CryptoExchange.Net.SharedApis;
+using Microsoft.Extensions.Options;
+
+namespace ArbitrageBot.Services;
+
+/// <summary>
+/// Phase 3: place/close dual-leg USDT-M hedges via shared PlaceFuturesOrderAsync.
+/// Guard must allow CanPlaceOrders before any call.
+/// </summary>
+public sealed class LiveOrderEngine
+{
+    private readonly ISettingsStore _settings;
+    private readonly LiveTradingGuard _guard;
+    private readonly ArbitrageOptions _options;
+    private readonly ILogger<LiveOrderEngine> _logger;
+    private readonly IWebHostEnvironment _env;
+    private readonly object _lock = new();
+    private readonly List<LiveHedgePosition> _open = [];
+    private readonly List<LiveHedgePosition> _closed = [];
+    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+
+    private string LedgerPath => Path.Combine(_env.ContentRootPath, "data", "live", "trades-ledger.json");
+
+    public LiveOrderEngine(
+        ISettingsStore settings,
+        LiveTradingGuard guard,
+        IOptions<ArbitrageOptions> options,
+        IWebHostEnvironment env,
+        ILogger<LiveOrderEngine> logger)
+    {
+        _settings = settings;
+        _guard = guard;
+        _options = options.Value;
+        _env = env;
+        _logger = logger;
+        TryLoad();
+    }
+
+    public IReadOnlyList<LiveHedgePosition> GetOpen() { lock (_lock) return _open.ToList(); }
+    public IReadOnlyList<LiveHedgePosition> GetClosed(int take = 40)
+    {
+        lock (_lock) return _closed.Take(take).ToList();
+    }
+
+    public async Task<object> TryOpenAsync(LiveHedgeRequest req, CancellationToken ct)
+    {
+        var check = _guard.CheckOpenAllowed(_open.Count, req.NotionalUsd);
+        if (!check.ok)
+            return new { ok = false, error = check.reason };
+
+        if (req.BaseQty <= 0 || string.IsNullOrWhiteSpace(req.Symbol))
+            return new { ok = false, error = "invalid qty/symbol" };
+
+        // Same symbol already open
+        lock (_lock)
+        {
+            if (_open.Any(p => p.Symbol.Equals(req.Symbol, StringComparison.OrdinalIgnoreCase)))
+                return new { ok = false, error = "already open on symbol" };
+        }
+
+        var baseAsset = req.Symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
+            ? req.Symbol[..^4] : req.Symbol;
+        var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
+        var qty = SharedQuantity.Base(req.BaseQty);
+        var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
+
+        // 1) LONG market on cheap exchange
+        var longClient = CreateClient(req.LongExchange);
+        if (longClient == null)
+            return new { ok = false, error = "no credentials for " + req.LongExchange };
+
+        var longReq = new PlaceFuturesOrderRequest(
+            sharedSym,
+            SharedOrderSide.Buy,
+            SharedOrderType.Market,
+            qty,
+            price: null,
+            reduceOnly: false,
+            leverage: req.Leverage > 0 ? req.Leverage : 3,
+            timeInForce: SharedTimeInForce.ImmediateOrCancel,
+            positionSide: SharedPositionSide.Long,
+            marginMode: null,
+            clientOrderId: clientId + "-L",
+            exchangeParameters: ExParams(req.LongExchange));
+
+        var longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
+        if (!longResult.Success)
+        {
+            var err = longResult.Error?.Message ?? "long order failed";
+            _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}", req.LongExchange, req.Symbol, err);
+            return new { ok = false, error = "LONG failed: " + err, leg = "long", detail = Trunc(longResult.OriginalData) };
+        }
+
+        var longOrderId = longResult.Data?.Id ?? "?";
+        var longAvg = req.LongAsk ?? 0;
+
+        // 2) SHORT market on rich exchange
+        var shortClient = CreateClient(req.ShortExchange);
+        if (shortClient == null)
+        {
+            // emergency: try close long
+            await TryReduceAsync(longClient, req.LongExchange, sharedSym, qty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
+                .ConfigureAwait(false);
+            return new { ok = false, error = "no credentials for " + req.ShortExchange + " — attempted unwind long" };
+        }
+
+        var shortReq = new PlaceFuturesOrderRequest(
+            sharedSym,
+            SharedOrderSide.Sell,
+            SharedOrderType.Market,
+            qty,
+            price: null,
+            reduceOnly: false,
+            leverage: req.Leverage > 0 ? req.Leverage : 3,
+            timeInForce: SharedTimeInForce.ImmediateOrCancel,
+            positionSide: SharedPositionSide.Short,
+            marginMode: null,
+            clientOrderId: clientId + "-S",
+            exchangeParameters: ExParams(req.ShortExchange));
+
+        var shortResult = await shortClient.PlaceFuturesOrderAsync(req.ShortExchange, shortReq, ct).ConfigureAwait(false);
+        if (!shortResult.Success)
+        {
+            var err = shortResult.Error?.Message ?? "short order failed";
+            _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long", req.ShortExchange, req.Symbol, err);
+            await TryReduceAsync(longClient, req.LongExchange, sharedSym, qty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
+                .ConfigureAwait(false);
+            return new { ok = false, error = "SHORT failed: " + err + " (long unwind attempted)", leg = "short", detail = Trunc(shortResult.OriginalData) };
+        }
+
+        var shortOrderId = shortResult.Data?.Id ?? "?";
+        var shortAvg = req.ShortBid ?? 0;
+
+        var pos = new LiveHedgePosition
+        {
+            Symbol = req.Symbol.ToUpperInvariant(),
+            LongExchange = req.LongExchange,
+            ShortExchange = req.ShortExchange,
+            BaseQty = req.BaseQty,
+            NotionalUsd = req.NotionalUsd,
+            LongEntry = longAvg,
+            ShortEntry = shortAvg,
+            LongOrderId = longOrderId?.ToString(),
+            ShortOrderId = shortOrderId?.ToString(),
+            Status = "Open",
+            Message = $"LIVE hedge L@{longAvg} S@{shortAvg}"
+        };
+
+        lock (_lock)
+        {
+            _open.Add(pos);
+            SaveUnlocked();
+        }
+
+        _logger.LogWarning("LIVE OPEN {Sym} L:{L} S:{S} qty={Q} longOid={Lo} shortOid={So}",
+            pos.Symbol, pos.LongExchange, pos.ShortExchange, pos.BaseQty, pos.LongOrderId, pos.ShortOrderId);
+
+        return new
+        {
+            ok = true,
+            phase = 3,
+            tradeId = pos.Id,
+            pos.Symbol,
+            pos.LongExchange,
+            pos.ShortExchange,
+            pos.BaseQty,
+            pos.LongEntry,
+            pos.ShortEntry,
+            pos.LongOrderId,
+            pos.ShortOrderId
+        };
+    }
+
+    public async Task<object> TryCloseAsync(string tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?>? getMarks, CancellationToken ct)
+    {
+        if (!_guard.CanPlaceOrders && !_guard.IsKilled)
+        {
+            // allow close even if disabled after enable, but not if never enabled - still try if we have open
+        }
+
+        LiveHedgePosition? pos;
+        lock (_lock)
+            pos = _open.FirstOrDefault(p => p.Id.ToString().Equals(tradeId, StringComparison.OrdinalIgnoreCase));
+
+        if (pos == null)
+            return new { ok = false, error = "trade not found" };
+
+        var baseAsset = pos.Symbol.EndsWith("USDT") ? pos.Symbol[..^4] : pos.Symbol;
+        var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
+        var qty = SharedQuantity.Base(pos.BaseQty);
+
+        var longClient = CreateClient(pos.LongExchange);
+        var shortClient = CreateClient(pos.ShortExchange);
+        if (longClient == null || shortClient == null)
+            return new { ok = false, error = "missing credentials to close" };
+
+        // Close long: sell reduce
+        var closeLong = await TryReduceAsync(longClient, pos.LongExchange, sharedSym, qty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
+            .ConfigureAwait(false);
+        // Close short: buy reduce
+        var closeShort = await TryReduceAsync(shortClient, pos.ShortExchange, sharedSym, qty, SharedOrderSide.Buy, SharedPositionSide.Short, ct)
+            .ConfigureAwait(false);
+
+        decimal? pnl = null;
+        if (getMarks != null)
+        {
+            var m = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
+            if (m != null)
+            {
+                var (longBid, shortAsk) = m.Value;
+                pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
+            }
+        }
+
+        lock (_lock)
+        {
+            _open.Remove(pos);
+            pos.IsOpen = false;
+            pos.ClosedAt = DateTime.UtcNow;
+            pos.Status = closeLong && closeShort ? "Closed" : "ClosedPartial";
+            pos.RealizedPnlUsd = pnl;
+            pos.Message = $"close longOk={closeLong} shortOk={closeShort} pnl={pnl}";
+            _closed.Insert(0, pos);
+            if (_closed.Count > 500) _closed.RemoveRange(500, _closed.Count - 500);
+            SaveUnlocked();
+        }
+
+        if (pnl.HasValue)
+            _guard.RecordRealized(pnl.Value);
+
+        return new { ok = closeLong && closeShort, tradeId, pnl, status = pos.Status, message = pos.Message };
+    }
+
+    public async Task<int> TryCloseConvergedAsync(
+        Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks,
+        decimal closeBelow,
+        int maxHoldMinutes,
+        decimal stopLossUsd,
+        CancellationToken ct)
+    {
+        List<LiveHedgePosition> snapshot;
+        lock (_lock) snapshot = _open.ToList();
+        var closed = 0;
+        foreach (var pos in snapshot)
+        {
+            var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
+            if (marks == null) continue;
+            var (longBid, shortAsk) = marks.Value;
+            if (longBid <= 0 || shortAsk <= 0) continue;
+
+            var width = (shortAsk - longBid) / longBid * 100m;
+            var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
+            var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
+            var stop = stopLossUsd < 0 && legsPnl <= stopLossUsd;
+            var converged = width <= closeBelow;
+
+            if (!converged && !timedOut && !stop) continue;
+
+            var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
+            closed++;
+            _logger.LogWarning("LIVE auto-close {Sym} width={W:F3} pnl~{P:F2} stop={S} timeout={T}",
+                pos.Symbol, width, legsPnl, stop, timedOut);
+        }
+        return closed;
+    }
+
+    private async Task<bool> TryReduceAsync(
+        ExchangeRestClient client,
+        string exchange,
+        SharedSymbol symbol,
+        SharedQuantity qty,
+        SharedOrderSide side,
+        SharedPositionSide posSide,
+        CancellationToken ct)
+    {
+        try
+        {
+            var req = new PlaceFuturesOrderRequest(
+                symbol,
+                side,
+                SharedOrderType.Market,
+                qty,
+                price: null,
+                reduceOnly: true,
+                leverage: null,
+                timeInForce: SharedTimeInForce.ImmediateOrCancel,
+                positionSide: posSide,
+                marginMode: null,
+                clientOrderId: "ab-c-" + Guid.NewGuid().ToString("N")[..12],
+                exchangeParameters: ExParams(exchange));
+
+            var result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                _logger.LogError("LIVE reduce fail {Ex}: {Err}", exchange, result.Error?.Message);
+                return false;
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "LIVE reduce exception {Ex}", exchange);
+            return false;
+        }
+    }
+
+    private ExchangeRestClient? CreateClient(string exchange)
+    {
+        var cred = _settings.GetCredential(exchange);
+        if (cred == null || string.IsNullOrWhiteSpace(cred.ApiKey) || string.IsNullOrWhiteSpace(cred.ApiSecret))
+            return null;
+
+        var key = cred.ApiKey!.Trim();
+        var secret = cred.ApiSecret!.Trim();
+        var pass = (cred.Passphrase ?? "").Trim();
+        var rest = new ExchangeRestClient();
+        var bag = new ExchangeCredentials();
+        var name = exchange.Trim();
+
+        if (name.Equals("Binance", StringComparison.OrdinalIgnoreCase))
+        {
+            bag.Binance = new BinanceCredentials(key, secret);
+            rest.SetApiCredentials(bag);
+            rest.Binance.SetApiCredentials(new BinanceCredentials(key, secret));
+        }
+        else if (name.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
+        {
+            bag.Bybit = new BybitCredentials(key, secret);
+            rest.SetApiCredentials(bag);
+            rest.Bybit.SetApiCredentials(new BybitCredentials(key, secret));
+        }
+        else if (name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+        {
+            bag.Bitget = new BitgetCredentials(key, secret, pass);
+            rest.SetApiCredentials(bag);
+            rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass));
+        }
+        else
+            return null;
+
+        return rest;
+    }
+
+    private static ExchangeParameters ExParams(string exchange)
+    {
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+            return new ExchangeParameters(new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"));
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
+            return new ExchangeParameters(new ExchangeParameter("GateIo", "SettleAsset", "usdt"));
+        return new ExchangeParameters();
+    }
+
+    private void TryLoad()
+    {
+        try
+        {
+            if (!File.Exists(LedgerPath)) return;
+            var file = JsonSerializer.Deserialize<LiveLedgerFile>(File.ReadAllText(LedgerPath), JsonOpts);
+            if (file == null) return;
+            lock (_lock)
+            {
+                _open.Clear();
+                _open.AddRange(file.Positions.Where(p => p.IsOpen));
+                _closed.Clear();
+                _closed.AddRange(file.Closed);
+            }
+            _logger.LogInformation("Live ledger restored: {O} open, {C} closed", _open.Count, _closed.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Live ledger load failed");
+        }
+    }
+
+    private void SaveUnlocked()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LedgerPath)!);
+            var file = new LiveLedgerFile { Positions = _open.ToList(), Closed = _closed.Take(200).ToList() };
+            var tmp = LedgerPath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(file, JsonOpts));
+            File.Copy(tmp, LedgerPath, true);
+            File.Delete(tmp);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Live ledger save failed");
+        }
+    }
+
+    private static string? Trunc(string? s, int n = 240)
+        => string.IsNullOrEmpty(s) ? null : (s.Length <= n ? s : s[..n] + "…");
+}

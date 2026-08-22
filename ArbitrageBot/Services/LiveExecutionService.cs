@@ -25,6 +25,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private readonly LiveTradingGuard _guard;
     private readonly ArbitrageOptions _options;
     private readonly ILogger<LiveExecutionService> _logger;
+    private readonly LiveOrderEngine _orders;
     private readonly ConcurrentDictionary<string, (DateTime at, object data)> _cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(12);
 
@@ -32,11 +33,13 @@ public sealed class LiveExecutionService : ILiveExecutionService
         ISettingsStore settings,
         LiveTradingGuard guard,
         IOptions<ArbitrageOptions> options,
+        LiveOrderEngine orders,
         ILogger<LiveExecutionService> logger)
     {
         _settings = settings;
         _guard = guard;
         _options = options.Value;
+        _orders = orders;
         _logger = logger;
     }
 
@@ -47,15 +50,41 @@ public sealed class LiveExecutionService : ILiveExecutionService
         => FetchAllAsync(includePositions: true, ct);
 
     public Task<object> TryOpenHedgeAsync(LiveHedgeRequest request, CancellationToken ct = default)
-    {
-        var check = _guard.CheckOpenAllowed(0, request.NotionalUsd);
-        if (!check.ok)
-            return Task.FromResult<object>(new { ok = false, phase = 2, error = check.reason });
-        return Task.FromResult<object>(new { ok = false, phase = 2, error = "Phase 2 is read-only. Orders = Phase 3." });
-    }
+        => _orders.TryOpenAsync(request, ct);
 
     public Task<object> TryCloseHedgeAsync(string tradeId, CancellationToken ct = default)
-        => Task.FromResult<object>(new { ok = false, phase = 2, error = "Phase 2 is read-only." });
+        => _orders.TryCloseAsync(tradeId, null, ct);
+
+    public Task<int> TryCloseConvergedAsync(
+        Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks,
+        decimal closeBelowNetPercent,
+        CancellationToken ct = default)
+        => _orders.TryCloseConvergedAsync(
+            getMarks,
+            closeBelowNetPercent,
+            _options.FuturesMaxHoldMinutes > 0 ? _options.FuturesMaxHoldMinutes : 15,
+            _options.LiveStopLossUsd,
+            ct);
+
+    public IReadOnlyList<Models.LiveHedgePosition> GetOpenPositions() => _orders.GetOpen();
+
+    public object GetLivePaperSnapshot() => new
+    {
+        open = _orders.GetOpen().Select(p => new
+        {
+            tradeId = p.Id,
+            p.Symbol,
+            p.LongExchange,
+            p.ShortExchange,
+            p.BaseQty,
+            p.LongEntry,
+            p.ShortEntry,
+            p.OpenedAt,
+            p.Status,
+            p.Message
+        }),
+        closed = _orders.GetClosed(20)
+    };
 
     private async Task<object> FetchAllAsync(bool includePositions, CancellationToken ct)
     {

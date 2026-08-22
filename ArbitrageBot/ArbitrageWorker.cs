@@ -22,6 +22,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly IPaperAnalyticsStore _analytics;
     private readonly RuntimeRiskConfig _runtime;
     private readonly LiveTradingGuard _liveGuard;
+    private readonly ILiveExecutionService _liveExec;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
 
@@ -39,7 +40,8 @@ public class ArbitrageWorker : BackgroundService
         ILogger<ArbitrageWorker> logger,
         IPaperAnalyticsStore analytics,
         RuntimeRiskConfig runtime,
-        LiveTradingGuard liveGuard)
+        LiveTradingGuard liveGuard,
+        ILiveExecutionService liveExec)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -55,6 +57,7 @@ public class ArbitrageWorker : BackgroundService
         _analytics = analytics;
         _runtime = runtime;
         _liveGuard = liveGuard;
+        _liveExec = liveExec;
 
         _state.StrategyMode = _options.StrategyMode;
         _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE" : (_liveGuard.IsEnabled ? "LIVE-RO" : "PAPER");
@@ -192,15 +195,18 @@ public class ArbitrageWorker : BackgroundService
             depthMap[sym] = _futMarket.GetDepth(sym, 18);
         _state.OrderBookDepth = depthMap;
 
-        // Close converged hedges first
-        _futPaper.TryCloseConverged((symbol, longEx, shortEx) =>
+        // Close converged hedges first (paper always; live only if orders allowed)
+        (decimal longBid, decimal shortAsk)? Marks(string symbol, string longEx, string shortEx)
         {
             var books = _futMarket.GetBookTickers(symbol);
             if (!books.TryGetValue(longEx, out var l) || !books.TryGetValue(shortEx, out var s))
                 return null;
-            // close long at bid, cover short at ask
             return (l.BestBid, s.BestAsk);
-        }, _runtime.Snapshot.FuturesCloseBelowNetPercent);
+        }
+
+        _futPaper.TryCloseConverged(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent);
+        if (_liveGuard.CanPlaceOrders)
+            await _liveExec.TryCloseConvergedAsync(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent, ct);
 
         decimal? bestOpen = opps.Count > 0 ? opps.Max(x => x.NetSpreadPercent) : null;
         decimal? bestRt = opps.Count > 0 ? opps.Max(x => x.NetRoundTripPercent) : null;
@@ -226,6 +232,36 @@ public class ArbitrageWorker : BackgroundService
             foreach (var o in opps.OrderByDescending(x => x.NetSpreadPercent))
             {
                 if (openedThisCycle >= maxPerCycle) break;
+
+                // Phase 3: real orders only when guard.CanPlaceOrders
+                if (_liveGuard.CanPlaceOrders)
+                {
+                    var liveReq = new LiveHedgeRequest
+                    {
+                        Symbol = o.Symbol,
+                        LongExchange = o.LongExchange,
+                        ShortExchange = o.ShortExchange,
+                        BaseQty = o.BaseQty,
+                        NotionalUsd = o.NotionalUsd,
+                        LongAsk = o.LongAskVwap,
+                        ShortBid = o.ShortBidVwap,
+                        Leverage = _options.LiveMaxOpenPositions > 0 ? _runtime.Snapshot.FuturesPaperLeverage : 3
+                    };
+                    var liveRes = await _liveExec.TryOpenHedgeAsync(liveReq, ct);
+                    var okProp = liveRes.GetType().GetProperty("ok")?.GetValue(liveRes);
+                    if (okProp is true)
+                    {
+                        openedThisCycle++;
+                        _logger.LogWarning("LIVE OPENED ({N}): {Sym} {L}->{S}", openedThisCycle, o.Symbol, o.LongExchange, o.ShortExchange);
+                    }
+                    else
+                    {
+                        var err = liveRes.GetType().GetProperty("error")?.GetValue(liveRes)?.ToString();
+                        _logger.LogWarning("LIVE skip {Sym}: {Err}", o.Symbol, err);
+                    }
+                    continue;
+                }
+
                 var trade = _futPaper.TryOpen(o);
                 if (trade is null) continue;
                 if (trade.Status == "Open")
@@ -393,6 +429,7 @@ public class ArbitrageWorker : BackgroundService
     {
         if (_options.IsFuturesCross) PushFuturesPaper();
         _state.LiveStatus = _liveGuard.Status();
+        try { _state.LivePositions = _liveExec.GetLivePaperSnapshot(); } catch { /* ignore */ }
     }
 
     private async Task RefreshSymbolsAsync(CancellationToken ct)

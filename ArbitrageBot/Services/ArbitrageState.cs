@@ -22,6 +22,7 @@ public class ArbitrageState
     public string DiscoverySource { get; set; } = "config-fallback";
     public string? DiscoveryMessage { get; set; }
     public object? LiveStatus { get; set; }
+    public object? LivePositions { get; set; }
     /// <summary>Best gross/open net seen last scan (even if below threshold).</summary>
     public decimal? LastBestGrossPercent { get; set; }
     public decimal? LastBestNetOpenPercent { get; set; }
@@ -170,6 +171,7 @@ public class ArbitrageState
                 discoverySource = DiscoverySource,
                 discoveryMessage = DiscoveryMessage,
                 liveStatus = LiveStatus,
+                livePositions = LivePositions,
                 lastBestGrossPercent = LastBestGrossPercent,
                 lastBestNetOpenPercent = LastBestNetOpenPercent,
                 lastBooksReady = LastBooksReady,
