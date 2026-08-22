@@ -404,21 +404,28 @@ public sealed class LiveExecutionService : ILiveExecutionService
 
             if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
             {
-                // Dedicated OKX client: try Live then Demo (demo keys → Unauthorized on Live)
-                var cred = _settings.GetCredential("OKX");
-                var key = (cred?.ApiKey ?? "").Trim();
-                var secret = (cred?.ApiSecret ?? "").Trim();
-                var pass = (cred?.Passphrase ?? "").Trim();
+                var credOkx = _settings.GetCredential("OKX");
+                var key = (credOkx?.ApiKey ?? "").Trim();
+                var secret = (credOkx?.ApiSecret ?? "").Trim();
+                var pass = (credOkx?.Passphrase ?? "").Trim();
+                if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(secret))
+                    return (false, [], "OKX key/secret missing", null, "OKX");
                 if (string.IsNullOrEmpty(pass))
-                    return (false, [], "OKX passphrase required (Settings)", null, "OKX");
+                    return (false, [], "OKX passphrase required — must match the passphrase set when creating the API key (not account password)", null, "OKX");
 
+                var envs = new (string name, OKXEnvironment env)[]
+                {
+                    ("Live", OKXEnvironment.Live),
+                    ("Demo", OKXEnvironment.Demo),
+                    ("Europe", OKXEnvironment.Europe),
+                    ("EuropeDemo", OKXEnvironment.EuropeDemo),
+                };
+
+                var attempts = new List<string>();
                 string? lastErr = null;
                 string? lastDetail = null;
-                foreach (var (envName, env) in new (string, OKXEnvironment)[]
-                         {
-                             ("Live", OKXEnvironment.Live),
-                             ("Demo", OKXEnvironment.Demo)
-                         })
+
+                foreach (var (envName, env) in envs)
                 {
                     try
                     {
@@ -426,7 +433,20 @@ public sealed class LiveExecutionService : ILiveExecutionService
                         {
                             o.ApiCredentials = new OKXCredentials(key, secret, pass);
                             o.Environment = env;
+                            o.OutputOriginalData = true;
                         });
+
+                        // Config first — lighter, clear auth errors
+                        var cfg = await okx.UnifiedApi.Account.GetAccountConfigurationAsync(ct).ConfigureAwait(false);
+                        if (!cfg.Success)
+                        {
+                            var e = FormatErr(cfg.Error, cfg.OriginalData);
+                            attempts.Add(envName + ":cfg " + e);
+                            lastErr = e;
+                            lastDetail = Truncate(cfg.OriginalData);
+                            _logger.LogWarning("OKX {Env} config fail: {E}", envName, e);
+                            continue;
+                        }
 
                         var r = await okx.UnifiedApi.Account.GetAccountBalanceAsync(asset: null!, ct: ct)
                             .ConfigureAwait(false);
@@ -450,13 +470,14 @@ public sealed class LiveExecutionService : ILiveExecutionService
                                     list.Add((asset, avail, total));
                                 }
                             }
+                            _logger.LogInformation("OKX balances OK via {Env}, assets={N}", envName, list.Count);
                             return (true, list.OrderByDescending(x => x.Item3).Take(40).ToList(), null, null, "OKX." + envName);
                         }
 
                         lastErr = FormatErr(r.Error, r.OriginalData);
                         lastDetail = Truncate(r.OriginalData);
+                        attempts.Add(envName + ":bal " + lastErr);
 
-                        // Funding wallet on same env
                         var f = await okx.UnifiedApi.Account.GetFundingBalanceAsync(asset: null!, ct: ct)
                             .ConfigureAwait(false);
                         if (f.Success && f.Data != null)
@@ -470,16 +491,19 @@ public sealed class LiveExecutionService : ILiveExecutionService
                             return (true, flist, null, null, "OKX.Funding." + envName);
                         }
                         if (f.Error != null)
-                            lastErr += " | funding: " + FormatErr(f.Error, f.OriginalData);
+                            attempts.Add(envName + ":fund " + FormatErr(f.Error, f.OriginalData));
                     }
                     catch (Exception ex)
                     {
+                        attempts.Add(envName + ":ex " + ex.Message);
                         lastErr = ex.Message;
                     }
                 }
 
-                return (false, [], (lastErr ?? "OKX Unauthorized") +
-                    " — check: passphrase, IP whitelist, key not expired; Demo keys need Demo env (auto-tried)",
+                var summary = string.Join(" · ", attempts.Take(8));
+                return (false, [],
+                    (lastErr ?? "Unauthorized") + " | tried: " + summary +
+                    " | Fix: recreate API key on okx.com → passphrase exactly as typed → IP of THIS machine in whitelist (or disable IP bind) → enable Read",
                     lastDetail, "OKX");
             }
         }
