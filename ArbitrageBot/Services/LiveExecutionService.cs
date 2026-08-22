@@ -501,9 +501,14 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 }
 
                 var summary = string.Join(" · ", attempts.Take(8));
+                var detailBlob = (lastDetail ?? "") + summary;
+                var hint50119 = detailBlob.Contains("50119", StringComparison.Ordinal) ||
+                                detailBlob.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase)
+                    ? " | code 50119 = API key doesn't exist on OKX (wrong key saved, or key deleted). Clear OKX in Settings → paste NEW key/secret/passphrase from okx.com → Save. Or remove OKX from exchange list."
+                    : " | Fix: passphrase, IP whitelist, or remove OKX from exchanges";
+                var finger = key.Length >= 8 ? key[..4] + "…" + key[^4..] : "?";
                 return (false, [],
-                    (lastErr ?? "Unauthorized") + " | tried: " + summary +
-                    " | Fix: recreate API key on okx.com → passphrase exactly as typed → IP of THIS machine in whitelist (or disable IP bind) → enable Read",
+                    (lastErr ?? "Unauthorized") + " | tried: " + summary + hint50119 + " | usingKey=" + finger,
                     lastDetail, "OKX");
             }
         }

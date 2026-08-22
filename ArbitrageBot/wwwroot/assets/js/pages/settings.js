@@ -129,7 +129,10 @@ AB.pages.settings = {
             </select>
           </div>
         </div>
-        <button class="btn primary save-ex">Save ${name}</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button type="button" class="btn primary save-ex">Save ${name}</button>
+          <button type="button" class="btn danger clear-ex">Clear ${name}</button>
+        </div>
       </div>`).join('') || '<div class="muted">No exchanges in config</div>';
 
     document.querySelectorAll('.save-ex').forEach(btn => {
@@ -147,6 +150,24 @@ AB.pages.settings = {
           await AB.api.post('/api/settings/exchanges/' + encodeURIComponent(name), body);
           AB.$('s_msg').className = 'alert ok';
           AB.$('s_msg').textContent = name + ' credentials saved (masked in UI). Still PAPER until live is enabled.';
+          AB.$('s_msg').classList.remove('hidden');
+          this.load();
+        } catch (e) {
+          AB.$('s_msg').className = 'alert warn';
+          AB.$('s_msg').textContent = e.message;
+          AB.$('s_msg').classList.remove('hidden');
+        }
+      };
+    });
+    document.querySelectorAll('.clear-ex').forEach(btn => {
+      btn.onclick = async () => {
+        const card = btn.closest('.ex-card');
+        const name = card.dataset.ex;
+        if (!confirm('Clear all API keys for ' + name + '?')) return;
+        try {
+          await AB.api.del('/api/settings/exchanges/' + encodeURIComponent(name));
+          AB.$('s_msg').className = 'alert ok';
+          AB.$('s_msg').textContent = name + ' keys cleared. Paste new key/secret/passphrase and Save.';
           AB.$('s_msg').classList.remove('hidden');
           this.load();
         } catch (e) {

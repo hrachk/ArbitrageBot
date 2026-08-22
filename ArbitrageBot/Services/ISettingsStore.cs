@@ -7,6 +7,7 @@ public interface ISettingsStore
     object GetPublicSettings(ArbitrageOptions arb);
     Task SaveTradingAsync(TradingUiSettings trading, CancellationToken ct = default);
     Task SaveExchangeCredentialAsync(string exchange, ExchangeCredential cred, CancellationToken ct = default);
+    Task ClearExchangeCredentialAsync(string exchange, CancellationToken ct = default);
     ExchangeCredential? GetCredential(string exchange);
     IReadOnlyDictionary<string, object> GetMaskedExchanges();
 }
@@ -146,11 +147,24 @@ public class SettingsStore : ISettingsStore
                 if (string.IsNullOrWhiteSpace(cred.ApiSecret)) cred.ApiSecret = existing.ApiSecret;
                 if (string.IsNullOrWhiteSpace(cred.Passphrase)) cred.Passphrase = existing.Passphrase;
             }
+            // Strip whitespace/newlines from pasted keys
+            if (cred.ApiKey != null) cred.ApiKey = new string(cred.ApiKey.Where(c => !char.IsWhiteSpace(c)).ToArray());
+            if (cred.ApiSecret != null) cred.ApiSecret = new string(cred.ApiSecret.Where(c => !char.IsWhiteSpace(c)).ToArray());
+            if (cred.Passphrase != null) cred.Passphrase = cred.Passphrase.Trim();
             _creds[exchange] = cred;
         }
         await PersistAsync(ct);
-        _logger.LogInformation("Credentials updated for {Exchange} enabled={En} perm={Perm}",
-            exchange, cred.Enabled, cred.Permission);
+        var finger = string.IsNullOrEmpty(cred.ApiKey) || cred.ApiKey.Length < 8
+            ? "(none)" : cred.ApiKey[..4] + "…" + cred.ApiKey[^4..];
+        _logger.LogInformation("Credentials updated for {Exchange} enabled={En} perm={Perm} key={Key}",
+            exchange, cred.Enabled, cred.Permission, finger);
+    }
+
+    public async Task ClearExchangeCredentialAsync(string exchange, CancellationToken ct = default)
+    {
+        lock (_lock) _creds.Remove(exchange);
+        await PersistAsync(ct);
+        _logger.LogInformation("Credentials cleared for {Exchange}", exchange);
     }
 
     private static string Mask(string? key)

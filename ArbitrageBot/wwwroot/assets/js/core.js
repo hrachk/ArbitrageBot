@@ -41,6 +41,12 @@ AB.api = {
     });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
+  },
+  async del(url) {
+    const r = await fetch(url, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    const t = await r.text();
+    return t ? JSON.parse(t) : {};
   }
 };
 

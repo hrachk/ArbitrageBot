@@ -189,6 +189,12 @@ try
         return Results.Ok(result);
     });
 
+    app.MapDelete("/api/settings/exchanges/{name}", async (string name, ISettingsStore store, CancellationToken ct) =>
+    {
+        await store.ClearExchangeCredentialAsync(name, ct);
+        return Results.Ok(new { ok = true, exchange = name, cleared = true });
+    });
+
     app.MapPost("/api/settings/exchanges/{name}", async (string name, ExchangeCredential body, ISettingsStore store) =>
     {
         await store.SaveExchangeCredentialAsync(name, body);
