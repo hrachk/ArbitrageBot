@@ -3,6 +3,7 @@ using ArbitrageBot.Configuration;
 using Binance.Net;
 using Binance.Net.Objects.Models.Futures;
 using Bybit.Net;
+using OKX.Net.Clients;
 using Bitget.Net;
 using OKX.Net;
 using GateIo.Net;
@@ -403,47 +404,83 @@ public sealed class LiveExecutionService : ILiveExecutionService
 
             if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
             {
-                // Unified trading account balances (asset=null = all)
-                var r = await rest.OKX.UnifiedApi.Account.GetAccountBalanceAsync(asset: null!, ct: ct).ConfigureAwait(false);
-                if (!r.Success)
+                // Dedicated OKX client: try Live then Demo (demo keys → Unauthorized on Live)
+                var cred = _settings.GetCredential("OKX");
+                var key = (cred?.ApiKey ?? "").Trim();
+                var secret = (cred?.ApiSecret ?? "").Trim();
+                var pass = (cred?.Passphrase ?? "").Trim();
+                if (string.IsNullOrEmpty(pass))
+                    return (false, [], "OKX passphrase required (Settings)", null, "OKX");
+
+                string? lastErr = null;
+                string? lastDetail = null;
+                foreach (var (envName, env) in new (string, OKXEnvironment)[]
+                         {
+                             ("Live", OKXEnvironment.Live),
+                             ("Demo", OKXEnvironment.Demo)
+                         })
                 {
-                    // Funding wallet fallback
-                    var f = await rest.OKX.UnifiedApi.Account.GetFundingBalanceAsync(asset: null!, ct: ct).ConfigureAwait(false);
-                    if (f.Success && f.Data != null)
+                    try
                     {
-                        var flist = f.Data
-                            .Where(b => b.Balance != 0 || b.Available != 0)
-                            .Select(b => (b.Asset ?? "?", b.Available, b.Balance))
-                            .OrderByDescending(x => x.Item3)
-                            .Take(40)
-                            .ToList();
-                        return (true, flist, null, null, "OKX.Funding");
+                        using var okx = new OKXRestClient(o =>
+                        {
+                            o.ApiCredentials = new OKXCredentials(key, secret, pass);
+                            o.Environment = env;
+                        });
+
+                        var r = await okx.UnifiedApi.Account.GetAccountBalanceAsync(asset: null!, ct: ct)
+                            .ConfigureAwait(false);
+                        if (r.Success)
+                        {
+                            var list = new List<(string, decimal, decimal)>();
+                            if (r.Data != null && (r.Data.Details == null || r.Data.Details.Length == 0))
+                            {
+                                if (r.Data.TotalEquity != 0 || (r.Data.AvailableEquity ?? 0) != 0)
+                                    list.Add(("USDT", r.Data.AvailableEquity ?? 0, r.Data.TotalEquity));
+                            }
+                            if (r.Data?.Details != null)
+                            {
+                                foreach (var d in r.Data.Details)
+                                {
+                                    var asset = d.Asset ?? "?";
+                                    var total = d.Equity ?? d.CashBalance ?? 0;
+                                    if (total == 0) total = (d.AvailableBalance ?? 0) + (d.FrozenBalance ?? 0);
+                                    var avail = d.AvailableBalance ?? d.AvailableEquity ?? 0;
+                                    if (total == 0 && avail == 0) continue;
+                                    list.Add((asset, avail, total));
+                                }
+                            }
+                            return (true, list.OrderByDescending(x => x.Item3).Take(40).ToList(), null, null, "OKX." + envName);
+                        }
+
+                        lastErr = FormatErr(r.Error, r.OriginalData);
+                        lastDetail = Truncate(r.OriginalData);
+
+                        // Funding wallet on same env
+                        var f = await okx.UnifiedApi.Account.GetFundingBalanceAsync(asset: null!, ct: ct)
+                            .ConfigureAwait(false);
+                        if (f.Success && f.Data != null)
+                        {
+                            var flist = f.Data
+                                .Where(b => b.Balance != 0 || b.Available != 0)
+                                .Select(b => (b.Asset ?? "?", b.Available, b.Balance))
+                                .OrderByDescending(x => x.Item3)
+                                .Take(40)
+                                .ToList();
+                            return (true, flist, null, null, "OKX.Funding." + envName);
+                        }
+                        if (f.Error != null)
+                            lastErr += " | funding: " + FormatErr(f.Error, f.OriginalData);
                     }
-                    var err = FormatErr(r.Error, r.OriginalData);
-                    if (f.Error != null) err += " | funding: " + FormatErr(f.Error, f.OriginalData);
-                    return (false, [], err, Truncate(r.OriginalData) ?? Truncate(f.OriginalData), "OKX.Unified");
+                    catch (Exception ex)
+                    {
+                        lastErr = ex.Message;
+                    }
                 }
 
-                var list = new List<(string, decimal, decimal)>();
-                // Account-level USDT equity if details empty
-                if (r.Data != null && (r.Data.Details == null || r.Data.Details.Length == 0))
-                {
-                    if (r.Data.TotalEquity != 0 || (r.Data.AvailableEquity ?? 0) != 0)
-                        list.Add(("USDT", r.Data.AvailableEquity ?? 0, r.Data.TotalEquity));
-                }
-                if (r.Data?.Details != null)
-                {
-                    foreach (var d in r.Data.Details)
-                    {
-                        var asset = d.Asset ?? "?";
-                        var total = d.Equity ?? d.CashBalance ?? 0;
-                        if (total == 0) total = (d.AvailableBalance ?? 0) + (d.FrozenBalance ?? 0);
-                        var avail = d.AvailableBalance ?? d.AvailableEquity ?? 0;
-                        if (total == 0 && avail == 0) continue;
-                        list.Add((asset, avail, total));
-                    }
-                }
-                return (true, list.OrderByDescending(x => x.Item3).Take(40).ToList(), null, null, "OKX.Unified");
+                return (false, [], (lastErr ?? "OKX Unauthorized") +
+                    " — check: passphrase, IP whitelist, key not expired; Demo keys need Demo env (auto-tried)",
+                    lastDetail, "OKX");
             }
         }
         catch (Exception ex)
