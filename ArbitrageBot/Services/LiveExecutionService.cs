@@ -1,6 +1,11 @@
 using System.Collections.Concurrent;
 using ArbitrageBot.Configuration;
+using Binance.Net;
 using Binance.Net.Objects.Models.Futures;
+using Bybit.Net;
+using Bitget.Net;
+using OKX.Net;
+using GateIo.Net;
 using Bitget.Net.Enums;
 using Bybit.Net.Enums;
 using CryptoClients.Net;
@@ -182,23 +187,70 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private static ExchangeRestClient CreateAuthedClient(string exchange, ExchangeCredential cred)
     {
         var rest = new ExchangeRestClient();
+        var key = (cred.ApiKey ?? "").Trim();
+        var secret = (cred.ApiSecret ?? "").Trim();
+        var pass = (cred.Passphrase ?? "").Trim();
+
+        // Exchange-native credentials (HMAC) — CreateFrom/HMAC alone often fails to attach to UsdFutures clients
+        var bag = new ExchangeCredentials();
+        var name = exchange.Trim();
+        if (name.Equals("Binance", StringComparison.OrdinalIgnoreCase))
+            bag.Binance = new BinanceCredentials(key, secret);
+        else if (name.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
+            bag.Bybit = new BybitCredentials(key, secret);
+        else if (name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+            bag.Bitget = new BitgetCredentials(key, secret, pass);
+        else if (name.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            bag.OKX = new OKXCredentials(key, secret, pass);
+        else if (name.Equals("GateIo", StringComparison.OrdinalIgnoreCase) || name.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+            bag.GateIo = new GateIoCredentials(key, secret);
+        else
+        {
+            // generic fallback
+            rest.SetApiCredentials(name, new DynamicCredentials(
+                TradingMode.PerpetualLinear, key, secret, pass, ""));
+            return rest;
+        }
+
+        rest.SetApiCredentials(bag);
+
+        // Also set on the specific client instance for safety
         try
         {
-            ApiCredentials apiCred = string.IsNullOrEmpty(cred.Passphrase)
-                ? new HMACCredential(cred.ApiKey!, cred.ApiSecret!)
-                : new HMACPassCredential(cred.ApiKey!, cred.ApiSecret!, cred.Passphrase!);
-            rest.SetApiCredentials(ExchangeCredentials.CreateFrom(exchange, apiCred));
+            if (name.Equals("Binance", StringComparison.OrdinalIgnoreCase))
+                rest.Binance.SetApiCredentials(new BinanceCredentials(key, secret));
+            else if (name.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
+                rest.Bybit.SetApiCredentials(new BybitCredentials(key, secret));
+            else if (name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+                rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass));
         }
         catch
         {
-            rest.SetApiCredentials(exchange, new DynamicCredentials(
-                TradingMode.PerpetualLinear,
-                cred.ApiKey!,
-                cred.ApiSecret!,
-                cred.Passphrase ?? "",
-                ""));
+            /* client-specific set is best-effort */
         }
+
         return rest;
+    }
+
+    private static string FormatErr(dynamic? error, string? original = null)
+    {
+        if (error is null)
+            return string.IsNullOrEmpty(original) ? "unknown error" : "empty-msg detail=" + Truncate(original);
+        try
+        {
+            var msg = error.Message?.ToString() ?? "";
+            var code = error.ErrorCode?.ToString() ?? error.Code?.ToString() ?? "";
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(code)) parts.Add("code=" + code);
+            if (!string.IsNullOrWhiteSpace(msg)) parts.Add(msg);
+            if (parts.Count == 0 && !string.IsNullOrEmpty(original))
+                parts.Add("detail=" + Truncate(original));
+            return parts.Count > 0 ? string.Join(" | ", parts) : "empty error object";
+        }
+        catch
+        {
+            return error.ToString() ?? "error";
+        }
     }
 
     private async Task<(bool ok, List<(string asset, decimal available, decimal total)> balances, string? err, string? detail, string mode)>
@@ -210,7 +262,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
             {
                 var r = await rest.Binance.UsdFuturesApi.Account.GetBalancesAsync(ct: ct).ConfigureAwait(false);
                 if (!r.Success)
-                    return (false, [], r.Error?.Message ?? "Binance UsdFutures balances failed",
+                    return (false, [], FormatErr(r.Error, r.OriginalData),
                         Truncate(r.OriginalData), "Binance.UsdFutures");
 
                 var list = (r.Data ?? Array.Empty<BinanceUsdFuturesAccountBalance>())
@@ -225,13 +277,17 @@ public sealed class LiveExecutionService : ILiveExecutionService
 
             if (exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
             {
+                string? lastBybitErr = null;
+                string? lastBybitDetail = null;
                 // Unified first (UTA), then Contract
                 foreach (var accType in new[] { AccountType.Unified, AccountType.Contract, AccountType.Fund })
                 {
                     var r = await rest.Bybit.V5Api.Account.GetBalancesAsync(accType, ct: ct).ConfigureAwait(false);
                     if (!r.Success)
                     {
-                        _logger.LogDebug("Bybit {T}: {E}", accType, r.Error?.Message);
+                        lastBybitErr = FormatErr(r.Error, r.OriginalData);
+                        lastBybitDetail = Truncate(r.OriginalData);
+                        _logger.LogWarning("Bybit {T}: {E}", accType, lastBybitErr);
                         continue;
                     }
                     var list = new List<(string, decimal, decimal)>();
@@ -262,7 +318,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                     }
                     return (true, list.OrderByDescending(x => x.Item3).Take(40).ToList(), null, null, "Bybit." + accType);
                 }
-                return (false, [], "Bybit: Unified/Contract/Fund all failed", null, "Bybit");
+                return (false, [], "Bybit: Unified/Contract/Fund all failed — " + (lastBybitErr ?? ""), lastBybitDetail, "Bybit");
             }
 
             if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
@@ -270,7 +326,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 var r = await rest.Bitget.FuturesApiV2.Account
                     .GetBalancesAsync(BitgetProductTypeV2.UsdtFutures, ct).ConfigureAwait(false);
                 if (!r.Success)
-                    return (false, [], r.Error?.Message ?? "Bitget futures balances failed",
+                    return (false, [], FormatErr(r.Error, r.OriginalData),
                         Truncate(r.OriginalData), "Bitget.UsdtFutures");
 
                 var list = (r.Data ?? [])

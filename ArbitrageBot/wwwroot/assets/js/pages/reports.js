@@ -146,7 +146,8 @@ AB.pages.reports.loadLiveBalances = async function () {
       if (!x.ok) {
         return '<div class="kpi" style="margin:0;border-color:rgba(248,113,113,0.25)">' +
           '<div class="kpi-l">' + x.exchange + '</div>' +
-          '<div class="neg" style="margin-top:6px;font-size:12px">' + (x.error || 'fail') + '</div>' +
+          '<div class="neg" style="margin-top:6px;font-size:12px;word-break:break-word">' + (x.error || 'fail') + '</div>' +
+          (x.detail ? '<div class="muted mono" style="font-size:10px;margin-top:4px;word-break:break-all">' + x.detail + '</div>' : '') +
           (x.hint ? '<div class="muted" style="font-size:10px;margin-top:4px">' + x.hint + '</div>' : '') +
           '</div>';
       }
