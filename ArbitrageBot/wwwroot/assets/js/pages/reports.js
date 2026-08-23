@@ -175,3 +175,124 @@ AB.pages.reports.onShow = function (d) {
   else if (d && this.render) this.render(d);
   this.loadLiveBalances();
 };
+
+
+AB.pages.reports._perfDays = 7;
+
+AB.pages.reports.loadPerformance = async function (days) {
+  if (days) this._perfDays = days;
+  const d = this._perfDays || 7;
+  const k1 = AB.$('perfKpis');
+  const k2 = AB.$('perfKpis2');
+  if (!k1) return;
+  k1.innerHTML = '<div class="empty">Loading performance…</div>';
+  try {
+    const p = await AB.api.get('/api/analytics/performance?days=' + d);
+    const trades = await AB.api.get('/api/analytics/trades?take=60');
+    const kpi = (label, val, cls) =>
+      `<div class="kpi" style="margin:0"><div class="kpi-l">${label}</div>
+       <div class="mono ${cls||''}" style="font-size:18px;font-weight:700;margin-top:6px">${val}</div></div>`;
+    const pn = (v, dig) => {
+      const n = Number(v)||0;
+      const s = (n>=0?'+':'') + AB.fmt(n, dig ?? 2);
+      return { s, cls: n>0?'pos':(n<0?'neg':'') };
+    };
+    const net = pn(p.netPnl);
+    k1.innerHTML = [
+      kpi('NET PNL', net.s + ' USDT', net.cls),
+      kpi('WIN RATE', AB.fmt(p.winRate,1) + '%', ''),
+      kpi('TOTAL TRADES', p.totalTrades, ''),
+      kpi('AVG WIN', pn(p.avgWin).s, 'pos')
+    ].join('');
+    k2.innerHTML = [
+      kpi('AVG LOSS', pn(p.avgLoss).s, 'neg'),
+      kpi('PROFIT FACTOR', AB.fmt(p.profitFactor,2), ''),
+      kpi('MAX DRAWDOWN', AB.fmt(p.maxDrawdown,2), 'neg'),
+      kpi('BEST TRADE', p.bestTrade ? pn(p.bestTrade.pnl).s : '—', 'pos'),
+      kpi('WORST TRADE', p.worstTrade ? pn(p.worstTrade.pnl).s : '—', 'neg'),
+      kpi('AVG DURATION', AB.fmt(p.avgDurationMin,1) + ' m', ''),
+      kpi('EXPECTANCY', pn(p.expectancy).s, pn(p.expectancy).cls),
+      kpi('AVG R:R', AB.fmt(p.avgRr,2), ''),
+      kpi('CONSEC WINS', p.consecWins, 'pos'),
+      kpi('CONSEC LOSS', p.consecLoss, 'neg')
+    ].join('');
+
+    // curve
+    const svg = AB.$('perfCurve');
+    if (svg && p.equityCurve && p.equityCurve.length) {
+      const pts = p.equityCurve;
+      const ys = pts.map(x => x.equity);
+      const minY = Math.min(0, ...ys);
+      const maxY = Math.max(0, ...ys);
+      const span = (maxY - minY) || 1;
+      const w = 640, h = 160, pad = 12;
+      const xy = pts.map((pt, i) => {
+        const x = pad + (i / Math.max(pts.length-1,1)) * (w - 2*pad);
+        const y = h - pad - ((pt.equity - minY) / span) * (h - 2*pad);
+        return [x, y];
+      });
+      const poly = xy.map(p => p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+      const zeroY = h - pad - ((0 - minY) / span) * (h - 2*pad);
+      svg.innerHTML = `<line x1="0" y1="${zeroY}" x2="${w}" y2="${zeroY}" stroke="rgba(148,163,184,0.25)" stroke-dasharray="4"/>
+        <polyline fill="none" stroke="#2dd4bf" stroke-width="2" points="${poly}"/>`;
+    } else if (svg) {
+      svg.innerHTML = '<text x="20" y="80" fill="#94a3b8" font-size="12">No closed trades in range</text>';
+    }
+
+    // calendar
+    const cal = AB.$('perfCalendar');
+    if (cal) {
+      const days = p.daily || [];
+      if (!days.length) cal.innerHTML = '<div class="empty">No daily data</div>';
+      else cal.innerHTML = days.map(d => {
+        const n = Number(d.pnl)||0;
+        const bg = n>0 ? 'rgba(45,212,191,0.2)' : (n<0 ? 'rgba(248,113,113,0.2)' : 'rgba(148,163,184,0.1)');
+        return `<div style="background:${bg};border-radius:8px;padding:8px;text-align:center">
+          <div class="muted" style="font-size:10px">${d.day.slice(5)}</div>
+          <div class="mono ${n>0?'pos':(n<0?'neg':'')}" style="font-size:12px;font-weight:600">${n>=0?'+':''}${AB.fmt(n,1)}</div>
+          <div class="muted" style="font-size:10px">${d.trades}t</div>
+        </div>`;
+      }).join('');
+    }
+
+    // trades table
+    const box = AB.$('perfTrades');
+    if (box) {
+      const rows = Array.isArray(trades) ? trades : [];
+      if (!rows.length) box.innerHTML = '<div class="empty">No trades in ledger yet</div>';
+      else {
+        box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr class="muted" style="text-align:left">
+            <th style="padding:6px">Status</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Opened</th><th>Msg</th>
+          </tr></thead>
+          <tbody>${rows.map(t => {
+            const pnl = t.realizedPnlUsd;
+            const pnlN = pnl == null ? null : Number(pnl);
+            const pnlS = pnlN == null ? '—' : ((pnlN>=0?'+':'')+AB.fmt(pnlN,2));
+            const cls = pnlN == null ? '' : (pnlN>0?'pos':(pnlN<0?'neg':''));
+            return `<tr style="border-top:1px solid rgba(148,163,184,0.12)">
+              <td style="padding:6px">${t.status||'—'}</td>
+              <td class="mono">${t.symbol||t.Symbol||'—'}</td>
+              <td class="muted">${t.longExchange||t.LongExchange||'?'}→${t.shortExchange||t.ShortExchange||'?'}</td>
+              <td class="mono">${AB.fmt(t.baseQty||t.BaseQty||0,4)}</td>
+              <td class="mono ${cls}">${pnlS}</td>
+              <td class="muted">${(t.openedAt||t.OpenedAt||'').toString().slice(0,19)}</td>
+              <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${t.message||t.Message||''}</td>
+            </tr>`;
+          }).join('')}</tbody></table>`;
+      }
+    }
+  } catch (e) {
+    k1.innerHTML = '<div class="empty neg">' + (e.message || e) + '</div>';
+  }
+};
+
+document.querySelectorAll('[data-perf-days]').forEach(btn => {
+  btn.addEventListener('click', () => AB.pages.reports.loadPerformance(parseInt(btn.getAttribute('data-perf-days'), 10)));
+});
+
+const _repShow2 = AB.pages.reports.onShow;
+AB.pages.reports.onShow = function (d) {
+  if (typeof _repShow2 === 'function') _repShow2.call(this, d);
+  this.loadPerformance(this._perfDays || 7);
+};

@@ -14,6 +14,8 @@ public interface IPaperAnalyticsStore
     IReadOnlyList<object> GetRecentEvents(int take = 80);
     IReadOnlyList<object> GetRecentSkips(int take = 40);
     IReadOnlyList<object> GetDaySummaries(int maxDays = 14);
+    object GetPerformanceReport(int days = 7);
+    IReadOnlyList<object> GetTradeDetails(int take = 100);
 }
 
 /// <summary>
@@ -309,6 +311,183 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         _lastDailyFlush = DateTime.UtcNow;
         PersistDailySummary(_day);
     }
+
+
+    public object GetPerformanceReport(int days = 7)
+    {
+        days = Math.Clamp(days, 1, 90);
+        var since = DateTime.UtcNow.Date.AddDays(-(days - 1));
+        List<JsonElement> closed = [];
+        lock (_lock)
+        {
+            // Prefer re-read ledger file for stable shape
+            try
+            {
+                if (File.Exists(LedgerPath))
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in doc.RootElement.EnumerateArray())
+                        {
+                            var status = el.TryGetProperty("status", out var st) ? st.GetString() : "";
+                            if (status is null) continue;
+                            if (!status.Contains("Close", StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(status, "Closed", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("converged", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("stop", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("manual", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // still include if has realizedPnl
+                                if (!el.TryGetProperty("realizedPnlUsd", out var rp) || rp.ValueKind == JsonValueKind.Null)
+                                    continue;
+                            }
+                            if (!el.TryGetProperty("realizedPnlUsd", out var pnlEl) || pnlEl.ValueKind == JsonValueKind.Null)
+                                continue;
+                            DateTime closedAt = DateTime.MinValue;
+                            if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
+                                && DateTime.TryParse(ca.GetString(), out var cdt))
+                                closedAt = cdt.ToUniversalTime();
+                            else if (el.TryGetProperty("ClosedAt", out var ca2) && ca2.ValueKind == JsonValueKind.String
+                                && DateTime.TryParse(ca2.GetString(), out var cdt2))
+                                closedAt = cdt2.ToUniversalTime();
+                            if (closedAt == DateTime.MinValue) closedAt = DateTime.UtcNow;
+                            if (closedAt.Date < since) continue;
+                            closed.Add(el.Clone());
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "performance report ledger parse");
+            }
+        }
+
+        var pnls = new List<(DateTime closedAt, decimal pnl, double holdMin, string symbol, string status, string message)>();
+        foreach (var el in closed)
+        {
+            var pnl = el.TryGetProperty("realizedPnlUsd", out var p) && p.TryGetDecimal(out var pd) ? pd : 0m;
+            DateTime closedAt = DateTime.UtcNow;
+            if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(ca.GetString(), out var cdt))
+                closedAt = cdt.ToUniversalTime();
+            DateTime openedAt = closedAt;
+            if (el.TryGetProperty("openedAt", out var oa) && oa.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(oa.GetString(), out var odt))
+                openedAt = odt.ToUniversalTime();
+            var hold = Math.Max(0, (closedAt - openedAt).TotalMinutes);
+            var sym = el.TryGetProperty("symbol", out var s) ? s.GetString() ?? "?" :
+                      (el.TryGetProperty("Symbol", out var s2) ? s2.GetString() ?? "?" : "?");
+            var status = el.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";
+            var msg = el.TryGetProperty("message", out var m) ? m.GetString() ?? "" :
+                      (el.TryGetProperty("Message", out var m2) ? m2.GetString() ?? "" : "");
+            pnls.Add((closedAt, pnl, hold, sym, status, msg));
+        }
+
+        pnls = pnls.OrderBy(x => x.closedAt).ToList();
+        var wins = pnls.Where(x => x.pnl > 0).ToList();
+        var losses = pnls.Where(x => x.pnl < 0).ToList();
+        var flats = pnls.Where(x => x.pnl == 0).ToList();
+        var net = pnls.Sum(x => x.pnl);
+        var grossWin = wins.Sum(x => x.pnl);
+        var grossLoss = Math.Abs(losses.Sum(x => x.pnl));
+        var winRate = pnls.Count > 0 ? (decimal)wins.Count / pnls.Count * 100m : 0;
+        var avgWin = wins.Count > 0 ? wins.Average(x => x.pnl) : 0;
+        var avgLoss = losses.Count > 0 ? losses.Average(x => x.pnl) : 0;
+        var pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? 99m : 0);
+        var avgHold = pnls.Count > 0 ? pnls.Average(x => x.holdMin) : 0;
+        var expectancy = pnls.Count > 0 ? net / pnls.Count : 0;
+        var avgRr = avgLoss != 0 ? Math.Abs(avgWin / avgLoss) : 0;
+
+        // equity curve + max drawdown
+        decimal peak = 0, equity = 0, maxDd = 0;
+        var curve = new List<object>();
+        foreach (var x in pnls)
+        {
+            equity += x.pnl;
+            if (equity > peak) peak = equity;
+            var dd = peak - equity;
+            if (dd > maxDd) maxDd = dd;
+            curve.Add(new { t = x.closedAt, equity = Math.Round(equity, 4), pnl = Math.Round(x.pnl, 4) });
+        }
+
+        // consecutive
+        int consecW = 0, consecL = 0, maxCW = 0, maxCL = 0;
+        foreach (var x in pnls)
+        {
+            if (x.pnl > 0) { consecW++; consecL = 0; maxCW = Math.Max(maxCW, consecW); }
+            else if (x.pnl < 0) { consecL++; consecW = 0; maxCL = Math.Max(maxCL, consecL); }
+            else { consecW = 0; consecL = 0; }
+        }
+
+        // daily calendar
+        var byDay = pnls.GroupBy(x => x.closedAt.Date)
+            .Select(g => new
+            {
+                day = g.Key.ToString("yyyy-MM-dd"),
+                pnl = Math.Round(g.Sum(x => x.pnl), 4),
+                trades = g.Count(),
+                wins = g.Count(x => x.pnl > 0),
+                losses = g.Count(x => x.pnl < 0)
+            })
+            .OrderBy(x => x.day)
+            .ToList();
+
+        var best = pnls.OrderByDescending(x => x.pnl).FirstOrDefault();
+        var worst = pnls.OrderBy(x => x.pnl).FirstOrDefault();
+
+        return new
+        {
+            mode = "PAPER",
+            rangeDays = days,
+            fromUtc = since.ToString("yyyy-MM-dd"),
+            toUtc = DateTime.UtcNow.Date.ToString("yyyy-MM-dd"),
+            netPnl = Math.Round(net, 4),
+            winRate = Math.Round(winRate, 2),
+            totalTrades = pnls.Count,
+            wins = wins.Count,
+            losses = losses.Count,
+            flats = flats.Count,
+            avgWin = Math.Round(avgWin, 4),
+            avgLoss = Math.Round(avgLoss, 4),
+            profitFactor = Math.Round(pf, 2),
+            maxDrawdown = Math.Round(maxDd, 4),
+            bestTrade = best.symbol != null ? new { best.symbol, pnl = Math.Round(best.pnl, 4), best.closedAt } : null,
+            worstTrade = worst.symbol != null ? new { worst.symbol, pnl = Math.Round(worst.pnl, 4), worst.closedAt } : null,
+            avgDurationMin = Math.Round((decimal)avgHold, 1),
+            expectancy = Math.Round(expectancy, 4),
+            avgRr = Math.Round((decimal)avgRr, 2),
+            consecWins = maxCW,
+            consecLoss = maxCL,
+            equityCurve = curve,
+            daily = byDay,
+            note = "Built from data/paper/trades-ledger.json closed rows. Equity curve = cumulative realized (not mark-to-market)."
+        };
+    }
+
+    public IReadOnlyList<object> GetTradeDetails(int take = 100)
+    {
+        take = Math.Clamp(take, 1, 500);
+        try
+        {
+            if (!File.Exists(LedgerPath)) return Array.Empty<object>();
+            using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return Array.Empty<object>();
+            var list = new List<object>();
+            foreach (var el in doc.RootElement.EnumerateArray().Take(take))
+            {
+                list.Add(JsonSerializer.Deserialize<object>(el.GetRawText())!);
+            }
+            return list;
+        }
+        catch
+        {
+            return Array.Empty<object>();
+        }
+    }
+
 
     private void PersistDailySummary(DateTime day)
     {
