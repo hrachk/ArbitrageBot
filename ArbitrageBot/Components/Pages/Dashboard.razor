@@ -1,0 +1,106 @@
+@page "/"
+@inject ArbitrageState State
+@inject IFuturesPaperService Paper
+@inject IPaperAnalyticsStore Analytics
+@inject IOptions<ArbitrageOptions> Opt
+@implements IDisposable
+@using Microsoft.Extensions.Options
+
+<PageTitle>Dashboard · ArbitrageBot</PageTitle>
+
+<div class="page-hd">
+  <h1>Dashboard</h1>
+  <p class="muted">Paper / live snapshot · auto-refresh 2s</p>
+</div>
+
+<div class="grid-kpi">
+  <div class="card kpi-card">
+    <div class="kpi-label">Mode</div>
+    <div class="kpi-value">@State.Mode</div>
+  </div>
+  <div class="card kpi-card">
+    <div class="kpi-label">Open positions</div>
+    <div class="kpi-value">@_openCount</div>
+  </div>
+  <div class="card kpi-card">
+    <div class="kpi-label">Day realized</div>
+    <div class="kpi-value @(_dayPnl >= 0 ? "pos" : "neg")">@Fmt(_dayPnl)</div>
+  </div>
+  <div class="card kpi-card">
+    <div class="kpi-label">Notional</div>
+    <div class="kpi-value mono">@Opt.Value.QuoteSize</div>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top:16px">
+  <div class="card">
+    <div class="card-hd"><h2>Open hedges</h2></div>
+    @if (_opens.Count == 0)
+    {
+      <div class="empty">No open positions</div>
+    }
+    else
+    {
+      <table class="tbl">
+        <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Opened</th></tr></thead>
+        <tbody>
+        @foreach (var t in _opens)
+        {
+          <tr>
+            <td class="mono">@t.Symbol</td>
+            <td class="muted">@t.LongExchange → @t.ShortExchange</td>
+            <td class="mono">@t.BaseQty.ToString("F4")</td>
+            <td class="mono @(t.UnrealizedPnlUsd >= 0 ? "pos" : "neg")">@Fmt(t.UnrealizedPnlUsd)</td>
+            <td class="muted">@t.OpenedAt.ToString("HH:mm:ss")</td>
+          </tr>
+        }
+        </tbody>
+      </table>
+    }
+  </div>
+  <div class="card">
+    <div class="card-hd"><h2>Engine</h2></div>
+    <div class="kv">
+      <span>Strategy</span><span class="mono">@Opt.Value.StrategyMode</span>
+      <span>Min profit</span><span class="mono">@Opt.Value.MinProfitPercent%</span>
+      <span>Max open</span><span class="mono">@Opt.Value.FuturesMaxOpenPositions</span>
+      <span>Exchanges</span><span class="mono">@string.Join(", ", Opt.Value.NormalizedExchanges)</span>
+      <span>Paused</span><span class="mono">@State.IsPaused</span>
+    </div>
+  </div>
+</div>
+
+@code {
+    System.Threading.Timer? _timer;
+    int _openCount;
+    decimal _dayPnl;
+    List<FuturesPaperPosition> _opens = new();
+
+    protected override void OnInitialized()
+    {
+        Refresh();
+        _timer = new System.Threading.Timer(_ =>
+        {
+            _ = InvokeAsync(() => { Refresh(); StateHasChanged(); });
+        }, null, 2000, 2000);
+    }
+
+    void Refresh()
+    {
+        _opens = Paper.GetOpenPositions().ToList();
+        _openCount = _opens.Count;
+        try
+        {
+            var s = Analytics.GetLiveSummary();
+            var json = System.Text.Json.JsonSerializer.Serialize(s);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("realizedPnlUsd", out var p) && p.TryGetDecimal(out var d))
+                _dayPnl = d;
+        }
+        catch { }
+    }
+
+    static string Fmt(decimal v) => (v >= 0 ? "+" : "") + v.ToString("F2");
+
+    public void Dispose() => _timer?.Dispose();
+}

@@ -1,0 +1,101 @@
+@page "/reports"
+@inject IPaperAnalyticsStore Analytics
+@implements IDisposable
+
+<PageTitle>Reports · ArbitrageBot</PageTitle>
+
+<div class="page-hd">
+  <div>
+    <h1>Performance</h1>
+    <p class="muted">Paper realized closes · from ledger</p>
+  </div>
+  <div class="btn-row">
+    @foreach (var d in new[] { 1, 7, 30, 90 })
+    {
+      <button class="btn sm @(Days == d ? "primary" : "")" @onclick="() => Load(d)">@d D</button>
+    }
+  </div>
+</div>
+
+@if (!_loaded)
+{
+  <div class="empty">Loading…</div>
+}
+else
+{
+  <div class="grid-kpi">
+    <div class="card kpi-card"><div class="kpi-label">Net PnL</div><div class="kpi-value @Cls(NetPnl)">@Fmt(NetPnl)</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Win rate</div><div class="kpi-value">@WinRate%</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Trades</div><div class="kpi-value">@TotalTrades</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Profit factor</div><div class="kpi-value">@ProfitFactor</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Max DD</div><div class="kpi-value neg">@MaxDd</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Expectancy</div><div class="kpi-value @Cls(Expectancy)">@Fmt(Expectancy)</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Avg win</div><div class="kpi-value pos">@Fmt(AvgWin)</div></div>
+    <div class="card kpi-card"><div class="kpi-label">Avg loss</div><div class="kpi-value neg">@Fmt(AvgLoss)</div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-hd"><h2>Daily PnL</h2></div>
+    <div class="cal">
+      @foreach (var d in _daily)
+      {
+        <div class="cal-cell @(d.pnl >= 0 ? "up" : "down")">
+          <div class="tiny muted">@d.day</div>
+          <div class="mono">@Fmt(d.pnl)</div>
+          <div class="tiny muted">@d.trades t</div>
+        </div>
+      }
+    </div>
+  </div>
+}
+
+@code {
+    int Days = 7;
+    bool _loaded;
+    decimal NetPnl, WinRate, ProfitFactor, MaxDd, Expectancy, AvgWin, AvgLoss;
+    int TotalTrades;
+    List<(string day, decimal pnl, int trades)> _daily = new();
+    System.Threading.Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        Load(7);
+        _timer = new System.Threading.Timer(_ => _ = InvokeAsync(() => { Load(Days); StateHasChanged(); }), null, 15000, 15000);
+    }
+
+    void Load(int days)
+    {
+        Days = days;
+        var obj = Analytics.GetPerformanceReport(days);
+        var json = System.Text.Json.JsonSerializer.Serialize(obj);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var r = doc.RootElement;
+        NetPnl = GetDec(r, "netPnl");
+        WinRate = GetDec(r, "winRate");
+        TotalTrades = r.TryGetProperty("totalTrades", out var tt) ? tt.GetInt32() : 0;
+        ProfitFactor = GetDec(r, "profitFactor");
+        MaxDd = GetDec(r, "maxDrawdown");
+        Expectancy = GetDec(r, "expectancy");
+        AvgWin = GetDec(r, "avgWin");
+        AvgLoss = GetDec(r, "avgLoss");
+        _daily = new();
+        if (r.TryGetProperty("daily", out var daily) && daily.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var x in daily.EnumerateArray())
+            {
+                var day = x.TryGetProperty("day", out var d) ? d.GetString() ?? "" : "";
+                var pnl = GetDec(x, "pnl");
+                var trades = x.TryGetProperty("trades", out var t) ? t.GetInt32() : 0;
+                _daily.Add((day, pnl, trades));
+            }
+        }
+        _loaded = true;
+    }
+
+    static decimal GetDec(System.Text.Json.JsonElement el, string name)
+        => el.TryGetProperty(name, out var p) && p.TryGetDecimal(out var d) ? d : 0;
+
+    static string Fmt(decimal v) => (v >= 0 ? "+" : "") + v.ToString("F2");
+    static string Cls(decimal v) => v > 0 ? "pos" : (v < 0 ? "neg" : "");
+    public void Dispose() => _timer?.Dispose();
+}

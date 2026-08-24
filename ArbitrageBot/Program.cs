@@ -65,11 +65,13 @@ try
     builder.Services.AddHostedService<RealtimeBroadcastService>();
     builder.Services.AddSignalR();
     builder.Services.AddHttpClient("discovery");
+    builder.Services.AddRazorComponents()
+        .AddInteractiveServerComponents();
 
     var app = builder.Build();
 
-    app.UseDefaultFiles();
     app.UseStaticFiles();
+    app.UseAntiforgery();
 
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));

@@ -1,0 +1,59 @@
+@page "/live"
+@inject LiveTradingGuard Guard
+@inject ILiveExecutionService LiveExec
+@inject IOptions<ArbitrageOptions> Opt
+@using Microsoft.Extensions.Options
+
+<PageTitle>Live · ArbitrageBot</PageTitle>
+
+<div class="page-hd">
+  <h1>Live control</h1>
+  <p class="muted">Guard · balances · enable only when funded + trade keys</p>
+</div>
+
+<div class="card">
+  <div class="card-hd"><h2>Guard status</h2></div>
+  <pre class="mono pre">@StatusJson</pre>
+  <div class="form" style="margin-top:12px">
+    <label>Confirm phrase <input @bind="_phrase" placeholder="ENABLE LIVE TRADING" /></label>
+    <label class="chk"><input type="checkbox" @bind="_readOnly" /> Read-only</label>
+    <div class="btn-row">
+      <button class="btn primary" @onclick="Enable">Enable</button>
+      <button class="btn" @onclick="Disable">Disable</button>
+      <button class="btn danger" @onclick="Kill">KILL</button>
+      <button class="btn" @onclick="Verify">Verify balances</button>
+    </div>
+    @if (!string.IsNullOrEmpty(_msg)) { <div class="alert">@_msg</div> }
+  </div>
+</div>
+
+@if (_verify != null)
+{
+  <div class="card" style="margin-top:14px">
+    <div class="card-hd"><h2>Verify / balances</h2></div>
+    <pre class="mono pre">@_verify</pre>
+  </div>
+}
+
+@code {
+    string _phrase = "";
+    bool _readOnly = true;
+    string _msg = "";
+    string? _verify;
+    string StatusJson => System.Text.Json.JsonSerializer.Serialize(Guard.Status(), new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+    void Enable()
+    {
+        var (ok, message) = Guard.TryEnable(_phrase, _readOnly, Opt.Value);
+        _msg = ok ? "Enabled: " + message : message;
+    }
+    void Disable() { Guard.Disable(); _msg = "Disabled"; }
+    void Kill() { Guard.Kill("UI kill"); _msg = "KILLED"; }
+    async Task Verify()
+    {
+        var creds = await LiveExec.VerifyCredentialsAsync();
+        var bal = await LiveExec.GetLiveBalancesAsync();
+        _verify = System.Text.Json.JsonSerializer.Serialize(new { credentials = creds, balances = bal },
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    }
+}

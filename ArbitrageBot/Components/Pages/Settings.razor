@@ -1,0 +1,117 @@
+@page "/settings"
+@inject ISettingsStore Store
+@inject IOptions<ArbitrageOptions> Opt
+@inject RuntimeRiskConfig Risk
+@using Microsoft.Extensions.Options
+@using ArbitrageBot.Configuration
+
+<PageTitle>Settings · ArbitrageBot</PageTitle>
+
+<div class="page-hd">
+  <h1>Settings</h1>
+  <p class="muted">Trading parameters · API keys (local store, never in git)</p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-hd"><h2>Trading</h2></div>
+    <div class="form">
+      <label>Notional (USDT) <input type="number" @bind="_quote" /></label>
+      <label>Min profit % <input type="number" step="0.01" @bind="_min" /></label>
+      <label>Max open <input type="number" @bind="_maxOpen" /></label>
+      <label>Leverage <input type="number" @bind="_lev" /></label>
+      <label class="chk"><input type="checkbox" @bind="_paper" /> Paper trading</label>
+      <label class="chk"><input type="checkbox" @bind="_auto" /> Auto execute</label>
+      <button class="btn primary" @onclick="SaveTrading">Save trading</button>
+      @if (!string.IsNullOrEmpty(_msg)) { <div class="alert">@_msg</div> }
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-hd"><h2>Exchange API keys</h2></div>
+    <p class="muted tiny">Clear then paste new key/secret/passphrase.</p>
+    @foreach (var name in _exNames)
+    {
+      var c = Store.GetCredential(name);
+      <div class="ex-block">
+        <strong>@name</strong>
+        <span class="muted tiny">@(Mask(c?.ApiKey))</span>
+        <input placeholder="API Key" @bind="_keys[name].Key" />
+        <input placeholder="Secret" type="password" @bind="_keys[name].Secret" />
+        <input placeholder="Passphrase (OKX/Bitget)" type="password" @bind="_keys[name].Pass" />
+        <div class="btn-row">
+          <button class="btn sm primary" @onclick="() => SaveKey(name)">Save</button>
+          <button class="btn sm" @onclick="() => ClearKey(name)">Clear</button>
+        </div>
+      </div>
+    }
+  </div>
+</div>
+
+@code {
+    static readonly string[] _exNames = ["Binance", "Bybit", "OKX", "Bitget"];
+    decimal _quote, _min, _lev;
+    int _maxOpen;
+    bool _paper, _auto;
+    string _msg = "";
+    Dictionary<string, KeyForm> _keys = new();
+
+    class KeyForm { public string Key { get; set; } = ""; public string Secret { get; set; } = ""; public string Pass { get; set; } = ""; }
+
+    protected override void OnInitialized()
+    {
+        var o = Opt.Value;
+        var snap = Risk.Snapshot;
+        _quote = snap.QuoteSize;
+        _min = snap.MinProfitPercent;
+        _maxOpen = snap.FuturesMaxOpenPositions;
+        _lev = snap.FuturesPaperLeverage;
+        _paper = snap.PaperTrading;
+        _auto = snap.PaperAutoExecute;
+        foreach (var n in _exNames)
+            _keys[n] = new KeyForm();
+    }
+
+    static string Mask(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || key.Length < 8) return "no key";
+        return key[..4] + "…" + key[^4..];
+    }
+
+    async Task SaveTrading()
+    {
+        var t = new TradingUiSettings
+        {
+            QuoteSize = _quote,
+            MinProfitPercent = _min,
+            FuturesMaxOpenPositions = _maxOpen,
+            FuturesPaperLeverage = _lev,
+            PaperTrading = _paper,
+            PaperAutoExecute = _auto,
+            StrategyMode = Opt.Value.StrategyMode
+        };
+        await Store.SaveTradingAsync(t);
+        Risk.ApplyTrading(t);
+        _msg = "Trading settings saved.";
+    }
+
+    async Task SaveKey(string name)
+    {
+        var k = _keys[name];
+        await Store.SaveExchangeCredentialAsync(name, new ExchangeCredential
+        {
+            Enabled = true,
+            ApiKey = string.IsNullOrWhiteSpace(k.Key) ? null! : k.Key,
+            ApiSecret = string.IsNullOrWhiteSpace(k.Secret) ? null! : k.Secret,
+            Passphrase = string.IsNullOrWhiteSpace(k.Pass) ? null! : k.Pass,
+            Permission = "read-only"
+        });
+        _msg = name + " credentials saved.";
+        k.Key = k.Secret = k.Pass = "";
+    }
+
+    async Task ClearKey(string name)
+    {
+        await Store.ClearExchangeCredentialAsync(name);
+        _msg = name + " cleared.";
+    }
+}
