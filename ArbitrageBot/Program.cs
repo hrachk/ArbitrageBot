@@ -70,6 +70,7 @@ try
 
     var app = builder.Build();
 
+    app.UseDefaultFiles();
     app.UseStaticFiles();
     app.UseAntiforgery();
 
