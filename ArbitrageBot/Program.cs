@@ -324,7 +324,9 @@ try
     app.MapGet("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
         Results.Ok(await live.VerifyCredentialsAsync(ct)));
 
-    app.MapFallbackToFile("index.html");
+    // Blazor terminal UI — root "/" = Dashboard
+    app.MapRazorComponents<ArbitrageBot.Components.App>()
+        .AddInteractiveServerRenderMode();
 
     await app.RunAsync();
 }
