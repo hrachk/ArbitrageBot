@@ -69,6 +69,127 @@ AB.pages.market = {
     AB.$('m_last').style.color = 'var(--text)';
   },
 
+
+  paintOverlay(data) {
+    const canvas = AB.$('m_overlay');
+    if (!canvas || !this.selected) return;
+    if (!this.overlayHist) this.overlayHist = {};
+    if (!this.overlayColors) this.overlayColors = ['#2dd4bf', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#34d399'];
+    if (!this.overlayMaxPts) this.overlayMaxPts = 180;
+
+    const books = (data.bookTickers || {})[this.selected] || {};
+    const venues = Object.keys(books);
+    const now = Date.now();
+
+    venues.forEach(ex => {
+      const b = books[ex];
+      if (!b) return;
+      const bid = Number(b.bestBid ?? b.BestBid ?? 0);
+      const ask = Number(b.bestAsk ?? b.BestAsk ?? 0);
+      if (bid <= 0 || ask <= 0) return;
+      const mid = (bid + ask) / 2;
+      if (!this.overlayHist[ex]) this.overlayHist[ex] = [];
+      const arr = this.overlayHist[ex];
+      const last = arr[arr.length - 1];
+      if (!last || now - last.t >= 400) {
+        arr.push({ t: now, mid });
+        while (arr.length > this.overlayMaxPts) arr.shift();
+      } else {
+        last.mid = mid;
+        last.t = now;
+      }
+    });
+
+    const mids = venues.map(ex => {
+      const b = books[ex];
+      if (!b) return null;
+      const bid = Number(b.bestBid ?? b.BestBid ?? 0);
+      const ask = Number(b.bestAsk ?? b.BestAsk ?? 0);
+      if (bid <= 0 || ask <= 0) return null;
+      return { ex, mid: (bid + ask) / 2 };
+    }).filter(Boolean);
+
+    const divEl = AB.$('m_overlayDiv');
+    const legEl = AB.$('m_overlayLegend');
+    if (mids.length >= 2) {
+      const sorted = [...mids].sort((a, b) => a.mid - b.mid);
+      const lo = sorted[0], hi = sorted[sorted.length - 1];
+      const pct = lo.mid > 0 ? ((hi.mid - lo.mid) / lo.mid) * 100 : 0;
+      if (divEl) {
+        divEl.textContent = 'Δ ' + pct.toFixed(3) + '%  ·  cheap ' + lo.ex + ' → rich ' + hi.ex;
+        divEl.style.color = pct >= 0.08 ? '#34d399' : '#94a3b8';
+      }
+    } else if (divEl) {
+      divEl.textContent = mids.length ? 'need ≥2 venues' : 'no mids';
+      divEl.style.color = '#94a3b8';
+    }
+
+    if (legEl) {
+      legEl.innerHTML = venues.map((ex, i) => {
+        const c = this.overlayColors[i % this.overlayColors.length];
+        const m = mids.find(x => x.ex === ex);
+        const px = m ? AB.fmt(m.mid, m.mid < 1 ? 6 : 4) : '—';
+        return '<span style="margin-right:10px"><span style="color:' + c + '">●</span> ' +
+          ex + ' <span class="mono">' + px + '</span></span>';
+      }).join('');
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 900;
+    const h = 220;
+    if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    let minP = Infinity, maxP = -Infinity, minT = Infinity, maxT = -Infinity;
+    venues.forEach(ex => {
+      (this.overlayHist[ex] || []).forEach(p => {
+        minP = Math.min(minP, p.mid); maxP = Math.max(maxP, p.mid);
+        minT = Math.min(minT, p.t); maxT = Math.max(maxT, p.t);
+      });
+    });
+    if (!isFinite(minP)) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('Waiting for live mids on ≥2 exchanges…', 16, h / 2);
+      return;
+    }
+    if (maxP - minP < 1e-12) { minP *= 0.9999; maxP *= 1.0001; }
+    const pad = (maxP - minP) * 0.1 || maxP * 0.0001;
+    minP -= pad; maxP += pad;
+    if (maxT <= minT) maxT = minT + 1;
+
+    ctx.strokeStyle = 'rgba(148,163,184,0.08)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = (h * i) / 4;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    venues.forEach((ex, i) => {
+      const arr = this.overlayHist[ex] || [];
+      if (arr.length < 2) return;
+      ctx.strokeStyle = this.overlayColors[i % this.overlayColors.length];
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      arr.forEach((pt, idx) => {
+        const x = ((pt.t - minT) / (maxT - minT)) * (w - 16) + 8;
+        const y = h - 8 - ((pt.mid - minP) / (maxP - minP)) * (h - 16);
+        if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    });
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px monospace';
+    ctx.fillText(AB.fmt(maxP, maxP < 1 ? 6 : 4), 6, 12);
+    ctx.fillText(AB.fmt(minP, minP < 1 ? 6 : 4), 6, h - 6);
+  },
+
   loadChart(symbol) {
     if (!symbol) return;
     if (symbol !== this._overlaySym) {
