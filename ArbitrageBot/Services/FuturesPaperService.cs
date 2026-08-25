@@ -195,10 +195,21 @@ public class FuturesPaperService : IFuturesPaperService
         {
             var pos = _positions.FirstOrDefault(p => p.TradeId == tradeId);
             if (pos == null) return null;
+            // Always allow close: if books gone (symbol left universe), use entry as marks
             var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
-            if (marks == null) return FailClose("no marks");
-            var (longBid, shortAsk) = marks.Value;
-            if (longBid <= 0 || shortAsk <= 0) return FailClose("bad marks");
+            decimal longBid, shortAsk;
+            if (marks == null || marks.Value.longBid <= 0 || marks.Value.shortAsk <= 0)
+            {
+                longBid = pos.LongEntry > 0 ? pos.LongEntry : 1m;
+                shortAsk = pos.ShortEntry > 0 ? pos.ShortEntry : 1m;
+                _logger.LogWarning(
+                    "ForceClose {Sym} without live marks — using entry L={L} S={S}",
+                    pos.Symbol, longBid, shortAsk);
+            }
+            else
+            {
+                (longBid, shortAsk) = marks.Value;
+            }
 
             var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
             var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
@@ -364,6 +375,42 @@ public class FuturesPaperService : IFuturesPaperService
     public IReadOnlyList<FuturesPaperTrade> GetTrades(int take = 40)
     {
         lock (_lock) return _trades.Take(take).ToList();
+    }
+
+
+    /// <summary>Close positions whose symbol left the active universe.</summary>
+    public int PruneOrphanPositions(IReadOnlyCollection<string> activeSymbols)
+    {
+        var set = new HashSet<string>(activeSymbols ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        List<Guid> ids;
+        lock (_lock)
+        {
+            ids = set.Count == 0
+                ? []
+                : _positions.Where(p => !set.Contains(p.Symbol)).Select(p => p.TradeId).ToList();
+        }
+        var n = 0;
+        foreach (var id in ids)
+        {
+            if (ForceClose(id, (_, __, ___) => null) != null)
+                n++;
+        }
+        if (n > 0)
+            _logger.LogInformation("Pruned {N} orphan paper positions (not in current universe)", n);
+        return n;
+    }
+
+    /// <summary>Force-close every open paper hedge (UI cleanup).</summary>
+    public int ForceCloseAll()
+    {
+        var ids = GetOpenPositions().Select(p => p.TradeId).ToList();
+        var n = 0;
+        foreach (var id in ids)
+        {
+            if (ForceClose(id, (_, __, ___) => null) != null)
+                n++;
+        }
+        return n;
     }
 
     public IReadOnlyList<FuturesPaperPosition> GetOpenPositions()

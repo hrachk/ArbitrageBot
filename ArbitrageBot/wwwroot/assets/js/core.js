@@ -116,6 +116,16 @@ AB.closePaper = async (tradeId) => {
   }
 };
 
+AB.closeAllPaper = async () => {
+  if (!confirm('Close ALL open paper positions?')) return;
+  try {
+    await AB.api.post('/api/paper/close-all');
+    await AB.refreshSnapshot();
+  } catch (e) {
+    alert('Close all failed: ' + e.message);
+  }
+};
+
 AB.posCardHtml = (p) => {
   if (!p) return '';
   const u = p.unrealizedPnlUsd != null ? p.unrealizedPnlUsd : p.unrealizedPnl;

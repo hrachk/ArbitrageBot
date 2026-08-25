@@ -491,6 +491,15 @@ public class ArbitrageWorker : BackgroundService
 
         _markets.SetSymbols(symbols, discovered);
         _state.Symbols = _markets.Symbols;
+        try
+        {
+            if (_options.IsFuturesCross)
+                _futPaper.PruneOrphanPositions(_markets.Symbols);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Orphan prune failed");
+        }
         _state.DiscoveredSymbols = discovered.Select(d => (object)new
         {
             d.Symbol,

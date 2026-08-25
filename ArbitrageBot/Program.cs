@@ -188,10 +188,23 @@ try
             var books = market.GetBookTickers(symbol);
             if (!books.TryGetValue(longEx, out var l) || !books.TryGetValue(shortEx, out var s))
                 return null;
+            if (l.BestBid <= 0 || s.BestAsk <= 0) return null;
             return (l.BestBid, s.BestAsk);
         });
         if (result == null) return Results.NotFound(new { error = "position not found" });
         return Results.Ok(result);
+    });
+
+    app.MapPost("/api/paper/close-all", (IFuturesPaperService paper) =>
+    {
+        var n = paper.ForceCloseAll();
+        return Results.Ok(new { closed = n });
+    });
+
+    app.MapPost("/api/paper/prune-orphans", (IFuturesPaperService paper, ActiveMarketContext markets) =>
+    {
+        var n = paper.PruneOrphanPositions(markets.Symbols);
+        return Results.Ok(new { pruned = n, activeSymbols = markets.Symbols });
     });
 
     app.MapDelete("/api/settings/exchanges/{name}", async (string name, ISettingsStore store, CancellationToken ct) =>
