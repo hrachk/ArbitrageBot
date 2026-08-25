@@ -137,7 +137,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         int topN,
         int minVenues = 2)
     {
-        var mid = (double)((minVol + maxVol) / 2m);
+        var midVolLog = (double)((minVol + maxVol) / 2m);
         var scored = new List<(DiscoveredSymbol d, double score)>();
 
         foreach (var (symbol, byEx) in volumes)
@@ -150,7 +150,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
 
             // Score: venue count strongly, proximity to mid-band volume, log volume
             var venueScore = byEx.Count * 30.0;
-            var volDist = Math.Abs(Math.Log10((double)median + 1) - Math.Log10(mid + 1));
+            var volDist = Math.Abs(Math.Log10((double)median + 1) - Math.Log10(midVolLog + 1));
             var bandScore = Math.Max(0, 25.0 - volDist * 12.0);
             var logVol = Math.Log10((double)median + 1);
             var score = venueScore + bandScore + logVol;
@@ -201,9 +201,9 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         var midPool = byVol.Where(d => !used.Contains(d.Symbol)).ToList();
         // mid: around median volume
         midPool = midPool.OrderBy(d => Math.Abs(Math.Log10((double)d.MedianQuoteVolume + 1) - Math.Log10((double)((minVol + maxVol) / 2m) + 1))).ToList();
-        var mid = TakeSlice(midPool, nMid);
+        var midSlice = TakeSlice(midPool, nMid);
 
-        var result = high.Concat(mid).Concat(low)
+        var result = high.Concat(midSlice).Concat(low)
             .GroupBy(d => d.Symbol, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
