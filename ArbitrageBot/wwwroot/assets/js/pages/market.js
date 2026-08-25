@@ -3,6 +3,9 @@ AB.pages.market = {
   depthFp: '',
   lastDepthPaint: 0,
   chartKey: '',
+  overlayHist: {},
+  overlayMaxPts: 180,
+  overlayColors: ['#2dd4bf', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#34d399'],
 
   render(data) {
     if (!data) return;
@@ -50,6 +53,7 @@ AB.pages.market = {
     this.renderDepth(data);
     this.renderTape(data);
     this.syncLastPrice(data);
+    this.paintOverlay(data);
 
     if (this.selected) this.loadChart(this.selected);
   },
@@ -67,6 +71,10 @@ AB.pages.market = {
 
   loadChart(symbol) {
     if (!symbol) return;
+    if (symbol !== this._overlaySym) {
+      this._overlaySym = symbol;
+      this.overlayHist = {};
+    }
     const interval = AB.$('m_interval')?.value || '15';
     const key = symbol + '|' + interval;
     if (key === this.chartKey) return;

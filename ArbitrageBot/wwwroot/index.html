@@ -138,6 +138,20 @@
           </div>
         </div>
         <div class="panel" style="margin-top:12px">
+          <div class="panel-hd">
+            <h2 class="panel-title">Cross-exchange overlay</h2>
+            <span class="panel-sub" id="m_overlayHint">live mid · same symbol</span>
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <div id="m_overlayLegend" class="muted" style="font-size:12px"></div>
+            <div id="m_overlayDiv" class="mono" style="font-weight:700;font-size:14px;margin-left:auto"></div>
+          </div>
+          <div class="chart-box" style="height:220px;position:relative;background:#0a0e14;border-radius:8px;border:1px solid rgba(148,163,184,0.12)">
+            <canvas id="m_overlay" width="900" height="220" style="width:100%;height:220px;display:block"></canvas>
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:6px">Lines = mid price per venue. Gap between top &amp; bottom line ≈ live divergence (arb width).</div>
+        </div>
+        <div class="panel" style="margin-top:12px">
           <div class="panel-hd"><h2 class="panel-title">Cross-exchange tape</h2></div>
           <div class="scroll" style="max-height:200px">
             <table class="data">
