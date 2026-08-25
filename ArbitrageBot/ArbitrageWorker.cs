@@ -25,6 +25,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ILiveExecutionService _liveExec;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
+    private DateTime _lastHeartbeatLogUtc = DateTime.MinValue;
 
     public ArbitrageWorker(
         IMarketDataService spotMarket,
@@ -103,6 +104,29 @@ public class ArbitrageWorker : BackgroundService
         {
             try
             {
+                // Visible heartbeat — proves engine is alive
+                if ((DateTime.UtcNow - _lastHeartbeatLogUtc).TotalSeconds >= 30)
+                {
+                    _lastHeartbeatLogUtc = DateTime.UtcNow;
+                    var opens = _options.IsFuturesCross ? _futPaper.OpenCount : 0;
+                    decimal? bestNet = null;
+                    var books = 0;
+                    if (_futMarket is FuturesMarketService fms)
+                    {
+                        bestNet = fms.LastScanBestNetOpen;
+                        books = fms.LastScanBooksReady;
+                    }
+                    _logger.LogInformation(
+                        "Arb heartbeat | mode={Mode} symbols={Sym} opens={Op}/{Max} bestNet={Net}% books={Books} discovery={Src}",
+                        _state.Mode,
+                        _markets.Symbols.Count,
+                        opens,
+                        _runtime.Snapshot.FuturesMaxOpenPositions,
+                        bestNet?.ToString("F4") ?? "n/a",
+                        books,
+                        _state.DiscoverySource ?? "?");
+                }
+
                 // Periodic symbol universe refresh (config DynamicRefreshMinutes)
                 var refreshMin = _options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0;
                 if (_options.DynamicSymbols && refreshMin > 0 &&

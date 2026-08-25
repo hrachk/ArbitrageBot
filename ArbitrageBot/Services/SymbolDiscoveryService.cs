@@ -149,15 +149,18 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             if (median < minVol || median > maxVol) continue;
 
             // Score: venue count strongly, proximity to mid-band volume, log volume
-            var venueScore = byEx.Count * 30.0;
+            var venueScore = byEx.Count * 35.0; // more venues = better arb routes
             var volDist = Math.Abs(Math.Log10((double)median + 1) - Math.Log10(midVolLog + 1));
-            var bandScore = Math.Max(0, 25.0 - volDist * 12.0);
+            var bandScore = Math.Max(0, 20.0 - volDist * 10.0);
             var logVol = Math.Log10((double)median + 1);
-            var score = venueScore + bandScore + logVol;
+            // Prefer mid/thin over mega-liquid (spreads die on majors)
+            var thinBoost = median < 20_000_000m ? 12.0 : (median < 80_000_000m ? 6.0 : 0.0);
+            var score = venueScore + bandScore + logVol * 0.5 + thinBoost;
 
-            // Slight boost for known movers (meme/L2) — still must pass volume filters
             var baseAsset = BaseOf(symbol);
-            if (IsMoverish(baseAsset)) score += 5;
+            if (IsMoverish(baseAsset)) score += 8;
+            // metals / tradfi perps often fragmented across venues
+            if (baseAsset is "XAU" or "XAG" or "PAXG") score += 10;
 
             scored.Add((new DiscoveredSymbol
             {
@@ -221,7 +224,10 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
 
     private static bool IsMoverish(string baseAsset) =>
         baseAsset is "DOGE" or "WIF" or "PEPE" or "1000PEPE" or "1000BONK" or "WLD" or "ENA"
-            or "ARB" or "OP" or "SUI" or "SEI" or "TIA" or "INJ" or "JUP" or "STRK";
+            or "ARB" or "OP" or "SUI" or "SEI" or "TIA" or "INJ" or "JUP" or "STRK"
+            or "ORDI" or "FET" or "RENDER" or "W" or "AAVE" or "MKR" or "CRV"
+            or "XAU" or "XAG" or "PAXG" or "SOLV" or "BOME" or "NOT" or "TRB"
+            or "BLUR" or "IMX" or "ZK" or "MANTA" or "DYM" or "ALT";
 
     private async Task MergeHttpBinanceAsync(
         Dictionary<string, Dictionary<string, decimal>> volumes,
