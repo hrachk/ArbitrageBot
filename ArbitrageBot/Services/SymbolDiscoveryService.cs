@@ -170,11 +170,53 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             }, score));
         }
 
-        return scored
-            .OrderByDescending(x => x.score)
-            .Select(x => x.d)
-            .Take(topN)
+        // Stratified pick: high / mid / low volume within band so list is not always the same majors-mid
+        var ordered = scored.OrderByDescending(x => x.score).Select(x => x.d).ToList();
+        if (ordered.Count <= topN)
+            return ordered;
+
+        var byVol = ordered.OrderByDescending(d => d.MedianQuoteVolume).ToList();
+        var nHigh = Math.Max(1, topN / 3);
+        var nLow = Math.Max(1, topN / 3);
+        var nMid = topN - nHigh - nLow;
+
+        // Hourly salt so refresh can rotate borderline names
+        var salt = (int)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute / 10); // changes every 10 min
+        var rng = new Random(salt ^ ordered.Count * 397);
+
+        List<DiscoveredSymbol> TakeSlice(IEnumerable<DiscoveredSymbol> src, int n)
+        {
+            var arr = src.ToList();
+            if (arr.Count <= n) return arr;
+            // shuffle top candidates in slice then take n
+            return arr.OrderBy(_ => rng.Next()).Take(Math.Min(n * 2, arr.Count))
+                .OrderByDescending(d => d.MedianQuoteVolume)
+                .Take(n)
+                .ToList();
+        }
+
+        var high = TakeSlice(byVol.Take(Math.Max(nHigh * 3, nHigh)), nHigh);
+        var low = TakeSlice(byVol.Skip(Math.Max(0, byVol.Count - nLow * 4)), nLow);
+        var used = new HashSet<string>(high.Concat(low).Select(d => d.Symbol), StringComparer.OrdinalIgnoreCase);
+        var midPool = byVol.Where(d => !used.Contains(d.Symbol)).ToList();
+        // mid: around median volume
+        midPool = midPool.OrderBy(d => Math.Abs(Math.Log10((double)d.MedianQuoteVolume + 1) - Math.Log10((double)((minVol + maxVol) / 2m) + 1))).ToList();
+        var mid = TakeSlice(midPool, nMid);
+
+        var result = high.Concat(mid).Concat(low)
+            .GroupBy(d => d.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
             .ToList();
+
+        // fill remainder from score order
+        foreach (var d in ordered)
+        {
+            if (result.Count >= topN) break;
+            if (result.All(x => !x.Symbol.Equals(d.Symbol, StringComparison.OrdinalIgnoreCase)))
+                result.Add(d);
+        }
+
+        return result.Take(topN).ToList();
     }
 
     private static bool IsMoverish(string baseAsset) =>
@@ -451,7 +493,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     private DiscoveryResult RotatingFallback(string reason, int topN)
     {
         // Rotate by UTC day-hour so list is not frozen forever when REST is blocked
-        var seed = (int)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerHour);
+        var seed = (int)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute / 10);
         var rng = new Random(seed);
         var pool = ArbFriendlyPool.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         // Prefer config symbols first if present
@@ -479,7 +521,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         {
             Symbols = list,
             Source = "rotated-curated",
-            Message = reason + " | rotates hourly"
+            Message = reason + " | rotates ~10m"
         };
     }
 
