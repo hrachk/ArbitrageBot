@@ -142,6 +142,91 @@ AB.pages.dashboard = {
           ? positions.map(function (p) { return AB.posCardHtml(p); }).join('')
           : '<div class="empty">No open hedges</div>';
       }
+    
+      // Live spread bars
+      const bars = document.getElementById('d_spreadBars');
+      if (bars) {
+        const list = opps.slice(0, 8);
+        if (!list.length) {
+          bars.innerHTML = '<div class="empty">No signals ≥ threshold — watch best net in banner</div>';
+        } else {
+          const maxN = Math.max(...list.map(o => Math.abs(Number(o.netSpreadPercent || o.netProfitPercent || 0))), 0.01);
+          bars.innerHTML = list.map(o => {
+            const n = Number(o.netSpreadPercent != null ? o.netSpreadPercent : o.netProfitPercent) || 0;
+            const w = Math.min(100, (Math.abs(n) / maxN) * 100);
+            const col = n >= 0 ? '#34d399' : '#f87171';
+            const route = (o.longExchange || o.buyExchange || '?') + '→' + (o.shortExchange || o.sellExchange || '?');
+            return '<div style="display:grid;grid-template-columns:90px 1fr 70px;gap:8px;align-items:center;margin:6px 0">' +
+              '<span class="mono" style="color:var(--blue)">' + (o.symbol || '') + '</span>' +
+              '<div style="background:rgba(148,163,184,0.08);border-radius:4px;height:10px;overflow:hidden">' +
+              '<div style="width:' + w + '%;height:100%;background:' + col + ';border-radius:4px"></div></div>' +
+              '<span class="mono" style="color:' + col + ';text-align:right">' + (n >= 0 ? '+' : '') + n.toFixed(3) + '%</span>' +
+              '<span class="muted" style="grid-column:1/-1;font-size:11px">' + route +
+              (o.fullyFilled === false ? ' · partial fill' : ' · full') + '</span></div>';
+          }).join('');
+        }
+      }
+
+      // Venue mids for top opportunity or first symbol
+      const vm = document.getElementById('d_venueMids');
+      const mini = document.getElementById('d_overlayMini');
+      const focusSym = (opps[0] && opps[0].symbol) || (symbols[0]) || '';
+      const bt = (data.bookTickers || {})[focusSym] || {};
+      const venues = Object.keys(bt);
+      if (vm) {
+        if (!venues.length) vm.textContent = focusSym ? (focusSym + ': no quotes yet') : '—';
+        else {
+          const rows = venues.map(ex => {
+            const b = bt[ex];
+            const mid = (Number(b.bestBid) + Number(b.bestAsk)) / 2;
+            return ex + ' ' + AB.fmt(mid, mid < 1 ? 6 : 4);
+          });
+          let delta = '';
+          if (venues.length >= 2) {
+            const mids = venues.map(ex => (Number(bt[ex].bestBid) + Number(bt[ex].bestAsk)) / 2).filter(x => x > 0);
+            const lo = Math.min(...mids), hi = Math.max(...mids);
+            delta = ' · Δ ' + (((hi - lo) / lo) * 100).toFixed(3) + '%';
+          }
+          vm.innerHTML = '<b>' + focusSym + '</b> ' + rows.join(' · ') + delta;
+        }
+      }
+      if (mini && venues.length) {
+        const dpr = window.devicePixelRatio || 1;
+        const w = mini.clientWidth || 800, h = 120;
+        mini.width = Math.floor(w * dpr); mini.height = Math.floor(h * dpr);
+        const ctx = mini.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = '#0a0e14'; ctx.fillRect(0, 0, w, h);
+        const mids = venues.map((ex, i) => {
+          const b = bt[ex];
+          return { ex, mid: (Number(b.bestBid) + Number(b.bestAsk)) / 2, i };
+        }).filter(x => x.mid > 0);
+        if (mids.length) {
+          const lo = Math.min(...mids.map(x => x.mid));
+          const hi = Math.max(...mids.map(x => x.mid));
+          const colors = ['#2dd4bf', '#60a5fa', '#f472b6', '#fbbf24'];
+          mids.forEach((m, i) => {
+            const x = ((i + 0.5) / mids.length) * w;
+            const y = h - 20 - ((m.mid - lo) / ((hi - lo) || 1)) * (h - 40);
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px monospace';
+            ctx.fillText(m.ex, x - 16, h - 6);
+            ctx.fillText(AB.fmt(m.mid, m.mid < 1 ? 5 : 3), x - 18, y - 10);
+          });
+          // line connecting
+          ctx.strokeStyle = 'rgba(45,212,191,0.35)';
+          ctx.beginPath();
+          mids.forEach((m, i) => {
+            const x = ((i + 0.5) / mids.length) * w;
+            const y = h - 20 - ((m.mid - lo) / ((hi - lo) || 1)) * (h - 40);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+      }
+
     } catch (e) {
       console.error('dashboard render', e);
       const b = $('d_banner');

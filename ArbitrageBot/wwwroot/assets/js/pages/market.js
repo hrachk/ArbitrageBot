@@ -72,18 +72,41 @@ AB.pages.market = {
 
   paintOverlay(data) {
     const canvas = AB.$('m_overlay');
-    if (!canvas || !this.selected) return;
+    if (!canvas) return;
+    const sym = this.selected || (data.symbols && data.symbols[0]) || '';
+    if (!sym) {
+      this._overlayMsg(canvas, 'Select a symbol');
+      return;
+    }
     if (!this.overlayHist) this.overlayHist = {};
     if (!this.overlayColors) this.overlayColors = ['#2dd4bf', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#34d399'];
-    if (!this.overlayMaxPts) this.overlayMaxPts = 180;
+    if (!this.overlayMaxPts) this.overlayMaxPts = 200;
 
-    const books = (data.bookTickers || {})[this.selected] || {};
+    // Resolve books: bookTickers[sym] or case-insensitive key
+    let books = (data.bookTickers || {})[sym] || {};
+    if (!Object.keys(books).length && data.bookTickers) {
+      const key = Object.keys(data.bookTickers).find(k => k.toUpperCase() === sym.toUpperCase());
+      if (key) books = data.bookTickers[key] || {};
+    }
+    // Fallback: orderBookDepth top of book
+    if (!Object.keys(books).length && data.orderBookDepth) {
+      const depth = data.orderBookDepth[sym] || data.orderBookDepth[Object.keys(data.orderBookDepth).find(k => k.toUpperCase() === sym.toUpperCase()) || ''] || {};
+      const synth = {};
+      Object.keys(depth).forEach(ex => {
+        const d = depth[ex] || {};
+        const bids = d.bids || d.Bids || [];
+        const asks = d.asks || d.Asks || [];
+        const bid = Number((bids[0] && (bids[0][0] ?? bids[0].price)) || 0);
+        const ask = Number((asks[0] && (asks[0][0] ?? asks[0].price)) || 0);
+        if (bid > 0 && ask > 0) synth[ex] = { bestBid: bid, bestAsk: ask };
+      });
+      books = synth;
+    }
+
     const venues = Object.keys(books);
     const now = Date.now();
-
     venues.forEach(ex => {
-      const b = books[ex];
-      if (!b) return;
+      const b = books[ex] || {};
       const bid = Number(b.bestBid ?? b.BestBid ?? 0);
       const ask = Number(b.bestAsk ?? b.BestAsk ?? 0);
       if (bid <= 0 || ask <= 0) return;
@@ -91,7 +114,7 @@ AB.pages.market = {
       if (!this.overlayHist[ex]) this.overlayHist[ex] = [];
       const arr = this.overlayHist[ex];
       const last = arr[arr.length - 1];
-      if (!last || now - last.t >= 400) {
+      if (!last || now - last.t >= 300) {
         arr.push({ t: now, mid });
         while (arr.length > this.overlayMaxPts) arr.shift();
       } else {
@@ -101,41 +124,53 @@ AB.pages.market = {
     });
 
     const mids = venues.map(ex => {
-      const b = books[ex];
-      if (!b) return null;
+      const b = books[ex] || {};
       const bid = Number(b.bestBid ?? b.BestBid ?? 0);
       const ask = Number(b.bestAsk ?? b.BestAsk ?? 0);
       if (bid <= 0 || ask <= 0) return null;
-      return { ex, mid: (bid + ask) / 2 };
+      return { ex, mid: (bid + ask) / 2, bid, ask };
     }).filter(Boolean);
 
     const divEl = AB.$('m_overlayDiv');
     const legEl = AB.$('m_overlayLegend');
+    const hintEl = AB.$('m_overlayHint');
+
+    // Spread bar visualization in legend area
     if (mids.length >= 2) {
       const sorted = [...mids].sort((a, b) => a.mid - b.mid);
       const lo = sorted[0], hi = sorted[sorted.length - 1];
       const pct = lo.mid > 0 ? ((hi.mid - lo.mid) / lo.mid) * 100 : 0;
       if (divEl) {
-        divEl.textContent = 'Δ ' + pct.toFixed(3) + '%  ·  cheap ' + lo.ex + ' → rich ' + hi.ex;
-        divEl.style.color = pct >= 0.08 ? '#34d399' : '#94a3b8';
+        divEl.innerHTML = '<span style="color:' + (pct >= 0.08 ? '#34d399' : '#94a3b8') + '">Δ ' +
+          pct.toFixed(3) + '%</span> · LONG ' + lo.ex + ' / SHORT ' + hi.ex;
       }
-    } else if (divEl) {
-      divEl.textContent = mids.length ? 'need ≥2 venues' : 'no mids';
-      divEl.style.color = '#94a3b8';
+      if (hintEl) hintEl.textContent = sym + ' · live mid overlay · ' + mids.length + ' venues';
+    } else {
+      if (divEl) divEl.textContent = venues.length ? 'waiting mids…' : 'no book data for ' + sym;
+      if (hintEl) hintEl.textContent = 'live mid · need WS books';
     }
 
     if (legEl) {
-      legEl.innerHTML = venues.map((ex, i) => {
-        const c = this.overlayColors[i % this.overlayColors.length];
-        const m = mids.find(x => x.ex === ex);
-        const px = m ? AB.fmt(m.mid, m.mid < 1 ? 6 : 4) : '—';
-        return '<span style="margin-right:10px"><span style="color:' + c + '">●</span> ' +
-          ex + ' <span class="mono">' + px + '</span></span>';
-      }).join('');
+      if (!mids.length) {
+        legEl.innerHTML = '<span class="muted">No quotes — check streams / pick another symbol</span>';
+      } else {
+        const minM = Math.min(...mids.map(x => x.mid));
+        const maxM = Math.max(...mids.map(x => x.mid));
+        const range = maxM - minM || 1;
+        legEl.innerHTML = mids.map((m, i) => {
+          const c = this.overlayColors[i % this.overlayColors.length];
+          const bar = Math.max(4, ((m.mid - minM) / range) * 100);
+          return '<div style="display:inline-flex;align-items:center;gap:6px;margin:2px 12px 2px 0">' +
+            '<span style="color:' + c + '">●</span><span class="mono">' + m.ex + '</span>' +
+            '<span class="mono">' + AB.fmt(m.mid, m.mid < 1 ? 6 : 4) + '</span>' +
+            '<span style="display:inline-block;height:6px;width:' + bar + 'px;background:' + c +
+            ';border-radius:3px;opacity:0.85"></span></div>';
+        }).join('');
+      }
     }
 
     const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth || 900;
+    const w = Math.max(canvas.clientWidth || 900, 300);
     const h = 220;
     if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
       canvas.width = Math.floor(w * dpr);
@@ -144,36 +179,52 @@ AB.pages.market = {
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0a0e14';
+    ctx.fillRect(0, 0, w, h);
 
     let minP = Infinity, maxP = -Infinity, minT = Infinity, maxT = -Infinity;
+    let anyPts = 0;
     venues.forEach(ex => {
       (this.overlayHist[ex] || []).forEach(p => {
         minP = Math.min(minP, p.mid); maxP = Math.max(maxP, p.mid);
         minT = Math.min(minT, p.t); maxT = Math.max(maxT, p.t);
+        anyPts++;
       });
     });
-    if (!isFinite(minP)) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('Waiting for live mids on ≥2 exchanges…', 16, h / 2);
+
+    if (!isFinite(minP) || anyPts < 1) {
+      this._overlayMsg(canvas, 'Waiting for live mids… (books on this symbol?)', ctx, w, h);
       return;
     }
-    if (maxP - minP < 1e-12) { minP *= 0.9999; maxP *= 1.0001; }
-    const pad = (maxP - minP) * 0.1 || maxP * 0.0001;
+    if (maxP - minP < 1e-15) { minP *= 0.9999; maxP *= 1.0001; }
+    const pad = (maxP - minP) * 0.12 || maxP * 0.0001;
     minP -= pad; maxP += pad;
     if (maxT <= minT) maxT = minT + 1;
 
-    ctx.strokeStyle = 'rgba(148,163,184,0.08)';
+    // spread band between min/max series at each time — approximate with fill between extreme lines
+    ctx.strokeStyle = 'rgba(148,163,184,0.1)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const y = (h * i) / 4;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
 
+    // Draw divergence fill: at latest time, vertical band hint
+    if (mids.length >= 2) {
+      const lo = Math.min(...mids.map(x => x.mid));
+      const hi = Math.max(...mids.map(x => x.mid));
+      const y1 = h - 8 - ((hi - minP) / (maxP - minP)) * (h - 16);
+      const y2 = h - 8 - ((lo - minP) / (maxP - minP)) * (h - 16);
+      ctx.fillStyle = 'rgba(45,212,191,0.08)';
+      ctx.fillRect(w - 28, Math.min(y1, y2), 20, Math.abs(y2 - y1) || 2);
+    }
+
     venues.forEach((ex, i) => {
       const arr = this.overlayHist[ex] || [];
-      if (arr.length < 2) return;
-      ctx.strokeStyle = this.overlayColors[i % this.overlayColors.length];
+      if (!arr.length) return;
+      const c = this.overlayColors[i % this.overlayColors.length];
+      ctx.strokeStyle = c;
+      ctx.fillStyle = c;
       ctx.lineWidth = 2;
       ctx.beginPath();
       arr.forEach((pt, idx) => {
@@ -181,13 +232,39 @@ AB.pages.market = {
         const y = h - 8 - ((pt.mid - minP) / (maxP - minP)) * (h - 16);
         if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
-      ctx.stroke();
+      if (arr.length === 1) {
+        const pt = arr[0];
+        const x = ((pt.t - minT) / (maxT - minT)) * (w - 16) + 8;
+        const y = h - 8 - ((pt.mid - minP) / (maxP - minP)) * (h - 16);
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.stroke();
+      }
     });
 
     ctx.fillStyle = '#64748b';
     ctx.font = '10px monospace';
     ctx.fillText(AB.fmt(maxP, maxP < 1 ? 6 : 4), 6, 12);
     ctx.fillText(AB.fmt(minP, minP < 1 ? 6 : 4), 6, h - 6);
+  },
+
+  _overlayMsg(canvas, msg, ctx, w, h) {
+    if (!ctx) {
+      const dpr = window.devicePixelRatio || 1;
+      w = canvas.clientWidth || 900;
+      h = 220;
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    ctx.fillStyle = '#0a0e14';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#64748b';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(msg, 16, h / 2);
   },
 
   loadChart(symbol) {
