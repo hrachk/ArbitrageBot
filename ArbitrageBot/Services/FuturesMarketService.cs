@@ -87,13 +87,22 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 continue;
             }
 
+            // Only venues where discovery saw volume (avoids OKX 60018 on missing perps)
+            var venues = _markets.ExchangesFor(symbolStr);
+            if (venues.Count == 0) venues = _markets.Exchanges.ToList();
+
             foreach (var exchange in _markets.Exchanges)
             {
                 var key = $"{exchange}:{symbolStr}";
+                if (!venues.Any(v => v.Equals(exchange, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _status[key] = "skip-not-listed";
+                    continue;
+                }
+
                 try
                 {
                     var depth = _options.MaxDepthLevels > 0 ? _options.MaxDepthLevels : 20;
-                    // Try canonical name + common aliases (OKX vs Okx)
                     ISymbolOrderBook? book = null;
                     foreach (var name in ExchangeNameVariants(exchange))
                     {
@@ -116,20 +125,34 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (book == null)
                     {
                         _status[key] = "no-factory→ticker";
-                        _logger.LogWarning("No futures order-book factory for {Key}, using book-ticker", key);
                         await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct);
                         continue;
                     }
 
-                    book.OnStatusChange += (_, st) => _status[key] = st.ToString();
+                    book.OnStatusChange += (_, st) =>
+                    {
+                        var s = st.ToString();
+                        _status[key] = s;
+                        // Quiet missing-instrument spam after connect errors
+                        if (IsMissingInstrument(s))
+                            _status[key] = "skip-no-instrument";
+                    };
                     book.OnOrderBookUpdate += _ => UpdateFromBook(exchange, symbolStr, book);
                     book.OnBestOffersChanged += _ => UpdateFromBook(exchange, symbolStr, book);
 
                     var start = await book.StartAsync(ct);
                     if (!start.Success)
                     {
-                        _status[key] = $"failed:{start.Error?.Message}";
-                        _logger.LogWarning("Futures book {Key} failed: {E}", key, start.Error?.Message);
+                        var err = start.Error?.Message ?? "start failed";
+                        if (IsMissingInstrument(err))
+                        {
+                            _status[key] = "skip-no-instrument";
+                            _logger.LogDebug("Skip {Key}: instrument not on venue ({E})", key, err);
+                            try { await book.StopAsync(); } catch { /* ignore */ }
+                            continue; // do NOT ticker-subscribe — same 60018
+                        }
+                        _status[key] = "failed:" + err;
+                        _logger.LogWarning("Futures book {Key} failed: {E}", key, err);
                         await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct);
                         continue;
                     }
@@ -141,8 +164,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
+                    if (IsMissingInstrument(ex.Message))
+                    {
+                        _status[key] = "skip-no-instrument";
+                        _logger.LogDebug(ex, "Skip {Key}: no instrument", key);
+                        continue;
+                    }
                     _status[key] = $"error:{ex.Message}";
-                    _logger.LogError(ex, "Futures book {Key}", key);
+                    _logger.LogWarning(ex, "Futures book {Key}", key);
                     try { await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct); } catch { /* ignore */ }
                 }
             }
@@ -571,6 +600,19 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         {
             _fundingLock.Release();
         }
+    }
+
+    private static bool IsMissingInstrument(string? msg)
+    {
+        if (string.IsNullOrEmpty(msg)) return false;
+        return msg.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("60018", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Invalid symbol", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Unknown symbol", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("-1121", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("instrument_id", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Wrong URL or channel", StringComparison.OrdinalIgnoreCase);
     }
 
     private static SharedSymbol ParsePerp(string symbol)
