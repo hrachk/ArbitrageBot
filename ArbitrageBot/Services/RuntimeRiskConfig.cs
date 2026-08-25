@@ -38,6 +38,14 @@ public sealed class RuntimeRiskConfig
                 _opts.FuturesMaxOpenPositions = t.FuturesMaxOpenPositions;
             _opts.FuturesStopLossUsd = t.FuturesStopLossUsd;
             _opts.FuturesDailyLossLimitUsd = t.FuturesDailyLossLimitUsd;
+            // keep notional gate in sync with size from UI
+            if (t.QuoteSize > 0)
+            {
+                _opts.FuturesMaxNotionalUsd = t.QuoteSize;
+                _opts.LiveMaxNotionalUsd = t.QuoteSize;
+            }
+            if (t.FuturesMaxOpenPositions > 0)
+                _opts.LiveMaxOpenPositions = t.FuturesMaxOpenPositions;
         }
     }
 
