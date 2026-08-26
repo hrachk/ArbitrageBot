@@ -111,20 +111,26 @@ public class ArbitrageWorker : BackgroundService
                     var opens = _options.IsFuturesCross ? _futPaper.OpenCount : 0;
                     decimal? bestNet = null;
                     var books = 0;
-                    if (_futMarket is FuturesMarketService fms)
+                    var persistWait = 0;
+                    var pairs = 0;
+                    if (_futMarket is FuturesMarketService fmsHb)
                     {
-                        bestNet = fms.LastScanBestNetOpen;
-                        books = fms.LastScanBooksReady;
+                        bestNet = fmsHb.LastScanBestNetOpen;
+                        books = fmsHb.LastScanBooksReady;
+                        persistWait = fmsHb.LastScanPersistPending;
+                        pairs = fmsHb.LastScanPairsCompared;
                     }
                     _logger.LogInformation(
-                        "Arb heartbeat | mode={Mode} symbols={Sym} opens={Op}/{Max} bestNet={Net}% books={Books} discovery={Src}",
+                        "Arb heartbeat | mode={Mode} symbols={Sym} opens={Op}/{Max} bestNet={Net}% books={Books} discovery={Src} persistWait={Persist} pairs={Pairs}",
                         _state.Mode,
                         _markets.Symbols.Count,
                         opens,
                         _runtime.Snapshot.FuturesMaxOpenPositions,
                         bestNet?.ToString("F4") ?? "n/a",
                         books,
-                        _state.DiscoverySource ?? "?");
+                        _state.DiscoverySource ?? "?",
+                        persistWait,
+                        pairs);
                 }
 
                 // Periodic symbol universe refresh (config DynamicRefreshMinutes)

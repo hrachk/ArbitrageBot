@@ -96,6 +96,17 @@ public class ArbitrageOptions
     /// <summary>Exchanges allowed for live orders (empty = all configured).</summary>
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget"];
 
+    /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
+    public int MinSpreadPersistMs { get; set; } = 1500;
+    /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
+    public int MaxBookAgeMs { get; set; } = 1000;
+    /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
+    public int MaxLegsPerVenue { get; set; } = 3;
+    /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>
+    public decimal MaxWidthExpansionPercent { get; set; } = 0.25m;
+    /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
+    public bool RequireDepthFullFill { get; set; } = true;
+
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
 

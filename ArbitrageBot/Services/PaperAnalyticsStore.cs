@@ -245,9 +245,63 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 bestRtPctSeen = Math.Round(_bestRtSeen, 4),
                 skipReasons = _skipReasons.OrderByDescending(kv => kv.Value)
                     .Select(kv => new { reason = kv.Key, count = kv.Value }).ToList(),
+                quality = ComputeQualityUnlocked(),
                 dataDir = _dir,
                 note = "Persisted under data/paper/ (events-*.jsonl, daily-*.json, trades-ledger.json)"
             };
+        }
+    }
+
+
+    private object ComputeQualityUnlocked()
+    {
+        try
+        {
+            if (!File.Exists(LedgerPath))
+                return new { winRate = 0m, closed = 0, wins = 0, avgPnl = 0m, avgHoldSec = 0m };
+            using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return new { winRate = 0m, closed = 0, wins = 0, avgPnl = 0m, avgHoldSec = 0m };
+            int closed = 0, wins = 0;
+            decimal sumPnl = 0, sumHold = 0;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var status = el.TryGetProperty("status", out var st) ? st.GetString() ?? "" :
+                             el.TryGetProperty("Status", out var st2) ? st2.GetString() ?? "" : "";
+                var hasClosedAt = el.TryGetProperty("closedAt", out _) || el.TryGetProperty("ClosedAt", out _);
+                if (status.StartsWith("Open", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!status.Contains("Closed", StringComparison.OrdinalIgnoreCase) && !hasClosedAt)
+                    continue;
+                closed++;
+                decimal pnl = 0;
+                if (el.TryGetProperty("realizedPnlUsd", out var pr) && pr.TryGetDecimal(out var pd)) pnl = pd;
+                else if (el.TryGetProperty("RealizedPnlUsd", out var pr2) && pr2.TryGetDecimal(out var pd2)) pnl = pd2;
+                sumPnl += pnl;
+                if (pnl > 0) wins++;
+                DateTime? openAt = null, closeAt = null;
+                if (el.TryGetProperty("openedAt", out var oa) && oa.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(oa.GetString(), out var oad)) openAt = oad.ToUniversalTime();
+                if (el.TryGetProperty("OpenedAt", out var oa2) && oa2.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(oa2.GetString(), out var oad2)) openAt = oad2.ToUniversalTime();
+                if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(ca.GetString(), out var cad)) closeAt = cad.ToUniversalTime();
+                if (el.TryGetProperty("ClosedAt", out var ca2) && ca2.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(ca2.GetString(), out var cad2)) closeAt = cad2.ToUniversalTime();
+                if (openAt is not null && closeAt is not null)
+                    sumHold += (decimal)(closeAt.Value - openAt.Value).TotalSeconds;
+            }
+            return new
+            {
+                winRate = closed > 0 ? Math.Round(100m * wins / closed, 1) : 0m,
+                closed,
+                wins,
+                avgPnl = closed > 0 ? Math.Round(sumPnl / closed, 4) : 0m,
+                avgHoldSec = closed > 0 ? Math.Round(sumHold / closed, 1) : 0m
+            };
+        }
+        catch
+        {
+            return new { winRate = 0m, closed = 0, wins = 0, avgPnl = 0m, avgHoldSec = 0m };
         }
     }
 

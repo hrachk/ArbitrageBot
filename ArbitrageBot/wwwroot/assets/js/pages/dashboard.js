@@ -227,6 +227,40 @@ AB.pages.dashboard = {
         }
       }
 
+    
+      // Paper quality + skip taxonomy
+      const qel = document.getElementById('d_quality');
+      const sel = document.getElementById('d_skips');
+      const pa = data.paperAnalytics || data.PaperAnalytics || {};
+      const q = pa.quality || {};
+      if (qel) {
+        qel.innerHTML =
+          'Win rate <b>' + (q.winRate != null ? q.winRate : '—') + '%</b> · ' +
+          'closed ' + (q.closed != null ? q.closed : (pa.closes != null ? pa.closes : '—')) + ' · ' +
+          'avg PnL <b>' + AB.fmtUsd(q.avgPnl != null ? q.avgPnl : 0) + '</b> · ' +
+          'avg hold ' + (q.avgHoldSec != null ? Math.round(q.avgHoldSec) + 's' : '—') + '<br>' +
+          'scans ' + (pa.scans != null ? pa.scans : '—') +
+          ' · opens ' + (pa.opens != null ? pa.opens : '—') +
+          ' · skips ' + (pa.skips != null ? pa.skips : '—') +
+          ' · best RT seen ' + (pa.bestRtPctSeen != null ? AB.fmt(pa.bestRtPctSeen, 3) + '%' : '—');
+      }
+      if (sel) {
+        const reasons = pa.skipReasons || [];
+        if (!reasons.length) sel.innerHTML = '<span class="muted">No skip reasons yet</span>';
+        else {
+          const maxC = Math.max(...reasons.map(r => Number(r.count) || 0), 1);
+          sel.innerHTML = reasons.slice(0, 8).map(r => {
+            const c = Number(r.count) || 0;
+            const w = Math.min(100, (c / maxC) * 100);
+            return '<div style="display:grid;grid-template-columns:1fr 48px;gap:6px;align-items:center;margin:4px 0">' +
+              '<div><div class="mono" style="font-size:11px">' + (r.reason || '') + '</div>' +
+              '<div style="height:6px;background:rgba(148,163,184,0.1);border-radius:3px"><div style="width:' + w +
+              '%;height:100%;background:#fbbf24;border-radius:3px"></div></div></div>' +
+              '<span class="mono">' + c + '</span></div>';
+          }).join('');
+        }
+      }
+
     } catch (e) {
       console.error('dashboard render', e);
       const b = $('d_banner');

@@ -103,7 +103,14 @@ public sealed class RuntimeRiskConfig
         FuturesMaxMarginUsagePercent = o.FuturesMaxMarginUsagePercent,
         FuturesStopLossUsd = o.FuturesStopLossUsd,
         FuturesDailyLossLimitUsd = o.FuturesDailyLossLimitUsd,
-        FuturesMaxNotionalUsd = o.FuturesMaxNotionalUsd
+        FuturesMaxNotionalUsd = o.FuturesMaxNotionalUsd,
+        MinSpreadPersistMs = o.MinSpreadPersistMs,
+        MaxBookAgeMs = o.MaxBookAgeMs,
+        MaxLegsPerVenue = o.MaxLegsPerVenue,
+        MaxWidthExpansionPercent = o.MaxWidthExpansionPercent,
+        RequireDepthFullFill = o.RequireDepthFullFill,
+        LiveMaxOpenPositions = o.LiveMaxOpenPositions,
+        LiveMaxNotionalUsd = o.LiveMaxNotionalUsd
     };
 }
 

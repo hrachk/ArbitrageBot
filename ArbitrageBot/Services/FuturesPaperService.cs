@@ -103,6 +103,19 @@ public class FuturesPaperService : IFuturesPaperService
             if (_positions.Any(p => p.Symbol.Equals(opp.Symbol, StringComparison.OrdinalIgnoreCase)))
                 return Fail(opp, "Already open on symbol");
 
+            // Cap concurrent legs per venue (inventory / margin concentration)
+            var maxLegs = R.MaxLegsPerVenue > 0 ? R.MaxLegsPerVenue : 3;
+            var longLegs = _positions.Count(p =>
+                p.LongExchange.Equals(opp.LongExchange, StringComparison.OrdinalIgnoreCase) ||
+                p.ShortExchange.Equals(opp.LongExchange, StringComparison.OrdinalIgnoreCase));
+            var shortLegs = _positions.Count(p =>
+                p.LongExchange.Equals(opp.ShortExchange, StringComparison.OrdinalIgnoreCase) ||
+                p.ShortExchange.Equals(opp.ShortExchange, StringComparison.OrdinalIgnoreCase));
+            if (longLegs >= maxLegs)
+                return Fail(opp, $"Max legs on venue {opp.LongExchange} ({maxLegs})");
+            if (shortLegs >= maxLegs)
+                return Fail(opp, $"Max legs on venue {opp.ShortExchange} ({maxLegs})");
+
             // Day rollover for daily loss limit
             if (DateTime.UtcNow.Date != _dayUtc)
             {

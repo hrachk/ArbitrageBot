@@ -32,6 +32,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public decimal? LastScanBestNetOpen { get; private set; }
     public int LastScanBooksReady { get; private set; }
     public int LastScanPairsCompared { get; private set; }
+    public int LastScanStaleSkipped { get; private set; }
+    public int LastScanPersistPending { get; private set; }
+    private readonly ConcurrentDictionary<string, DateTime> _edgeFirstSeen = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
     private DateTime _lastFundingRefreshUtc = DateTime.MinValue;
@@ -299,11 +302,18 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public Dictionary<string, BookTicker> GetBookTickers(string symbol)
     {
         var result = new Dictionary<string, BookTicker>(StringComparer.OrdinalIgnoreCase);
+        var maxAge = _runtime.Snapshot.MaxBookAgeMs;
+        var now = DateTime.UtcNow;
         foreach (var ex in _markets.Exchanges)
         {
             var key = $"{ex}:{symbol}";
-            if (_tickers.TryGetValue(key, out var t))
-                result[ex] = t;
+            if (!_tickers.TryGetValue(key, out var t)) continue;
+            if (maxAge > 0 && t.Timestamp != default)
+            {
+                var ageMs = (now - t.Timestamp).TotalMilliseconds;
+                if (ageMs > maxAge) continue; // stale
+            }
+            result[ex] = t;
         }
         return result;
     }
@@ -405,6 +415,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         decimal? bestGross = null, bestNet = null;
         var booksReady = 0;
         var pairsCompared = 0;
+        LastScanPersistPending = 0;
+        LastScanStaleSkipped = 0;
         foreach (var s0 in _markets.Symbols)
             booksReady += GetBookTickers(s0).Count;
 
@@ -464,7 +476,27 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         - shortVwap * qty * (shortFee / 100m) * 2m
                         + notional * fundPct / 100m;
 
-                    if (thresholdMetric < _runtime.Snapshot.MinProfitPercent) continue;
+                    if (thresholdMetric < _runtime.Snapshot.MinProfitPercent)
+                    {
+                        _edgeFirstSeen.TryRemove($"{symbol}|{longEx}|{shortEx}", out _);
+                        continue;
+                    }
+
+                    // Persistence: edge must hold MinSpreadPersistMs (anti-flash spike)
+                    var edgeKey = $"{symbol}|{longEx}|{shortEx}";
+                    var persistMs = _runtime.Snapshot.MinSpreadPersistMs;
+                    var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
+                    var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
+                    if (persistMs > 0 && heldMs < persistMs)
+                    {
+                        LastScanPersistPending++;
+                        continue; // still maturing — not yet a tradeable candidate
+                    }
+
+                    // Full-fill gate at scan level when required
+                    if ((_runtime.Snapshot.RequireDepthFullFill || _runtime.Snapshot.PaperRequireFullFill)
+                        && !(buyFill.FullyFilled && sellFill.FullyFilled))
+                        continue;
 
                     list.Add(new FuturesOpportunity
                     {
@@ -492,6 +524,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     });
                 }
             }
+        }
+
+        // Drop persistence keys that are no longer above threshold this cycle
+        var alive = new HashSet<string>(list.Select(o => $"{o.Symbol}|{o.LongExchange}|{o.ShortExchange}"), StringComparer.OrdinalIgnoreCase);
+        foreach (var k in _edgeFirstSeen.Keys)
+        {
+            // keep pending keys (not yet in list) only if recently touched — simple: remove if not alive and age > 2*persist
+            if (alive.Contains(k)) continue;
+            if (_edgeFirstSeen.TryGetValue(k, out var t0) &&
+                (DateTime.UtcNow - t0).TotalMilliseconds > Math.Max(5000, _runtime.Snapshot.MinSpreadPersistMs * 3))
+                _edgeFirstSeen.TryRemove(k, out _);
         }
 
         LastScanBestGross = bestGross;
