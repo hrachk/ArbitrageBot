@@ -21,7 +21,11 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
 
     private static readonly HashSet<string> HardExclude = new(StringComparer.OrdinalIgnoreCase)
     {
-        "BTC", "ETH", "BNB", "USDC", "FDUSD", "TUSD", "DAI", "EUR", "BUSD"
+        "BTC", "ETH", "BNB", "USDC", "FDUSD", "TUSD", "DAI", "EUR", "BUSD",
+        // toxic for spatial EV (meme / equity-style perps)
+        "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
+        "SOXL", "SKHYNIX", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL", "XAU", "XAG", "PAXG"
     };
 
     /// <summary>Stable liquid names that usually list on 3+ venues — used only if HTTP fails.</summary>
@@ -56,6 +60,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         {
             var set = new HashSet<string>(HardExclude, StringComparer.OrdinalIgnoreCase);
             foreach (var b in _options.ExcludeMajorBases ?? [])
+                set.Add(b);
+            foreach (var b in _options.ExcludeToxicBases ?? [])
                 set.Add(b);
             return set;
         }
@@ -147,32 +153,41 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         targetNotional = Math.Max(50m, targetNotional);
         var enriched = new List<DiscoveredSymbol>();
 
-        foreach (var c in candidates.Take(40))
+        // Parallel depth samples (no artificial per-symbol delay)
+        var bag = new System.Collections.Concurrent.ConcurrentBag<(DiscoveredSymbol d, decimal depth, decimal score)>();
+        await Parallel.ForEachAsync(candidates.Take(36), new ParallelOptions
         {
-            if (ct.IsCancellationRequested) break;
-            var (depthUsd, score) = await SampleBinanceDepthAsync(c.Symbol, targetNotional, ct);
+            MaxDegreeOfParallelism = 8,
+            CancellationToken = ct
+        }, async (c, token) =>
+        {
+            var (depthUsd, score) = await SampleBinanceDepthAsync(c.Symbol, targetNotional, token);
+            bag.Add((c, depthUsd, score));
+        });
+
+        foreach (var (c, depthUsd, score) in bag)
             enriched.Add(c with { DepthNotionalUsd = depthUsd, DepthScore = score });
-            await Task.Delay(40, ct);
-        }
 
         var seen = new HashSet<string>(enriched.Select(e => e.Symbol), StringComparer.OrdinalIgnoreCase);
         foreach (var c in candidates)
         {
             if (!seen.Contains(c.Symbol))
-                enriched.Add(c with { DepthScore = 0.5m });
+                enriched.Add(c with { DepthScore = 0m }); // unsampled = fail depth gate
         }
 
+        var minDepth = _options.MinDepthScoreForUniverse > 0 ? _options.MinDepthScoreForUniverse : 1.5m;
         var ordered = enriched
-            .OrderByDescending(d => d.DepthScore >= 1m)
-            .ThenByDescending(d => d.DepthScore)
+            .OrderByDescending(d => d.DepthScore)
             .ThenByDescending(d => d.ExchangeCount)
             .ThenByDescending(d => d.MedianQuoteVolume)
             .ToList();
 
-        var fillable = ordered.Where(d => d.DepthScore >= 0.75m).ToList();
-        var pick = (fillable.Count >= Math.Min(4, topN) ? fillable : ordered)
+        var fillable = ordered.Where(d => d.DepthScore >= minDepth && d.ExchangeCount >= 2).ToList();
+        var pick = (fillable.Count >= Math.Min(3, topN) ? fillable : ordered.Where(d => d.DepthScore >= minDepth * 0.7m).ToList())
             .Take(topN)
             .ToList();
+        if (pick.Count < Math.Min(4, topN))
+            pick = ordered.Where(d => d.DepthScore >= 1m).Take(topN).ToList();
 
         var ok = pick.Count(d => d.DepthScore >= 1m);
         _logger.LogInformation(
@@ -265,9 +280,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             var score = venueScore + bandScore + logVol * 0.5 + thinBoost;
 
             var baseAsset = BaseOf(symbol);
-            if (IsMoverish(baseAsset)) score += 8;
-            // metals / tradfi perps often fragmented across venues
-            if (baseAsset is "XAU" or "XAG" or "PAXG") score += 10;
+            // Mild boost only for known liquid alts — no meme/equity boost
+            if (IsMoverish(baseAsset) && baseAsset is not ("PEPE" or "WIF" or "BONK" or "TRUMP")) score += 3;
 
             scored.Add((new DiscoveredSymbol
             {

@@ -109,6 +109,9 @@ public sealed class RuntimeRiskConfig
         MaxLegsPerVenue = o.MaxLegsPerVenue,
         MaxWidthExpansionPercent = o.MaxWidthExpansionPercent,
         RequireDepthFullFill = o.RequireDepthFullFill,
+        MinDepthScoreForUniverse = o.MinDepthScoreForUniverse,
+        OpenEdgeBufferPercent = o.OpenEdgeBufferPercent,
+        ExcludeToxicBases = o.ExcludeToxicBases?.ToList() ?? [],
         LiveMaxOpenPositions = o.LiveMaxOpenPositions,
         LiveMaxNotionalUsd = o.LiveMaxNotionalUsd
     };

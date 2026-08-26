@@ -10,8 +10,8 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.08m;
-    public int ScanIntervalMs { get; set; } = 1500;
+    public decimal MinProfitPercent { get; set; } = 0.12m;
+    public int ScanIntervalMs { get; set; } = 400;
     public bool PaperTrading { get; set; } = true;
 
     public Dictionary<string, decimal> EstimatedTakerFees { get; set; } = new(StringComparer.OrdinalIgnoreCase)
@@ -45,13 +45,24 @@ public class ArbitrageOptions
     public int DynamicRefreshMinutes { get; set; } = 60;
     /// <summary>Skip these base assets (majors with near-zero cross-exchange edge).</summary>
     public List<string> ExcludeMajorBases { get; set; } = ["BTC", "ETH", "BNB"];
+    /// <summary>Meme / equity-perp / thin names that destroy spatial EV.</summary>
+    public List<string> ExcludeToxicBases { get; set; } =
+    [
+        "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
+        "SOXL", "SKHYNIX", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL"
+    ];
+    /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
+    public decimal MinDepthScoreForUniverse { get; set; } = 1.5m;
+    /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.02m;
     /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
     // Futures paper
     public decimal FuturesPaperLeverage { get; set; } = 5m;
     public int FuturesMaxOpenPositions { get; set; } = 3;
-    public int FuturesMaxHoldMinutes { get; set; } = 30;
+    public int FuturesMaxHoldMinutes { get; set; } = 5;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
 
@@ -97,9 +108,9 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 1500;
+    public int MinSpreadPersistMs { get; set; } = 600;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
-    public int MaxBookAgeMs { get; set; } = 1000;
+    public int MaxBookAgeMs { get; set; } = 400;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
     public int MaxLegsPerVenue { get; set; } = 3;
     /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>

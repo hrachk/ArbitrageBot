@@ -476,7 +476,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         - shortVwap * qty * (shortFee / 100m) * 2m
                         + notional * fundPct / 100m;
 
-                    if (thresholdMetric < _runtime.Snapshot.MinProfitPercent)
+                    var minEdge = _runtime.Snapshot.MinProfitPercent
+                                  + (_runtime.Snapshot.OpenEdgeBufferPercent > 0 ? _runtime.Snapshot.OpenEdgeBufferPercent : 0m);
+                    if (thresholdMetric < minEdge)
                     {
                         _edgeFirstSeen.TryRemove($"{symbol}|{longEx}|{shortEx}", out _);
                         continue;
