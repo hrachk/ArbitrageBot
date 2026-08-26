@@ -23,6 +23,7 @@
       <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◈</span> Market</button>
       <button type="button" class="nav-item" data-page="reports"><span class="nav-ico">▤</span> Reports</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-ico">⚙</span> Settings</button>
+      <button type="button" class="nav-item" data-page="help"><span class="nav-ico">?</span> Help</button>
     </nav>
     <div class="side-meta">
       <span class="pill paper" id="modeBadge">PAPER</span>
@@ -370,6 +371,124 @@
           </div>
         </div>
       </section>
+
+      <!-- HELP -->
+      <section class="page" data-page="help">
+        <div class="banner info">
+          <b>Help map</b> — product overview, how to run, recommended settings for effective paper (and later live).
+          Full text also in <span class="mono">docs/ARBITRAGE_BOT_GUIDE.md</span>
+        </div>
+
+        <div class="g2" style="margin-bottom:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">What the bot does</h2></div>
+            <p style="margin:0 0 10px;line-height:1.55;color:var(--text)">
+              <b>Cross-exchange futures spatial arbitrage.</b>
+              Same USDT-M perpetual on several exchanges: <span class="pos">LONG</span> the cheaper venue,
+              <span class="neg">SHORT</span> the richer. Profit when the spread <b>converges</b> — not from predicting price direction.
+              No asset transfer on the trade path (inventory / pre-funded balances).
+            </p>
+            <div class="muted" style="font-size:13px;line-height:1.5">
+              Paper mode uses <b>real WebSocket books</b> with virtual margin &amp; fees.
+              Live mode is phased (read-only → confirm → small size) with kill switch.
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">UI map</h2></div>
+            <table class="data">
+              <thead><tr><th>Page</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td><b>Dashboard</b></td><td>Health, signals, PnL, quality, skips, spread map</td></tr>
+                <tr><td><b>Market</b></td><td>Chart, multi-venue overlay Δ%, books, positions</td></tr>
+                <tr><td><b>Reports</b></td><td>Margin by venue, performance, history</td></tr>
+                <tr><td><b>Settings</b></td><td>Trading params (live apply), API keys, Live guard</td></tr>
+                <tr><td><b>Help</b></td><td>This guide</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Quick start</h2></div>
+          <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:14px">
+            <li><span class="mono">dotnet run</span> → open the URL from the console</li>
+            <li>Settings: Paper + Auto execute → <b>Apply parameters</b></li>
+            <li><b>Reset paper</b> → balances = starting quote per exchange</li>
+            <li>Wait for heartbeat: <span class="mono">books &gt; 0</span>, discovery <span class="mono">http-tickers+depth</span></li>
+            <li>Few trades with strict gates is <b>normal</b> — watch Paper quality &amp; skip reasons</li>
+          </ol>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Recommended settings (effective work)</h2>
+            <span class="panel-sub">paper ≈ intended live rules</span></div>
+          <div class="scroll">
+            <table class="data">
+              <thead><tr><th>Parameter</th><th>Value</th><th>Why</th></tr></thead>
+              <tbody>
+                <tr><td>Min open edge %</td><td class="mono">0.08 – 0.10</td><td>After open fees; RT still on</td></tr>
+                <tr><td>Quote / notional</td><td class="mono">150 – 200</td><td>Fits ~2500/venue at 5×</td></tr>
+                <tr><td>Leverage</td><td class="mono">5</td><td>Controlled inventory</td></tr>
+                <tr><td>Max open</td><td class="mono">3 – 5</td><td>Start lower while learning</td></tr>
+                <tr><td>Full fill + RT edge</td><td class="mono">ON</td><td>No phantom fills / fee blindness</td></tr>
+                <tr><td>Funding</td><td class="mono">ON</td><td>Perp realism</td></tr>
+                <tr><td>Stop / day limit</td><td class="mono">−50 / −150</td><td>Hard brakes</td></tr>
+                <tr><td>Max hold</td><td class="mono">10 – 15 min</td><td>Spatial windows are short</td></tr>
+                <tr><td>Depth + persist</td><td class="mono">auto</td><td>Fillable books; anti-flash edge</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted" style="margin:10px 0 0;font-size:13px">
+            Do <b>not</b> lower thresholds only to force more trades — that invalidates the lab.
+            Settings → Apply updates runtime risk without full restart (starting balance needs Reset paper).
+          </p>
+        </div>
+
+        <div class="g2" style="margin-bottom:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">How to read numbers</h2></div>
+            <ul style="margin:0;padding-left:18px;line-height:1.65;font-size:13px">
+              <li><b>NET %</b> — edge after open fees (not guaranteed profit)</li>
+              <li><b>EST $</b> — idealised if exit were perfect now</li>
+              <li><b>Unrealized</b> — can be red while waiting for converge</li>
+              <li><b>width vs entry</b> — wider often hurts the hedge</li>
+              <li><b>Δ% overlay</b> — cheap → rich mid gap across venues</li>
+              <li><b>persistWait</b> — edge seen but not held long enough</li>
+              <li><b>skip reasons</b> — why opens were blocked</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Clean history</h2></div>
+            <p style="margin:0 0 8px;font-size:13px;line-height:1.5">Stop the bot, then:</p>
+            <pre class="mono" style="font-size:11px;background:rgba(0,0,0,0.25);padding:10px;border-radius:8px;overflow:auto">rm -f ArbitrageBot/data/paper/open-state.json
+rm -f ArbitrageBot/data/paper/trades-ledger.json
+rm -f ArbitrageBot/data/paper/events-*.jsonl
+rm -f ArbitrageBot/data/paper/daily-*.json</pre>
+            <p class="muted" style="margin:8px 0 0;font-size:12px">Keep <span class="mono">local-settings.json</span> if you need API keys. Then run + Reset paper.</p>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Live path (when ready)</h2></div>
+          <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:13px">
+            <li>Paper days with realistic fees → review win rate &amp; skips</li>
+            <li>API keys read-only → Verify balances</li>
+            <li>Trade permission, <b>no withdraw</b>; hedge mode + leverage on each exchange</li>
+            <li>Live: read-only → confirm phrase → 1 position, tiny notional</li>
+            <li>Know <b>KILL SWITCH</b>; scale only if fills match paper assumptions</li>
+          </ol>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd"><h2 class="panel-title">Pitch (one paragraph)</h2></div>
+          <p style="margin:0;line-height:1.6;font-size:14px">
+            <b>ArbitrageBot</b> turns fragmented crypto perpetual prices into a disciplined, measurable
+            cross-exchange hedge workflow — live books, depth-aware symbols, fee-aware gates, and a paper lab
+            that follows real trading rules. Learn the market. Measure skips and win rate. Only then size live.
+          </p>
+        </div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -380,5 +499,6 @@
 <script src="/assets/js/pages/market.js"></script>
 <script src="/assets/js/pages/reports.js"></script>
 <script src="/assets/js/pages/settings.js"></script>
+<script src="/assets/js/pages/help.js"></script>
 </body>
 </html>
