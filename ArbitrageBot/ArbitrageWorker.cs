@@ -512,7 +512,9 @@ public class ArbitrageWorker : BackgroundService
             d.BaseAsset,
             d.QuoteAsset,
             medianQuoteVolume = d.MedianQuoteVolume,
-            d.ExchangeCount
+            d.ExchangeCount,
+            depthNotionalUsd = d.DepthNotionalUsd,
+            depthScore = d.DepthScore
         }).ToList();
     }
 

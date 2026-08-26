@@ -103,28 +103,135 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             return RotatingFallback("HTTP tickers empty (geo/network) — rotating arb pool", topN);
         }
 
-        var ranked = RankForArb(volumes, minVol, maxVol, topN);
+        var poolN = Math.Max(topN * 3, topN + 8);
+        var ranked = RankForArb(volumes, minVol, maxVol, poolN);
         if (ranked.Count < Math.Min(4, topN))
         {
-            // Relax band: accept wider volume, still require ≥2 venues
-            ranked = RankForArb(volumes, minVol * 0.3m, maxVol * 2m, topN, minVenues: 2);
+            ranked = RankForArb(volumes, minVol * 0.3m, maxVol * 2m, poolN, minVenues: 2);
         }
         if (ranked.Count == 0)
-            ranked = RankForArb(volumes, 500_000m, 2_000_000_000m, topN, minVenues: 2);
+            ranked = RankForArb(volumes, 500_000m, 2_000_000_000m, poolN, minVenues: 2);
 
         if (ranked.Count == 0)
             return RotatingFallback("rank empty after filters — rotating arb pool", topN);
 
-        _logger.LogInformation("Discovered {Count} arb pairs: {List}",
+        // Depth score on trade size (Binance public book) — prefer pairs that actually fill
+        var target = _options.QuoteSize > 0 ? _options.QuoteSize : 180m;
+        ranked = await EnrichAndRankByDepthAsync(ranked, target, topN, ct);
+
+        _logger.LogInformation("Discovered {Count} arb pairs (depth-scored): {List}",
             ranked.Count,
-            string.Join(", ", ranked.Select(r => $"{r.Symbol}@{r.ExchangeCount}ex/{Fmt(r.MedianQuoteVolume)}")));
+            string.Join(", ", ranked.Select(r =>
+                $"{r.Symbol}@{r.ExchangeCount}ex/vol={Fmt(r.MedianQuoteVolume)}/d={r.DepthScore:0.0}x")));
 
         return new DiscoveryResult
         {
             Symbols = ranked,
-            Source = "http-tickers-arb",
-            Message = $"band {Fmt(minVol)}–{Fmt(maxVol)}; ≥2 venues; top-{ranked.Count} by arb score"
+            Source = "http-tickers+depth",
+            Message = $"band {Fmt(minVol)}–{Fmt(maxVol)}; ≥2 venues; depth≥trade size; top-{ranked.Count}"
         };
+    }
+
+
+    /// <summary>
+    /// Sample Binance futures depth; score = min(bid,ask) top-book quote notional / target size.
+    /// Prefer DepthScore ≥ 1 (can fill QuoteSize on both sides near touch).
+    /// </summary>
+    private async Task<List<DiscoveredSymbol>> EnrichAndRankByDepthAsync(
+        List<DiscoveredSymbol> candidates,
+        decimal targetNotional,
+        int topN,
+        CancellationToken ct)
+    {
+        if (candidates.Count == 0) return candidates;
+        targetNotional = Math.Max(50m, targetNotional);
+        var enriched = new List<DiscoveredSymbol>();
+
+        foreach (var c in candidates.Take(40))
+        {
+            if (ct.IsCancellationRequested) break;
+            var (depthUsd, score) = await SampleBinanceDepthAsync(c.Symbol, targetNotional, ct);
+            enriched.Add(c with { DepthNotionalUsd = depthUsd, DepthScore = score });
+            await Task.Delay(40, ct);
+        }
+
+        var seen = new HashSet<string>(enriched.Select(e => e.Symbol), StringComparer.OrdinalIgnoreCase);
+        foreach (var c in candidates)
+        {
+            if (!seen.Contains(c.Symbol))
+                enriched.Add(c with { DepthScore = 0.5m });
+        }
+
+        var ordered = enriched
+            .OrderByDescending(d => d.DepthScore >= 1m)
+            .ThenByDescending(d => d.DepthScore)
+            .ThenByDescending(d => d.ExchangeCount)
+            .ThenByDescending(d => d.MedianQuoteVolume)
+            .ToList();
+
+        var fillable = ordered.Where(d => d.DepthScore >= 0.75m).ToList();
+        var pick = (fillable.Count >= Math.Min(4, topN) ? fillable : ordered)
+            .Take(topN)
+            .ToList();
+
+        var ok = pick.Count(d => d.DepthScore >= 1m);
+        _logger.LogInformation(
+            "Depth score: {Ok}/{Total} pairs fill ≥{Target:0} USDT near touch (sample Binance book)",
+            ok, pick.Count, targetNotional);
+
+        return pick;
+    }
+
+    private async Task<(decimal depthUsd, decimal score)> SampleBinanceDepthAsync(
+        string symbol,
+        decimal targetNotional,
+        CancellationToken ct)
+    {
+        try
+        {
+            var url = $"https://fapi.binance.com/fapi/v1/depth?symbol={symbol.ToUpperInvariant()}&limit=20";
+            using var resp = await _http.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode)
+                return (0, 0);
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            decimal bidQ = 0, askQ = 0;
+            if (doc.RootElement.TryGetProperty("bids", out var bids))
+            {
+                foreach (var lvl in bids.EnumerateArray())
+                {
+                    if (lvl.GetArrayLength() < 2) continue;
+                    if (!decimal.TryParse(lvl[0].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var px)) continue;
+                    if (!decimal.TryParse(lvl[1].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var qty)) continue;
+                    bidQ += px * qty;
+                }
+            }
+            if (doc.RootElement.TryGetProperty("asks", out var asks))
+            {
+                foreach (var lvl in asks.EnumerateArray())
+                {
+                    if (lvl.GetArrayLength() < 2) continue;
+                    if (!decimal.TryParse(lvl[0].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var px)) continue;
+                    if (!decimal.TryParse(lvl[1].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var qty)) continue;
+                    askQ += px * qty;
+                }
+            }
+
+            var depth = Math.Min(bidQ, askQ);
+            var score = targetNotional > 0 ? depth / targetNotional : 0;
+            if (score > 50m) score = 50m;
+            return (Math.Round(depth, 2), Math.Round(score, 2));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Depth sample failed for {S}", symbol);
+            return (0, 0);
+        }
     }
 
     /// <summary>
