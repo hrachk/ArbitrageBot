@@ -21,6 +21,7 @@
     <nav class="nav">
       <button type="button" class="nav-item active" data-page="dashboard"><span class="nav-ico">▣</span> Dashboard</button>
       <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◈</span> Market</button>
+      <button type="button" class="nav-item" data-page="screener"><span class="nav-ico">▦</span> Screener</button>
       <button type="button" class="nav-item" data-page="reports"><span class="nav-ico">▤</span> Reports</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-ico">⚙</span> Settings</button>
       <button type="button" class="nav-item" data-page="help"><span class="nav-ico">?</span> Help</button>
@@ -175,6 +176,77 @@
               <thead><tr><th>Symbol</th><th>Exchange</th><th>Bid</th><th>Ask</th><th>Spread</th></tr></thead>
               <tbody id="m_bookBody"><tr><td colspan="5" class="empty">—</td></tr></tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- SCREENER -->
+      <section class="page" data-page="screener">
+        <div class="banner info">
+          <b>Market screener</b> — pairs ranked by activity intensity (volume, cross-venue gap, depth, arb signal).
+          Select a row for live mid chart and venue breakdown.
+        </div>
+        <div class="scr-kpi-row">
+          <div class="kpi"><div class="kpi-l">Tracked</div><div class="kpi-v" id="scr_n">0</div></div>
+          <div class="kpi"><div class="kpi-l">Hot (≥70)</div><div class="kpi-v" id="scr_hot" style="color:#fbbf24">0</div></div>
+          <div class="kpi"><div class="kpi-l">Max cross Δ</div><div class="kpi-v" id="scr_maxDelta">—</div></div>
+          <div class="kpi"><div class="kpi-l">With arb signal</div><div class="kpi-v pos" id="scr_arbN">0</div></div>
+        </div>
+        <div class="scr-filters">
+          <input type="search" id="scr_q" placeholder="Filter symbol…" style="min-width:140px"/>
+          <label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="scr_multi" checked/> Multi-venue only
+          </label>
+          <label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="scr_depth"/> Depth ≥ 1×
+          </label>
+          <select id="scr_sort">
+            <option value="intensity">Sort: Intensity</option>
+            <option value="delta">Sort: Cross Δ</option>
+            <option value="vol">Sort: Volume</option>
+            <option value="net">Sort: Arb net</option>
+            <option value="depth">Sort: Depth</option>
+          </select>
+          <span class="muted mono" id="scr_hint" style="margin-left:auto;font-size:11px"></span>
+        </div>
+        <div class="screener-layout">
+          <div class="panel" style="margin:0">
+            <div class="panel-hd"><h2 class="panel-title">Universe</h2><span class="panel-sub">live from bot books + discovery</span></div>
+            <div class="scr-table-wrap">
+              <table class="scr-table">
+                <thead>
+                  <tr>
+                    <th data-k="intensity">Intensity</th>
+                    <th data-k="symbol">Symbol</th>
+                    <th data-k="venues">Venues</th>
+                    <th data-k="vol">Vol 24h</th>
+                    <th data-k="depth">Depth×</th>
+                    <th data-k="delta">Cross Δ</th>
+                    <th data-k="net">Arb net</th>
+                  </tr>
+                </thead>
+                <tbody id="scr_body">
+                  <tr><td colspan="7" class="empty">Waiting for market data…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel" style="margin:0">
+            <div class="panel-hd">
+              <h2 class="panel-title" id="scr_selTitle">Select a pair</h2>
+              <span class="panel-sub" id="scr_selSub">detail</span>
+            </div>
+            <div id="scr_chips" style="margin-bottom:10px"></div>
+            <div class="scr-detail-chart">
+              <canvas id="scr_chart" width="480" height="200" style="width:100%;height:200px;display:block"></canvas>
+            </div>
+            <div id="scr_meta" class="muted" style="margin-top:12px;font-size:13px;line-height:1.55">
+              Click a row to plot live mids across exchanges and see intensity breakdown.
+            </div>
+            <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn primary" id="scr_toMarket" disabled>Open in Market</button>
+            </div>
           </div>
         </div>
       </section>
@@ -497,6 +569,7 @@ rm -f ArbitrageBot/data/paper/daily-*.json</pre>
 <script src="/assets/js/core.js"></script>
 <script src="/assets/js/pages/dashboard.js"></script>
 <script src="/assets/js/pages/market.js"></script>
+<script src="/assets/js/pages/screener.js"></script>
 <script src="/assets/js/pages/reports.js"></script>
 <script src="/assets/js/pages/settings.js"></script>
 <script src="/assets/js/pages/help.js"></script>
