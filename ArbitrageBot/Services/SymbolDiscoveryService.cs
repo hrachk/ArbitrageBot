@@ -25,7 +25,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         // toxic for spatial EV (meme / equity-style perps)
         "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
         "SOXL", "SKHYNIX", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
-        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL", "XAU", "XAG", "PAXG"
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL"
     };
 
     /// <summary>Stable liquid names that usually list on 3+ venues — used only if HTTP fails.</summary>
@@ -124,6 +124,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         // Depth score on trade size (Binance public book) — prefer pairs that actually fill
         var target = _options.QuoteSize > 0 ? _options.QuoteSize : 180m;
         ranked = await EnrichAndRankByDepthAsync(ranked, target, topN, ct);
+        ranked = MergeCoreArbWatchlist(ranked, volumes, topN);
 
         _logger.LogInformation("Discovered {Count} arb pairs (depth-scored): {List}",
             ranked.Count,
@@ -143,6 +144,56 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     /// Sample Binance futures depth; score = min(bid,ask) top-book quote notional / target size.
     /// Prefer DepthScore ≥ 1 (can fill QuoteSize on both sides near touch).
     /// </summary>
+
+    /// <summary>
+    /// Always keep a core multi-venue liquid set a human desk would watch 24/7.
+    /// Merged with dynamic rank — never only exotic thin names.
+    /// </summary>
+    private static readonly string[] CoreArbWatchlist =
+    [
+        "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
+        "SUIUSDT", "NEARUSDT", "ARBUSDT", "OPUSDT", "APTUSDT", "INJUSDT",
+        "DOTUSDT", "ATOMUSDT", "LTCUSDT", "FILUSDT", "TIAUSDT", "SEIUSDT",
+        "TONUSDT", "AAVEUSDT", "UNIUSDT", "RENDERUSDT", "FETUSDT", "ENAUSDT"
+    ];
+
+    private List<DiscoveredSymbol> MergeCoreArbWatchlist(
+        List<DiscoveredSymbol> ranked,
+        Dictionary<string, Dictionary<string, decimal>> volumes,
+        int topN)
+    {
+        var result = ranked.ToList();
+        var have = new HashSet<string>(result.Select(r => r.Symbol), StringComparer.OrdinalIgnoreCase);
+        foreach (var sym in CoreArbWatchlist)
+        {
+            if (result.Count >= Math.Max(topN, 12)) break;
+            if (have.Contains(sym)) continue;
+            if (!volumes.TryGetValue(sym, out var byEx) || byEx.Count < 2) continue;
+            var vols = byEx.Values.OrderBy(v => v).ToList();
+            var median = vols[vols.Count / 2];
+            result.Add(new DiscoveredSymbol
+            {
+                Symbol = sym,
+                BaseAsset = BaseOf(sym),
+                QuoteAsset = "USDT",
+                MedianQuoteVolume = median,
+                ExchangeCount = byEx.Count,
+                Exchanges = byEx.Keys.OrderBy(x => x).ToList(),
+                DepthScore = 1m // assume liquid core; live scan still enforces fill
+            });
+            have.Add(sym);
+        }
+        // Prefer higher venue count then volume
+        return result
+            .GroupBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(x => x.ExchangeCount).ThenByDescending(x => x.DepthScore).First())
+            .OrderByDescending(x => x.ExchangeCount)
+            .ThenByDescending(x => x.DepthScore)
+            .ThenByDescending(x => x.MedianQuoteVolume)
+            .Take(Math.Max(topN, 12))
+            .ToList();
+    }
+
     private async Task<List<DiscoveredSymbol>> EnrichAndRankByDepthAsync(
         List<DiscoveredSymbol> candidates,
         decimal targetNotional,
@@ -175,19 +226,27 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
                 enriched.Add(c with { DepthScore = 0m }); // unsampled = fail depth gate
         }
 
-        var minDepth = _options.MinDepthScoreForUniverse > 0 ? _options.MinDepthScoreForUniverse : 1.5m;
+        var minDepth = _options.MinDepthScoreForUniverse > 0 ? _options.MinDepthScoreForUniverse : 0.85m;
         var ordered = enriched
-            .OrderByDescending(d => d.DepthScore)
-            .ThenByDescending(d => d.ExchangeCount)
+            .OrderByDescending(d => d.ExchangeCount)           // human: more venues = more routes
+            .ThenByDescending(d => d.DepthScore)
             .ThenByDescending(d => d.MedianQuoteVolume)
             .ToList();
 
+        // Prefer depth≥min & ≥2 venues; never starve the bot — backfill with best multi-venue
         var fillable = ordered.Where(d => d.DepthScore >= minDepth && d.ExchangeCount >= 2).ToList();
-        var pick = (fillable.Count >= Math.Min(3, topN) ? fillable : ordered.Where(d => d.DepthScore >= minDepth * 0.7m).ToList())
-            .Take(topN)
-            .ToList();
-        if (pick.Count < Math.Min(4, topN))
-            pick = ordered.Where(d => d.DepthScore >= 1m).Take(topN).ToList();
+        var pick = fillable.Take(topN).ToList();
+        if (pick.Count < topN)
+        {
+            foreach (var d in ordered.Where(x => x.ExchangeCount >= 2))
+            {
+                if (pick.Count >= topN) break;
+                if (pick.All(p => !p.Symbol.Equals(d.Symbol, StringComparison.OrdinalIgnoreCase)))
+                    pick.Add(d);
+            }
+        }
+        if (pick.Count == 0)
+            pick = ordered.Take(topN).ToList();
 
         var ok = pick.Count(d => d.DepthScore >= 1m);
         _logger.LogInformation(

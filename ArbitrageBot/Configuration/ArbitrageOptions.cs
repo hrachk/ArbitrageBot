@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.12m;
+    public decimal MinProfitPercent { get; set; } = 0.09m;
     public int ScanIntervalMs { get; set; } = 400;
     public bool PaperTrading { get; set; } = true;
 
@@ -53,9 +53,9 @@ public class ArbitrageOptions
         "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL"
     ];
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
-    public decimal MinDepthScoreForUniverse { get; set; } = 1.5m;
+    public decimal MinDepthScoreForUniverse { get; set; } = 0.85m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.02m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.01m;
     /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
@@ -108,7 +108,7 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 600;
+    public int MinSpreadPersistMs { get; set; } = 400;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
     public int MaxBookAgeMs { get; set; } = 400;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
