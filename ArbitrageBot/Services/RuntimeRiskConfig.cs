@@ -113,6 +113,10 @@ public sealed class RuntimeRiskConfig
         OpenEdgeBufferPercent = o.OpenEdgeBufferPercent,
         MinTakeProfitUsd = o.MinTakeProfitUsd,
         MinGrossSpreadPercent = o.MinGrossSpreadPercent,
+        SpatialScalpMode = o.SpatialScalpMode,
+        FuturesMaxHoldSeconds = o.FuturesMaxHoldSeconds,
+        PaperCloseFeeFactor = o.PaperCloseFeeFactor,
+        RequireSpreadingEdge = o.RequireSpreadingEdge,
         ExcludeToxicBases = o.ExcludeToxicBases?.ToList() ?? [],
         LiveMaxOpenPositions = o.LiveMaxOpenPositions,
         LiveMaxNotionalUsd = o.LiveMaxNotionalUsd

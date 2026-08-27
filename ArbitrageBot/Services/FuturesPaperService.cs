@@ -226,7 +226,9 @@ public class FuturesPaperService : IFuturesPaperService
 
             var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
             var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
-            var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
+            var closeFactor = R.PaperCloseFeeFactor > 0 && R.PaperCloseFeeFactor <= 1m ? R.PaperCloseFeeFactor : 1m;
+                // Scalp/realistic: partial maker on exit reduces close fee drag
+                var closeFees = (longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m)) * closeFactor;
             var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
                           + (longBid - pos.LongEntry) * pos.BaseQty;
             var tradeForFees = _trades.FirstOrDefault(x => x.Id == pos.TradeId);
@@ -298,7 +300,9 @@ public class FuturesPaperService : IFuturesPaperService
                 // Entry locked edge roughly (shortEntry - longEntry); exit cost is crossing
                 var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
                 var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
-                var closeFees = longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m);
+                var closeFactor = R.PaperCloseFeeFactor > 0 && R.PaperCloseFeeFactor <= 1m ? R.PaperCloseFeeFactor : 1m;
+                // Scalp/realistic: partial maker on exit reduces close fee drag
+                var closeFees = (longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m)) * closeFactor;
                 // Gross mark-to-market of both legs before fees
                 var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty
                               + (longBid - pos.LongEntry) * pos.BaseQty;
@@ -315,8 +319,14 @@ public class FuturesPaperService : IFuturesPaperService
                     ? (shortAsk - longBid) / longBid * 100m
                     : 0m;
 
-                var holdMin = R.FuturesMaxHoldMinutes > 0 ? R.FuturesMaxHoldMinutes : 30;
-                var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
+                var timedOut = false;
+                if (R.SpatialScalpMode && R.FuturesMaxHoldSeconds > 0)
+                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds >= R.FuturesMaxHoldSeconds;
+                else
+                {
+                    var holdMin = R.FuturesMaxHoldMinutes > 0 ? R.FuturesMaxHoldMinutes : 30;
+                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
+                }
 
                 // Economic projected PnL (already includes open+close fees)
                 pos.UnrealizedPnlUsd = pnl;
@@ -330,12 +340,11 @@ public class FuturesPaperService : IFuturesPaperService
                 var widthConverged = belowAbs || shrunkALot;
 
                 // PROFESSIONAL EXIT: only take "converge" closes when PnL is actually green
-                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.15m;
+                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.05m;
                 var takeProfit = pnl >= minTp;
-                // Near-zero width + positive PnL (even small)
-                var convergeProfit = widthConverged && pnl >= 0.02m;
-                // Early take-profit when width shrank a lot and still green
-                var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.7m;
+                var anyGreen = pnl >= 0.01m && currentWidth <= pos.EntryWidthPercent * 0.85m;
+                var convergeProfit = widthConverged && pnl >= 0.01m;
+                var earlyTp = (takeProfit || anyGreen) && currentWidth <= pos.EntryWidthPercent * 0.75m;
 
                 if (!stopHit && !timedOut && !convergeProfit && !earlyTp)
                     continue;

@@ -10,8 +10,8 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.09m;
-    public int ScanIntervalMs { get; set; } = 400;
+    public decimal MinProfitPercent { get; set; } = 0.06m;
+    public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
     public Dictionary<string, decimal> EstimatedTakerFees { get; set; } = new(StringComparer.OrdinalIgnoreCase)
@@ -59,7 +59,15 @@ public class ArbitrageOptions
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
     public decimal MinTakeProfitUsd { get; set; } = 0.15m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.28m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.22m;
+    /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
+    public bool SpatialScalpMode { get; set; } = true;
+    /// <summary>Max hold in seconds when SpatialScalpMode (overrides minutes).</summary>
+    public int FuturesMaxHoldSeconds { get; set; } = 90;
+    /// <summary>Close leg fees as fraction of taker (0.5 ≈ limit/maker exit).</summary>
+    public decimal PaperCloseFeeFactor { get; set; } = 0.55m;
+    /// <summary>Open only if gross is rising vs ~1s ago (avoid dying spreads).</summary>
+    public bool RequireSpreadingEdge { get; set; } = true;
     /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
@@ -112,7 +120,7 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 400;
+    public int MinSpreadPersistMs { get; set; } = 250;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
     public int MaxBookAgeMs { get; set; } = 400;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>

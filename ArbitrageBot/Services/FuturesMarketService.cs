@@ -34,6 +34,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public int LastScanPairsCompared { get; private set; }
     public int LastScanStaleSkipped { get; private set; }
     public int LastScanPersistPending { get; private set; }
+    private readonly ConcurrentDictionary<string, (decimal gross, DateTime utc)> _grossHistory = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _edgeFirstSeen = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
@@ -476,20 +477,38 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         - shortVwap * qty * (shortFee / 100m) * 2m
                         + notional * fundPct / 100m;
 
-                    var minEdge = _runtime.Snapshot.MinProfitPercent
-                                  + (_runtime.Snapshot.OpenEdgeBufferPercent > 0 ? _runtime.Snapshot.OpenEdgeBufferPercent : 0m);
-                    var minGross = _runtime.Snapshot.MinGrossSpreadPercent > 0
-                        ? _runtime.Snapshot.MinGrossSpreadPercent
-                        : 0.28m;
-                    // Gross must clear ~4 taker legs; RT metric must clear min edge
+                    var snap = _runtime.Snapshot;
+                    var scalp = snap.SpatialScalpMode;
+                    // Scalp: enter on net-after-open-fees (2 legs); classic: full RT
+                    if (scalp)
+                        thresholdMetric = netOpen;
+
+                    var minEdge = snap.MinProfitPercent
+                                  + (snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0m);
+                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.22m;
+
+                    var edgeKey = $"{symbol}|{longEx}|{shortEx}";
+                    // Spreading edge: gross must not be collapsing vs ~1s ago
+                    if (snap.RequireSpreadingEdge)
+                    {
+                        var now = DateTime.UtcNow;
+                        if (_grossHistory.TryGetValue(edgeKey, out var prev)
+                            && (now - prev.utc).TotalMilliseconds is >= 400 and <= 3000
+                            && gross + 0.02m < prev.gross)
+                        {
+                            // dying spread — skip
+                            continue;
+                        }
+                        _grossHistory[edgeKey] = (gross, now);
+                    }
+
                     if (gross < minGross || thresholdMetric < minEdge)
                     {
-                        _edgeFirstSeen.TryRemove($"{symbol}|{longEx}|{shortEx}", out _);
+                        _edgeFirstSeen.TryRemove(edgeKey, out _);
                         continue;
                     }
 
                     // Persistence: edge must hold MinSpreadPersistMs (anti-flash spike)
-                    var edgeKey = $"{symbol}|{longEx}|{shortEx}";
                     var persistMs = _runtime.Snapshot.MinSpreadPersistMs;
                     var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
                     var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
