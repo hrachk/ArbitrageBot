@@ -23,6 +23,88 @@ AB.pages.dashboard = {
       html('d_best', best == null ? '—' : AB.fmtPct(best));
       html('d_pnl', AB.fmtUsd(fp.realizedPnlUsd != null ? fp.realizedPnlUsd : (fp.realizedPnl != null ? fp.realizedPnl : 0)));
       text('d_open', (fp.positions && fp.positions.length) || 0);
+
+      // Cross-exchange arb board (ranked like terminal UIs)
+      const board = document.getElementById('d_arbBoard');
+      const boardSub = document.getElementById('d_arbBoardSub');
+      if (board) {
+        const minShow = Number(data.minProfitPercent) || 0;
+        // Primary: real opportunities from scan
+        let list = opps.slice().map(o => ({
+          symbol: (o.symbol || '').replace(/USDT$/i, '') || o.symbol,
+          full: o.symbol,
+          longEx: o.longExchange || o.buyExchange || '?',
+          shortEx: o.shortExchange || o.sellExchange || '?',
+          net: Number(o.netSpreadPercent != null ? o.netSpreadPercent : o.netProfitPercent) || 0,
+          gross: Number(o.grossSpreadPercent != null ? o.grossSpreadPercent : o.grossSpreadTopPercent) || 0,
+          rt: Number(o.netRoundTripPercent) || 0,
+          fund: Number(o.expectedFundingPercent) || 0,
+          fill: o.fullyFilled !== false
+        }));
+        // Supplement: universe cross-mid Δ when few signals
+        if (list.length < 8 && data.bookTickers) {
+          const seen = new Set(list.map(x => (x.full || '').toUpperCase()));
+          Object.keys(data.bookTickers).forEach(sym => {
+            if (seen.has(sym.toUpperCase())) return;
+            const by = data.bookTickers[sym] || {};
+            const mids = Object.keys(by).map(ex => {
+              const b = by[ex];
+              const bid = Number(b.bestBid), ask = Number(b.bestAsk);
+              if (bid <= 0 || ask <= 0) return null;
+              return { ex, mid: (bid + ask) / 2, bid, ask };
+            }).filter(Boolean);
+            if (mids.length < 2) return;
+            mids.sort((a, b) => a.mid - b.mid);
+            const lo = mids[0], hi = mids[mids.length - 1];
+            const gross = lo.mid > 0 ? ((hi.mid - lo.mid) / lo.mid) * 100 : 0;
+            if (gross < 0.01) return;
+            list.push({
+              symbol: sym.replace(/USDT$/i, ''),
+              full: sym,
+              longEx: lo.ex,
+              shortEx: hi.ex,
+              net: gross, // display gross mid gap when no fee-scored opp yet
+              gross: gross,
+              rt: 0,
+              fund: 0,
+              fill: true,
+              midOnly: true
+            });
+            seen.add(sym.toUpperCase());
+          });
+        }
+        list.sort((a, b) => b.net - a.net);
+        list = list.slice(0, 15);
+        if (boardSub) {
+          boardSub.textContent = list.length
+            ? (list.filter(x => !x.midOnly).length + ' fee-scored · ' + list.length + ' shown · threshold ' + AB.fmt(minShow, 2) + '%')
+            : ('threshold ' + AB.fmt(minShow, 2) + '% · waiting books');
+        }
+        if (!list.length) {
+          board.innerHTML = '<div class="arb-empty">Нет строк — ждём WS books / scan. Universe: ' +
+            (symbols.length || 0) + ' pairs</div>';
+        } else {
+          board.innerHTML = list.map((r, i) => {
+            const hot = r.net >= 0.15 ? ' hot' : '';
+            const sc = r.net >= 0.2 ? 'strong' : (r.net >= 0.08 ? 'mid' : 'weak');
+            const tag = r.midOnly ? ' <span class="muted" style="font-size:10px">midΔ</span>' : '';
+            return '<div class="arb-row' + hot + '">' +
+              '<div class="arb-rank">' + (i + 1) + '</div>' +
+              '<div class="arb-sym">' + r.symbol + tag + '</div>' +
+              '<div class="arb-route">' +
+                '<div class="arb-leg long"><span class="lbl">long ' + r.longEx + '</span>' +
+                  '<span class="val">' + (r.midOnly ? 'cheap' : 'buy') + '</span></div>' +
+                '<div class="arb-leg short"><span class="lbl">short ' + r.shortEx + '</span>' +
+                  '<span class="val">' + (r.midOnly ? 'rich' : 'sell') + '</span></div>' +
+                (r.rt ? '<span class="muted mono" style="font-size:11px">RT ' + r.rt.toFixed(3) + '%</span>' : '') +
+              '</div>' +
+              '<div class="arb-spread ' + sc + '">' + r.net.toFixed(4) + '%</div>' +
+              '</div>';
+          }).join('');
+        }
+      }
+
+
       html('d_day', AB.fmtUsd(fp.dailyRealizedPnlUsd != null ? fp.dailyRealizedPnlUsd : 0));
 
       const banner = $('d_banner');
