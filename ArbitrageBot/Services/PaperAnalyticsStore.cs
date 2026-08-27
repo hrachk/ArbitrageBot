@@ -206,20 +206,24 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                              ?? row.GetType().GetProperty("id")?.GetValue(row)?.ToString();
                 // anonymous types — serialize compare via json
             }
+            var holdMin = trade.ClosedAt is { } cAt
+                ? (cAt - trade.OpenedAt).TotalMinutes
+                : 0d;
             _tradeLedger.Insert(0, new
             {
-                trade.Id,
+                id = trade.Id,
                 status = trade.Status,
-                trade.OpenedAt,
-                trade.ClosedAt,
-                trade.Symbol,
-                trade.LongExchange,
-                trade.ShortExchange,
-                trade.BaseQty,
-                trade.LongEntry,
-                trade.ShortEntry,
+                openedAt = trade.OpenedAt,
+                closedAt = trade.ClosedAt,
+                symbol = trade.Symbol,
+                longExchange = trade.LongExchange,
+                shortExchange = trade.ShortExchange,
+                baseQty = trade.BaseQty,
+                longEntry = trade.LongEntry,
+                shortEntry = trade.ShortEntry,
                 realizedPnlUsd = pnl,
-                trade.Message
+                holdMin,
+                message = trade.Message
             });
             SaveLedger();
             MaybeFlushDaily();
@@ -431,7 +435,12 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             if (el.TryGetProperty("openedAt", out var oa) && oa.ValueKind == JsonValueKind.String
                 && DateTime.TryParse(oa.GetString(), out var odt))
                 openedAt = odt.ToUniversalTime();
-            var hold = Math.Max(0, (closedAt - openedAt).TotalMinutes);
+            else if (el.TryGetProperty("OpenedAt", out var oa2) && oa2.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(oa2.GetString(), out var odt2))
+                openedAt = odt2.ToUniversalTime();
+            double hold = Math.Max(0, (closedAt - openedAt).TotalMinutes);
+            if (el.TryGetProperty("holdMin", out var hm) && hm.TryGetDouble(out var hmd) && hmd > 0)
+                hold = hmd;
             var sym = el.TryGetProperty("symbol", out var s) ? s.GetString() ?? "?" :
                       (el.TryGetProperty("Symbol", out var s2) ? s2.GetString() ?? "?" : "?");
             var status = el.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";

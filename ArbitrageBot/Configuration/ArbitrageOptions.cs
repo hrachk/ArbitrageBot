@@ -56,6 +56,10 @@ public class ArbitrageOptions
     public decimal MinDepthScoreForUniverse { get; set; } = 0.85m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
     public decimal OpenEdgeBufferPercent { get; set; } = 0.01m;
+    /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
+    public decimal MinTakeProfitUsd { get; set; } = 0.15m;
+    /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
+    public decimal MinGrossSpreadPercent { get; set; } = 0.28m;
     /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 

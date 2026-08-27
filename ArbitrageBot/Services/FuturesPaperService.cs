@@ -318,20 +318,32 @@ public class FuturesPaperService : IFuturesPaperService
                 var holdMin = R.FuturesMaxHoldMinutes > 0 ? R.FuturesMaxHoldMinutes : 30;
                 var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
 
-                // Converged: width below threshold OR shrunk to <= 40% of entry width
-                var threshold = closeWhenNetBelowPercent;
-                var shrunkALot = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.4m;
-                var belowAbs = currentWidth <= threshold;
-                var converged = belowAbs || shrunkALot;
-
-                // Risk: force close on stop-loss (unrealized) — use full economic pnl
+                // Economic projected PnL (already includes open+close fees)
                 pos.UnrealizedPnlUsd = pnl;
                 var stop = R.FuturesStopLossUsd;
                 var stopHit = stop < 0 && pnl <= stop;
 
-                if (!converged && !timedOut && !stopHit) continue;
+                // Converge signal: width collapsed
+                var threshold = closeWhenNetBelowPercent;
+                var shrunkALot = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.35m;
+                var belowAbs = currentWidth <= threshold;
+                var widthConverged = belowAbs || shrunkALot;
 
-                var reason = stopHit ? "stop-loss" : timedOut ? "timeout" : "converge";
+                // PROFESSIONAL EXIT: only take "converge" closes when PnL is actually green
+                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.15m;
+                var takeProfit = pnl >= minTp;
+                // Near-zero width + positive PnL (even small)
+                var convergeProfit = widthConverged && pnl >= 0.02m;
+                // Early take-profit when width shrank a lot and still green
+                var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.7m;
+
+                if (!stopHit && !timedOut && !convergeProfit && !earlyTp)
+                    continue;
+
+                var reason = stopHit ? "stop-loss"
+                    : earlyTp || takeProfit && !timedOut ? "take-profit"
+                    : timedOut ? "timeout"
+                    : "converge";
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd
                     : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
@@ -367,6 +379,7 @@ public class FuturesPaperService : IFuturesPaperService
                         Status = reason switch
                         {
                             "stop-loss" => "Closed(stop)",
+                            "take-profit" => "Closed(tp)",
                             "timeout" => "Closed(timeout)",
                             _ => "Closed(converge)"
                         },

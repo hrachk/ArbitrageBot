@@ -111,6 +111,8 @@ public sealed class RuntimeRiskConfig
         RequireDepthFullFill = o.RequireDepthFullFill,
         MinDepthScoreForUniverse = o.MinDepthScoreForUniverse,
         OpenEdgeBufferPercent = o.OpenEdgeBufferPercent,
+        MinTakeProfitUsd = o.MinTakeProfitUsd,
+        MinGrossSpreadPercent = o.MinGrossSpreadPercent,
         ExcludeToxicBases = o.ExcludeToxicBases?.ToList() ?? [],
         LiveMaxOpenPositions = o.LiveMaxOpenPositions,
         LiveMaxNotionalUsd = o.LiveMaxNotionalUsd

@@ -478,7 +478,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var minEdge = _runtime.Snapshot.MinProfitPercent
                                   + (_runtime.Snapshot.OpenEdgeBufferPercent > 0 ? _runtime.Snapshot.OpenEdgeBufferPercent : 0m);
-                    if (thresholdMetric < minEdge)
+                    var minGross = _runtime.Snapshot.MinGrossSpreadPercent > 0
+                        ? _runtime.Snapshot.MinGrossSpreadPercent
+                        : 0.28m;
+                    // Gross must clear ~4 taker legs; RT metric must clear min edge
+                    if (gross < minGross || thresholdMetric < minEdge)
                     {
                         _edgeFirstSeen.TryRemove($"{symbol}|{longEx}|{shortEx}", out _);
                         continue;
