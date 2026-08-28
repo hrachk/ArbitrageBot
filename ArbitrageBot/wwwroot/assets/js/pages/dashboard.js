@@ -39,45 +39,17 @@ AB.pages.dashboard = {
           gross: Number(o.grossSpreadPercent != null ? o.grossSpreadPercent : o.grossSpreadTopPercent) || 0,
           rt: Number(o.netRoundTripPercent) || 0,
           fund: Number(o.expectedFundingPercent) || 0,
-          fill: o.fullyFilled !== false
+          fill: o.fullyFilled !== false,
+          exec: o.isExecutable === true,
+          midOnly: o.isExecutable !== true
         }));
-        // Supplement: universe cross-mid Δ when few signals
-        if (list.length < 8 && data.bookTickers) {
-          const seen = new Set(list.map(x => (x.full || '').toUpperCase()));
-          Object.keys(data.bookTickers).forEach(sym => {
-            if (seen.has(sym.toUpperCase())) return;
-            const by = data.bookTickers[sym] || {};
-            const mids = Object.keys(by).map(ex => {
-              const b = by[ex];
-              const bid = Number(b.bestBid), ask = Number(b.bestAsk);
-              if (bid <= 0 || ask <= 0) return null;
-              return { ex, mid: (bid + ask) / 2, bid, ask };
-            }).filter(Boolean);
-            if (mids.length < 2) return;
-            mids.sort((a, b) => a.mid - b.mid);
-            const lo = mids[0], hi = mids[mids.length - 1];
-            const gross = lo.mid > 0 ? ((hi.mid - lo.mid) / lo.mid) * 100 : 0;
-            if (gross < 0.01) return;
-            list.push({
-              symbol: sym.replace(/USDT$/i, ''),
-              full: sym,
-              longEx: lo.ex,
-              shortEx: hi.ex,
-              net: gross, // display gross mid gap when no fee-scored opp yet
-              gross: gross,
-              rt: 0,
-              fund: 0,
-              fill: true,
-              midOnly: true
-            });
-            seen.add(sym.toUpperCase());
-          });
-        }
+        // Board = same ranked routes as bot scan (no foreign midΔ symbols)
+        // near-miss rows: isExecutable === false
         list.sort((a, b) => b.net - a.net);
         list = list.slice(0, 15);
         if (boardSub) {
           boardSub.textContent = list.length
-            ? (list.filter(x => !x.midOnly).length + ' fee-scored · ' + list.length + ' shown · threshold ' + AB.fmt(minShow, 2) + '%')
+            ? (list.filter(x => x.exec).length + ' EXEC · ' + list.length + ' ranked · threshold ' + AB.fmt(minShow, 2) + '%')
             : ('threshold ' + AB.fmt(minShow, 2) + '% · waiting books');
         }
         if (!list.length) {
@@ -87,7 +59,7 @@ AB.pages.dashboard = {
           board.innerHTML = list.map((r, i) => {
             const hot = r.net >= 0.15 ? ' hot' : '';
             const sc = r.net >= 0.2 ? 'strong' : (r.net >= 0.08 ? 'mid' : 'weak');
-            const tag = r.midOnly ? ' <span class="muted" style="font-size:10px">midΔ</span>' : '';
+            const tag = r.exec ? ' <span class="pos" style="font-size:10px">EXEC</span>' : ' <span class="muted" style="font-size:10px">watch</span>';
             return '<div class="arb-row' + hot + '">' +
               '<div class="arb-rank">' + (i + 1) + '</div>' +
               '<div class="arb-sym">' + r.symbol + tag + '</div>' +

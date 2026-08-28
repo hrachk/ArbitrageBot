@@ -12,6 +12,8 @@ public record FuturesOpportunity
     public decimal NotionalUsd { get; init; }
     public decimal BaseQty { get; init; }
     public bool FullyFilled { get; init; }
+    /// <summary>Passed all open gates (fees, persist, depth).</summary>
+    public bool IsExecutable { get; init; }
     public decimal GrossSpreadPercent { get; init; }
     /// <summary>Open fees only (legacy view).</summary>
     public decimal NetSpreadPercent { get; init; }

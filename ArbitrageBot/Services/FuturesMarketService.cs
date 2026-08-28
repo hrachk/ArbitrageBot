@@ -477,51 +477,53 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         - shortVwap * qty * (shortFee / 100m) * 2m
                         + notional * fundPct / 100m;
 
+                    // Rank ALL positive-gross routes for UI + bot (same list). Executable = passed gates.
+                    if (gross <= 0) continue;
+
                     var snap = _runtime.Snapshot;
                     var scalp = snap.SpatialScalpMode;
-                    // Scalp: enter on net-after-open-fees (2 legs); classic: full RT
                     if (scalp)
                         thresholdMetric = netOpen;
 
                     var minEdge = snap.MinProfitPercent
                                   + (snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0m);
-                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.22m;
-
+                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.12m;
                     var edgeKey = $"{symbol}|{longEx}|{shortEx}";
-                    // Spreading edge: gross must not be collapsing vs ~1s ago
+
+                    var spreadingOk = true;
                     if (snap.RequireSpreadingEdge)
                     {
                         var now = DateTime.UtcNow;
                         if (_grossHistory.TryGetValue(edgeKey, out var prev)
                             && (now - prev.utc).TotalMilliseconds is >= 400 and <= 3000
-                            && gross + 0.02m < prev.gross)
-                        {
-                            // dying spread — skip
-                            continue;
-                        }
+                            && gross + 0.015m < prev.gross)
+                            spreadingOk = false;
                         _grossHistory[edgeKey] = (gross, now);
                     }
 
-                    if (gross < minGross || thresholdMetric < minEdge)
-                    {
-                        _edgeFirstSeen.TryRemove(edgeKey, out _);
-                        continue;
-                    }
-
-                    // Persistence: edge must hold MinSpreadPersistMs (anti-flash spike)
-                    var persistMs = _runtime.Snapshot.MinSpreadPersistMs;
+                    var persistMs = snap.MinSpreadPersistMs;
                     var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
                     var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
-                    if (persistMs > 0 && heldMs < persistMs)
-                    {
+                    var persistOk = persistMs <= 0 || heldMs >= persistMs;
+                    if (!persistOk)
                         LastScanPersistPending++;
-                        continue; // still maturing — not yet a tradeable candidate
-                    }
 
-                    // Full-fill gate at scan level when required
-                    if ((_runtime.Snapshot.RequireDepthFullFill || _runtime.Snapshot.PaperRequireFullFill)
-                        && !(buyFill.FullyFilled && sellFill.FullyFilled))
-                        continue;
+                    var filled = buyFill.FullyFilled && sellFill.FullyFilled;
+                    var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
+                    var fillOk = !needFill || filled;
+
+                    // Executable only when gates pass (UI still shows ranked near-misses)
+                    var executable = gross >= minGross
+                                     && thresholdMetric >= minEdge
+                                     && spreadingOk
+                                     && persistOk
+                                     && fillOk;
+
+                    if (!executable && (gross < minGross * 0.5m || thresholdMetric < 0))
+                    {
+                        // too far from tradeable — keep ranking noise low
+                        if (gross < 0.04m) continue;
+                    }
 
                     list.Add(new FuturesOpportunity
                     {
@@ -534,7 +536,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         ShortBidTop = sellFill.TopOfBookPrice,
                         NotionalUsd = notional,
                         BaseQty = qty,
-                        FullyFilled = buyFill.FullyFilled && sellFill.FullyFilled,
+                        FullyFilled = filled,
+                        IsExecutable = executable,
                         GrossSpreadPercent = gross,
                         NetSpreadPercent = netOpen,
                         NetRoundTripPercent = netRt,
@@ -551,11 +554,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             }
         }
 
-        // Drop persistence keys that are no longer above threshold this cycle
         var alive = new HashSet<string>(list.Select(o => $"{o.Symbol}|{o.LongExchange}|{o.ShortExchange}"), StringComparer.OrdinalIgnoreCase);
         foreach (var k in _edgeFirstSeen.Keys)
         {
-            // keep pending keys (not yet in list) only if recently touched — simple: remove if not alive and age > 2*persist
             if (alive.Contains(k)) continue;
             if (_edgeFirstSeen.TryGetValue(k, out var t0) &&
                 (DateTime.UtcNow - t0).TotalMilliseconds > Math.Max(5000, _runtime.Snapshot.MinSpreadPersistMs * 3))
@@ -566,7 +567,13 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         LastScanBestNetOpen = bestNet;
         LastScanBooksReady = booksReady;
         LastScanPairsCompared = pairsCompared;
-        return list.OrderByDescending(x => x.NetAfterFundingPercent).ToList();
+
+        // One ranked list for dashboard + execution (top by open-edge net)
+        return list
+            .OrderByDescending(x => x.IsExecutable)
+            .ThenByDescending(x => x.NetSpreadPercent)
+            .Take(20)
+            .ToList();
     }
 
     public async Task StopAsync(CancellationToken ct = default)

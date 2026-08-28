@@ -206,6 +206,7 @@ public class ArbitrageWorker : BackgroundService
             QuoteSize = o.NotionalUsd,
             FillBaseQty = o.BaseQty,
             FullyFilled = o.FullyFilled,
+            IsExecutable = o.IsExecutable,
             GrossSpreadTopPercent = o.GrossSpreadPercent,
             GrossSpreadVwapPercent = o.GrossSpreadPercent,
             BuyFeePercent = o.LongFeePercent,
@@ -244,8 +245,12 @@ public class ArbitrageWorker : BackgroundService
 
         if (opps.Count > 0)
         {
-            _logger.LogInformation("Futures scan: {N} candidate(s), best RT={Best:F3}% open={Open:F3}%",
-                opps.Count, bestRt, bestOpen);
+            var nExec = opps.Count(x => x.IsExecutable);
+            _logger.LogInformation(
+                "Futures scan: ranked={N} EXEC={E} best open={Open:F3}% RT={Best:F3}% | top={Top}",
+                opps.Count, nExec, bestOpen, bestRt,
+                string.Join(", ", opps.Take(5).Select(x =>
+                    $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} {x.NetSpreadPercent:F3}%{(x.IsExecutable ? "*" : "")}")));
         }
         else if ((DateTime.UtcNow - _lastNoCandDiagUtc).TotalSeconds >= 30)
         {
@@ -259,7 +264,7 @@ public class ArbitrageWorker : BackgroundService
             // Professional paper: fill several hedges per cycle (until max positions / skips)
             var openedThisCycle = 0;
             var maxPerCycle = Math.Max(1, _options.FuturesMaxOpenPositions);
-            foreach (var o in opps.OrderByDescending(x => x.NetSpreadPercent))
+            foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.NetSpreadPercent))
             {
                 if (openedThisCycle >= maxPerCycle) break;
 

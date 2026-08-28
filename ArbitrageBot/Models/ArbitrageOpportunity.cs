@@ -27,6 +27,9 @@ public record ArbitrageOpportunity
     /// <summary>True when full quote size was available on both sides.</summary>
     public bool FullyFilled { get; init; }
 
+    /// <summary>Passed open gates — bot may trade this route.</summary>
+    public bool IsExecutable { get; init; }
+
     public decimal GrossSpreadTopPercent { get; init; }
     public decimal GrossSpreadVwapPercent { get; init; }
 

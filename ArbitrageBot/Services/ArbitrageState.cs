@@ -204,6 +204,7 @@ public class ArbitrageState
                     o.QuoteSize,
                     o.FillBaseQty,
                     o.FullyFilled,
+                    isExecutable = o.IsExecutable,
                     grossSpreadTopPercent = o.GrossSpreadTopPercent,
                     grossSpreadVwapPercent = o.GrossSpreadVwapPercent,
                     o.BuyFeePercent,
