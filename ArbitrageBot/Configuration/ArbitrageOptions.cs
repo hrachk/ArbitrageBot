@@ -23,7 +23,7 @@ public class ArbitrageOptions
         ["GateIo"] = 0.05m
     };
 
-    public decimal QuoteSize { get; set; } = 500m;
+    public decimal QuoteSize { get; set; } = 100m;
     public int MaxDepthLevels { get; set; } = 20;
 
     public bool PaperAutoExecute { get; set; } = true;

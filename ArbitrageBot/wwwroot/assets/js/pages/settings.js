@@ -1,51 +1,52 @@
 AB.pages.settings = {
   presets: {
     conservative: {
-      minProfitPercent: 0.15,
-      quoteSize: 500,
-      leverage: 2,
+      minProfitPercent: 0.08,
+      quoteSize: 80,
+      leverage: 3,
       maxOpenPositions: 2,
-      stopLossUsd: -25,
-      dailyLossLimitUsd: -80,
-      maxHoldMinutes: 10,
-      closeBelowNetPercent: 0.01,
-      maxMarginUsagePercent: 0.08,
-      maxNotionalUsd: 1200,
-      paperCooldownMs: 12000,
+      stopLossUsd: -12,
+      dailyLossLimitUsd: -50,
+      maxHoldMinutes: 8,
+      closeBelowNetPercent: 0.02,
+      maxMarginUsagePercent: 0.25,
+      maxNotionalUsd: 80,
+      paperCooldownMs: 1500,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true
     },
     balanced: {
-      minProfitPercent: 0.10,
-      quoteSize: 1000,
-      leverage: 3,
-      maxOpenPositions: 3,
-      stopLossUsd: -40,
-      dailyLossLimitUsd: -150,
-      maxHoldMinutes: 15,
-      closeBelowNetPercent: 0.015,
-      maxMarginUsagePercent: 0.12,
-      maxNotionalUsd: 2500,
-      paperCooldownMs: 8000,
-      paperRequireFullFill: true,
-      requireRoundTripEdge: true,
+      // BEST SpatialScalp — default
+      minProfitPercent: 0.05,
+      quoteSize: 100,
+      leverage: 5,
+      maxOpenPositions: 4,
+      stopLossUsd: -15,
+      dailyLossLimitUsd: -80,
+      maxHoldMinutes: 12,
+      closeBelowNetPercent: 0.02,
+      maxMarginUsagePercent: 0.35,
+      maxNotionalUsd: 100,
+      paperCooldownMs: 800,
+      paperRequireFullFill: false,
+      requireRoundTripEdge: false,
       includeFunding: true
     },
     aggressive: {
-      minProfitPercent: 0.07,
-      quoteSize: 1500,
+      minProfitPercent: 0.035,
+      quoteSize: 120,
       leverage: 5,
-      maxOpenPositions: 4,
-      stopLossUsd: -60,
-      dailyLossLimitUsd: -250,
-      maxHoldMinutes: 20,
-      closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.18,
-      maxNotionalUsd: 4000,
-      paperCooldownMs: 5000,
-      paperRequireFullFill: true,
-      requireRoundTripEdge: true,
+      maxOpenPositions: 5,
+      stopLossUsd: -20,
+      dailyLossLimitUsd: -100,
+      maxHoldMinutes: 15,
+      closeBelowNetPercent: 0.025,
+      maxMarginUsagePercent: 0.4,
+      maxNotionalUsd: 120,
+      paperCooldownMs: 500,
+      paperRequireFullFill: false,
+      requireRoundTripEdge: false,
       includeFunding: true
     }
   },
@@ -58,6 +59,8 @@ AB.pages.settings = {
       try {
         const r = await AB.api.get('/api/settings/risk');
         this.fillRisk(r);
+        // Ensure BEST defaults visible if API returned zeros
+        if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) this.applyPreset('balanced');
       } catch (_) {}
     } catch (e) {
       AB.$('s_msg').className = 'alert warn';
@@ -99,7 +102,7 @@ AB.pages.settings = {
     if (AB.$('s_strategy')) AB.$('s_strategy').value = t.strategyMode || 'FuturesCross';
     if (AB.$('s_paper')) AB.$('s_paper').checked = t.paperTrading !== false;
     if (AB.$('s_auto')) AB.$('s_auto').checked = !!t.paperAutoExecute;
-    if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.025;
+    if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.05;
     if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 2000;
     if (AB.$('s_lev')) AB.$('s_lev').value = t.futuresPaperLeverage ?? 5;
     if (AB.$('s_maxPos')) AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 6;
@@ -199,7 +202,7 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     strategyMode: AB.$('s_strategy')?.value || 'FuturesCross',
     paperTrading: !!AB.$('s_paper')?.checked,
     paperAutoExecute: !!AB.$('s_auto')?.checked,
-    minProfitPercent: num('s_minProfit', 0.025),
+    minProfitPercent: num('s_minProfit', 0.05),
     quoteSize: num('s_size', 2000),
     futuresPaperLeverage: Math.min(10, Math.max(1, num('s_lev', 5))),
     futuresMaxOpenPositions: int('s_maxPos', 6),
