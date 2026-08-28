@@ -1,0 +1,46 @@
+{
+  "dayUtc": "2026-08-28",
+  "scans": 153327,
+  "avgCandidates": 0.17,
+  "opens": 95,
+  "closes": 94,
+  "skips": 6232,
+  "realizedPnlUsd": -0.6095,
+  "bestOpenPctSeen": 1.2758,
+  "bestRtPctSeen": 1.1958,
+  "skipReasons": [
+    {
+      "reason": "Already open on symbol",
+      "count": 2355
+    },
+    {
+      "reason": "no-candidates-above-min",
+      "count": 1116
+    },
+    {
+      "reason": "Margin leg \u003E 12% free on Binance",
+      "count": 705
+    },
+    {
+      "reason": "Margin leg \u003E 12% free on Bitget",
+      "count": 511
+    },
+    {
+      "reason": "Margin leg \u003E 12% free on Bybit",
+      "count": 485
+    },
+    {
+      "reason": "Margin leg \u003E 12% free on OKX",
+      "count": 446
+    },
+    {
+      "reason": "Cooldown 800ms",
+      "count": 347
+    },
+    {
+      "reason": "Max legs on venue Binance (3)",
+      "count": 267
+    }
+  ],
+  "updatedUtc": "2026-08-28T13:40:49.2330959Z"
+}
