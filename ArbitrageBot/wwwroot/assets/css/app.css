@@ -163,7 +163,14 @@ table.data th {
 }
 table.data td { padding: 9px 10px; border-bottom: 1px solid rgba(30,42,58,0.7); }
 table.data tr:hover td { background: rgba(255,255,255,0.015); }
-.scroll { overflow: auto; max-height: 360px; border-radius: 8px; }
+.scroll {
+  overflow: auto;
+  max-height: 360px;
+  border-radius: 8px;
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge legacy */
+}
+.scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 .tag {
   display: inline-flex; align-items: center; gap: 4px;
@@ -364,6 +371,32 @@ table.data tr:hover td { background: rgba(255,255,255,0.015); }
 .arb-board {
   margin-bottom: 14px;
 }
+/* ~10 arb rows visible, rest scroll (no visible bar) */
+.arb-board-body {
+  max-height: calc(10 * 52px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.arb-board-body::-webkit-scrollbar { width: 0; height: 0; display: none; }
+/* Top signals ~7 table rows */
+.scroll-signals {
+  max-height: calc(7 * 36px + 40px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: 8px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-signals::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.scroll-trades {
+  max-height: calc(7 * 36px + 40px);
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-trades::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .arb-board-hd {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 10px; gap: 10px; flex-wrap: wrap;

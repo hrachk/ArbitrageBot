@@ -46,7 +46,7 @@ AB.pages.dashboard = {
         // Board = same ranked routes as bot scan (no foreign midΔ symbols)
         // near-miss rows: isExecutable === false
         list.sort((a, b) => b.net - a.net);
-        list = list.slice(0, 15);
+        list = list.slice(0, 20);
         if (boardSub) {
           boardSub.textContent = list.length
             ? (list.filter(x => x.exec).length + ' EXEC · ' + list.length + ' ranked · threshold ' + AB.fmt(minShow, 2) + '%')
