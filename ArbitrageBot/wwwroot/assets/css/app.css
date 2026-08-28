@@ -466,3 +466,14 @@ table.data tr:hover td { background: rgba(255,255,255,0.015); }
 .arb-empty {
   padding: 24px; text-align: center; color: #64748b; font-size: 13px;
 }
+
+
+/* Live spread map — ~5 rows visible, rest scroll, bar hidden */
+.spread-bars-body {
+  max-height: calc(5 * 34px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.spread-bars-body::-webkit-scrollbar { width: 0; height: 0; display: none; }
