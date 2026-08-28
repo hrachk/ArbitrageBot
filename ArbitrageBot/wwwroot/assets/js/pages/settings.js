@@ -17,20 +17,20 @@ AB.pages.settings = {
       includeFunding: true
     },
     balanced: {
-      // BEST SpatialScalp — default
-      minProfitPercent: 0.05,
+      // QUALITY — default (no kopeck churn)
+      minProfitPercent: 0.08,
       quoteSize: 100,
       leverage: 5,
-      maxOpenPositions: 4,
-      stopLossUsd: -15,
-      dailyLossLimitUsd: -80,
+      maxOpenPositions: 2,
+      stopLossUsd: -12,
+      dailyLossLimitUsd: -40,
       maxHoldMinutes: 12,
       closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.35,
+      maxMarginUsagePercent: 0.30,
       maxNotionalUsd: 100,
-      paperCooldownMs: 800,
-      paperRequireFullFill: false,
-      requireRoundTripEdge: false,
+      paperCooldownMs: 12000,
+      paperRequireFullFill: true,
+      requireRoundTripEdge: true,
       includeFunding: true
     },
     aggressive: {
@@ -102,7 +102,7 @@ AB.pages.settings = {
     if (AB.$('s_strategy')) AB.$('s_strategy').value = t.strategyMode || 'FuturesCross';
     if (AB.$('s_paper')) AB.$('s_paper').checked = t.paperTrading !== false;
     if (AB.$('s_auto')) AB.$('s_auto').checked = !!t.paperAutoExecute;
-    if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.05;
+    if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.08;
     if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 2000;
     if (AB.$('s_lev')) AB.$('s_lev').value = t.futuresPaperLeverage ?? 5;
     if (AB.$('s_maxPos')) AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 6;
@@ -202,7 +202,7 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     strategyMode: AB.$('s_strategy')?.value || 'FuturesCross',
     paperTrading: !!AB.$('s_paper')?.checked,
     paperAutoExecute: !!AB.$('s_auto')?.checked,
-    minProfitPercent: num('s_minProfit', 0.05),
+    minProfitPercent: num('s_minProfit', 0.08),
     quoteSize: num('s_size', 2000),
     futuresPaperLeverage: Math.min(10, Math.max(1, num('s_lev', 5))),
     futuresMaxOpenPositions: int('s_maxPos', 6),
