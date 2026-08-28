@@ -22,7 +22,8 @@ public class FuturesPaperService : IFuturesPaperService
     private readonly ConcurrentDictionary<string, decimal> _margin = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FuturesPaperPosition> _positions = [];
     private readonly List<FuturesPaperTrade> _trades = [];
-    private DateTime _lastOpenUtc = DateTime.MinValue;
+    private DateTime _lastOpenUtc;
+    private DateTime _lastCloseUtc = DateTime.MinValue;
 
     public decimal RealizedPnlUsd { get; private set; }
     public decimal UnrealizedHintUsd { get; set; }
@@ -76,6 +77,7 @@ public class FuturesPaperService : IFuturesPaperService
             _dayUtc = DateTime.UtcNow.Date;
             TradeAttempts = 0;
             _lastOpenUtc = DateTime.MinValue;
+            _lastCloseUtc = DateTime.MinValue;
             ClearOpenStateFile();
             _logger.LogInformation("Futures paper margin initialized: {Start} USDT x {N} exchanges", start, _margin.Count);
         }
@@ -90,7 +92,14 @@ public class FuturesPaperService : IFuturesPaperService
 
             var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
             if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
-                return Fail(opp, $"Cooldown {cooldown}ms");
+                return Fail(opp, $"Cooldown open {cooldown}ms");
+            if ((DateTime.UtcNow - _lastCloseUtc).TotalMilliseconds < cooldown)
+                return Fail(opp, $"Cooldown close {cooldown}ms");
+
+            // QUALITY: reject if round-trip edge cannot cover close fees
+            var minEdge = R.MinProfitPercent + (R.OpenEdgeBufferPercent > 0 ? R.OpenEdgeBufferPercent : 0m);
+            if (opp.NetRoundTripPercent < minEdge)
+                return Fail(opp, $"RT {opp.NetRoundTripPercent:F3}% < min {minEdge:F3}%");
 
             if (R.PaperRequireFullFill && !opp.FullyFilled)
                 return Fail(opp, "Require full fill");
@@ -340,11 +349,14 @@ public class FuturesPaperService : IFuturesPaperService
                 var widthConverged = belowAbs || shrunkALot;
 
                 // PROFESSIONAL EXIT: only take "converge" closes when PnL is actually green
-                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.05m;
-                var takeProfit = pnl >= minTp;
-                var anyGreen = pnl >= 0.01m && currentWidth <= pos.EntryWidthPercent * 0.85m;
-                var convergeProfit = widthConverged && pnl >= 0.01m;
-                var earlyTp = (takeProfit || anyGreen) && currentWidth <= pos.EntryWidthPercent * 0.75m;
+                // Min TP scales with size: at least config OR 0.12% of notional
+                var notional = pos.LongEntry * pos.BaseQty;
+                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.25m;
+                var minTpScaled = Math.Max(minTp, notional * 0.0012m);
+                var takeProfit = pnl >= minTpScaled;
+                // Converge only if clearly green (not kopeck noise)
+                var convergeProfit = widthConverged && pnl >= minTpScaled * 0.8m;
+                var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.65m;
 
                 if (!stopHit && !timedOut && !convergeProfit && !earlyTp)
                     continue;
@@ -371,6 +383,7 @@ public class FuturesPaperService : IFuturesPaperService
                     DailyRealizedPnlUsd = 0;
                 }
                 DailyRealizedPnlUsd += pnl;
+                _lastCloseUtc = DateTime.UtcNow;
                 _positions.Remove(pos);
 
                 var trade = _trades.FirstOrDefault(t => t.Id == pos.TradeId);

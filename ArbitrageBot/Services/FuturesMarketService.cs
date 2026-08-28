@@ -481,13 +481,23 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (gross <= 0) continue;
 
                     var snap = _runtime.Snapshot;
+                    // QUALITY: always score on full round-trip (open+close fees).
+                    // Net-open-only entries were the "kopeck then give back" loss factory.
                     var scalp = snap.SpatialScalpMode;
-                    if (scalp)
+                    if (snap.FuturesRequireRoundTripEdge)
+                        thresholdMetric = snap.FuturesIncludeFunding ? netAfterFund : netRt;
+                    else if (scalp)
+                        // Still require RT >= 0 so close fees are not ignored
+                        thresholdMetric = Math.Min(netOpen, netRt);
+                    else
                         thresholdMetric = netOpen;
 
                     var minEdge = snap.MinProfitPercent
                                   + (snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0m);
-                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.12m;
+                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.25m;
+                    // Hard floor: never EXEC if RT cannot cover close path
+                    if (netRt < minEdge * 0.5m)
+                        thresholdMetric = Math.Min(thresholdMetric, netRt);
                     var edgeKey = $"{symbol}|{longEx}|{shortEx}";
 
                     var spreadingOk = true;
