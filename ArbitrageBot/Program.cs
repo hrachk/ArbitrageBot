@@ -339,8 +339,8 @@ try
         Results.Ok(await live.VerifyCredentialsAsync(ct)));
 
     // Blazor terminal UI — root "/" = Dashboard
-    app.MapRazorComponents<ArbitrageBot.Components.App>()
-        .AddInteractiveServerRenderMode();
+    //app.MapRazorComponents<ArbitrageBot.Components.App>()
+    //    .AddInteractiveServerRenderMode();
 
     await app.RunAsync();
 }
