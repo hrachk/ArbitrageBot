@@ -115,6 +115,7 @@ public sealed class RuntimeRiskConfig
         MinGrossSpreadPercent = o.MinGrossSpreadPercent,
         SpatialScalpMode = o.SpatialScalpMode,
         FuturesMaxHoldSeconds = o.FuturesMaxHoldSeconds,
+        FuturesHardMaxHoldMinutes = o.FuturesHardMaxHoldMinutes,
         PaperCloseFeeFactor = o.PaperCloseFeeFactor,
         RequireSpreadingEdge = o.RequireSpreadingEdge,
         ExcludeToxicBases = o.ExcludeToxicBases?.ToList() ?? [],

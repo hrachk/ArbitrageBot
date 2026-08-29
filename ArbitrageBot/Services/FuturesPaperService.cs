@@ -89,6 +89,8 @@ public class FuturesPaperService : IFuturesPaperService
         {
             TradeAttempts++;
             if (!R.PaperTrading) return Fail(opp, "Paper disabled");
+            if (R.IsExcludedSymbol(opp.Symbol))
+                return Fail(opp, $"Toxic/excluded {opp.Symbol}");
 
             var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
             if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
@@ -336,6 +338,8 @@ public class FuturesPaperService : IFuturesPaperService
                     var holdMin = R.FuturesMaxHoldMinutes > 0 ? R.FuturesMaxHoldMinutes : 30;
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
                 }
+                var hardMin = R.FuturesHardMaxHoldMinutes > 0 ? R.FuturesHardMaxHoldMinutes : 20;
+                var hardTimedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= hardMin;
 
                 // Economic projected PnL (already includes open+close fees)
                 pos.UnrealizedPnlUsd = pnl;
@@ -358,12 +362,18 @@ public class FuturesPaperService : IFuturesPaperService
                 var convergeProfit = widthConverged && pnl >= minTpScaled * 0.8m;
                 var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.65m;
 
-                if (!stopHit && !timedOut && !convergeProfit && !earlyTp)
+                // Soft timeout NEVER flattens a loser — that was the -EV factory.
+                // Green/flat after the clock → exit. Red → wait for TP or $ stop.
+                var timeoutGreen = timedOut && pnl >= 0m;
+                var timeoutHard = hardTimedOut; // inventory recycle after N minutes even if red
+
+                if (!stopHit && !timeoutGreen && !timeoutHard && !convergeProfit && !earlyTp)
                     continue;
 
                 var reason = stopHit ? "stop-loss"
-                    : earlyTp || takeProfit && !timedOut ? "take-profit"
-                    : timedOut ? "timeout"
+                    : earlyTp || takeProfit && !timeoutHard ? "take-profit"
+                    : timeoutHard && pnl < 0 ? "timeout-hard"
+                    : timeoutGreen || timedOut ? "timeout"
                     : "converge";
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd
@@ -402,6 +412,7 @@ public class FuturesPaperService : IFuturesPaperService
                         {
                             "stop-loss" => "Closed(stop)",
                             "take-profit" => "Closed(tp)",
+                            "timeout-hard" => "Closed(timeout-hard)",
                             "timeout" => "Closed(timeout)",
                             _ => "Closed(converge)"
                         },

@@ -24,8 +24,9 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         "BTC", "ETH", "BNB", "USDC", "FDUSD", "TUSD", "DAI", "EUR", "BUSD",
         // toxic for spatial EV (meme / equity-style perps)
         "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
-        "SOXL", "SKHYNIX", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
-        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL"
+        "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
+        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "1000PEPE", "1000BONK"
     };
 
     /// <summary>Stable liquid names that usually list on 3+ venues — used only if HTTP fails.</summary>
@@ -33,11 +34,11 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     [
         "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "NEARUSDT",
         "SUIUSDT", "ARBUSDT", "OPUSDT", "APTUSDT", "INJUSDT", "SEIUSDT", "TIAUSDT",
-        "WIFUSDT", "PEPEUSDT", "FILUSDT", "ATOMUSDT", "LTCUSDT", "DOTUSDT", "TONUSDT",
+        "FILUSDT", "ATOMUSDT", "LTCUSDT", "DOTUSDT", "TONUSDT",
         "RENDERUSDT", "FETUSDT", "AAVEUSDT", "UNIUSDT", "ENAUSDT", "JUPUSDT", "WLDUSDT",
         "STRKUSDT", "ORDIUSDT", "STXUSDT", "IMXUSDT", "GRTUSDT", "SANDUSDT", "MANAUSDT",
         "CRVUSDT", "MKRUSDT", "LDOUSDT", "RUNEUSDT", "CFXUSDT", "TRXUSDT", "BCHUSDT",
-        "1000PEPEUSDT", "1000BONKUSDT", "ORDIUSDT", "PYTHUSDT", "JTOUSDT", "MEMEUSDT"
+        "PYTHUSDT", "JTOUSDT"
     ];
 
     public SymbolDiscoveryService(

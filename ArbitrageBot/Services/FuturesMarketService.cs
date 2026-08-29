@@ -424,6 +424,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         foreach (var symbol in _markets.Symbols)
         {
             if (ct.IsCancellationRequested) break;
+            if (_runtime.Snapshot.IsExcludedSymbol(symbol)) continue;
             var tickers = GetBookTickers(symbol);
             if (tickers.Count < 2) continue;
 

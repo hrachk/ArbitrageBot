@@ -49,8 +49,9 @@ public class ArbitrageOptions
     public List<string> ExcludeToxicBases { get; set; } =
     [
         "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
-        "SOXL", "SKHYNIX", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
-        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL"
+        "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
+        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "1000PEPE", "1000BONK"
     ];
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
     public decimal MinDepthScoreForUniverse { get; set; } = 0.85m;
@@ -62,8 +63,13 @@ public class ArbitrageOptions
     public decimal MinGrossSpreadPercent { get; set; } = 0.22m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = true;
-    /// <summary>Max hold in seconds when SpatialScalpMode (overrides minutes).</summary>
+    /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
     public int FuturesMaxHoldSeconds { get; set; } = 90;
+    /// <summary>
+    /// After this many minutes, flatten even if red (inventory recycle). 0 = never force-red.
+    /// Soft timeout never closes a losing hedge; only SL or this hard cap does.
+    /// </summary>
+    public int FuturesHardMaxHoldMinutes { get; set; } = 20;
     /// <summary>Close leg fees as fraction of taker (0.5 ≈ limit/maker exit).</summary>
     public decimal PaperCloseFeeFactor { get; set; } = 0.55m;
     /// <summary>Open only if gross is rising vs ~1s ago (avoid dying spreads).</summary>
@@ -144,4 +150,26 @@ public class ArbitrageOptions
             .Select(e => e.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    public static string BaseAsset(string? symbol)
+    {
+        if (string.IsNullOrWhiteSpace(symbol)) return "";
+        var s = symbol.Trim().ToUpperInvariant()
+            .Replace("-USDT-SWAP", "", StringComparison.Ordinal)
+            .Replace("-USDT", "", StringComparison.Ordinal)
+            .Replace("USDT", "", StringComparison.Ordinal);
+        if (s.StartsWith("1000", StringComparison.Ordinal)) s = "1000" + s[4..];
+        return s;
+    }
+
+    public bool IsExcludedSymbol(string? symbol)
+    {
+        var b = BaseAsset(symbol);
+        if (string.IsNullOrEmpty(b)) return false;
+        if (ExcludeMajorBases?.Any(x => string.Equals(x, b, StringComparison.OrdinalIgnoreCase)) == true)
+            return true;
+        if (ExcludeToxicBases?.Any(x => string.Equals(x, b, StringComparison.OrdinalIgnoreCase)) == true)
+            return true;
+        return b is "BTC" or "ETH" or "BNB";
+    }
 }

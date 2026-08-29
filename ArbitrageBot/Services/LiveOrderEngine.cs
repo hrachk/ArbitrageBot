@@ -274,8 +274,10 @@ public sealed class LiveOrderEngine
             var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
             var stop = stopLossUsd < 0 && legsPnl <= stopLossUsd;
             var converged = width <= closeBelow;
+            // Do not flatten a live loser on the clock — only SL or green timeout
+            var timeoutGreen = timedOut && legsPnl >= 0m;
 
-            if (!converged && !timedOut && !stop) continue;
+            if (!converged && !timeoutGreen && !stop) continue;
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;
