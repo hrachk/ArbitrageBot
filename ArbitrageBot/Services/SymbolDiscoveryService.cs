@@ -26,7 +26,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
         "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
         "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
-        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "1000PEPE", "1000BONK"
+        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
     };
 
     /// <summary>Stable liquid names that usually list on 3+ venues — used only if HTTP fails.</summary>

@@ -51,7 +51,7 @@ public class ArbitrageOptions
         "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
         "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
         "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
-        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "1000PEPE", "1000BONK"
+        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
     ];
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
     public decimal MinDepthScoreForUniverse { get; set; } = 0.85m;
