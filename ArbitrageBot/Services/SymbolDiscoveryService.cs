@@ -73,6 +73,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         CancellationToken ct = default)
     {
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("Bitget", "MarginAsset", "USDT");
+        ExchangeParameters.SetStaticParameter("Bitget", "marginCoin", "USDT");
         ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
 

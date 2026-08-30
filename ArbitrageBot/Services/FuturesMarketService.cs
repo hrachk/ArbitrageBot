@@ -64,6 +64,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         // Exchange-specific Shared API parameters for USDT-M perps
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
         ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("Bitget", "MarginAsset", "USDT");
+        ExchangeParameters.SetStaticParameter("Bitget", "marginCoin", "USDT");
+        ExchangeParameters.SetStaticParameter("BitGet", "MarginAsset", "USDT");
+        ExchangeParameters.SetStaticParameter("BitGet", "marginCoin", "USDT");
         ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("Gate", "SettleAsset", "usdt");
@@ -442,12 +446,16 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var sellFill = Estimate(symbol, shortEx, notional, isBuy: false);
                     if (!buyFill.Success || !sellFill.Success) continue;
 
-                    var qty = Math.Min(buyFill.FilledBaseQty, sellFill.FilledBaseQty);
-                    if (qty <= 0) continue;
+                    var qtyRaw = Math.Min(buyFill.FilledBaseQty, sellFill.FilledBaseQty);
+                    if (qtyRaw <= 0) continue;
 
                     var longVwap = buyFill.VwapPrice;
                     var shortVwap = sellFill.VwapPrice;
                     if (shortVwap <= longVwap) continue;
+
+                    // Round qty to exchange-safe precision (prevents Binance -1111 on live; keeps paper realistic)
+                    var qty = LiveOrderEngine.RoundBaseQty(qtyRaw, longVwap);
+                    if (qty <= 0) continue;
 
                     pairsCompared++;
                     var longFee = _options.EstimatedTakerFees.GetValueOrDefault(longEx, 0.05m);

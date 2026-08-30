@@ -37,9 +37,13 @@ try
         options.OutputOriginalData = false;
     });
 
-    // Shared API exchange parameters (USDT-M) — required before discovery/WS
+    // Shared API exchange parameters (USDT-M) — required before discovery/WS/orders
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "MarginAsset", "USDT");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "marginCoin", "USDT");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "MarginAsset", "USDT");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "marginCoin", "USDT");
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
 

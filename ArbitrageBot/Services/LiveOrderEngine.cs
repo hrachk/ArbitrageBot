@@ -9,6 +9,8 @@ using CryptoClients.Net.Models;
 using CryptoExchange.Net.Authentication;
 using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
+using OKX.Net;
+using GateIo.Net;
 
 namespace ArbitrageBot.Services;
 
@@ -77,7 +79,14 @@ public sealed class LiveOrderEngine
         var baseAsset = req.Symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
             ? req.Symbol[..^4] : req.Symbol;
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
-        var qty = SharedQuantity.Base(req.BaseQty);
+
+        // Round quantity to exchange-safe precision (avoids Binance -1111 Precision error)
+        var refPrice = req.LongAsk ?? req.ShortBid ?? 0m;
+        var roundedQty = RoundBaseQty(req.BaseQty, refPrice);
+        if (roundedQty <= 0)
+            return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty})" };
+
+        var qty = SharedQuantity.Base(roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
 
         // 1) LONG market on cheap exchange
@@ -152,7 +161,7 @@ public sealed class LiveOrderEngine
             Symbol = req.Symbol.ToUpperInvariant(),
             LongExchange = req.LongExchange,
             ShortExchange = req.ShortExchange,
-            BaseQty = req.BaseQty,
+            BaseQty = roundedQty,
             NotionalUsd = req.NotionalUsd,
             LongEntry = longAvg,
             ShortEntry = shortAvg,
@@ -340,6 +349,15 @@ public sealed class LiveOrderEngine
         var bag = new ExchangeCredentials();
         var name = exchange.Trim();
 
+        // OKX / Bitget require passphrase
+        if ((name.Equals("OKX", StringComparison.OrdinalIgnoreCase)
+             || name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+            && string.IsNullOrWhiteSpace(pass))
+        {
+            _logger.LogWarning("LIVE CreateClient {Ex}: passphrase required", name);
+            return null;
+        }
+
         if (name.Equals("Binance", StringComparison.OrdinalIgnoreCase))
         {
             bag.Binance = new BinanceCredentials(key, secret);
@@ -358,19 +376,82 @@ public sealed class LiveOrderEngine
             rest.SetApiCredentials(bag);
             rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass));
         }
+        else if (name.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+        {
+            bag.OKX = new OKXCredentials(key, secret, pass);
+            rest.SetApiCredentials(bag);
+            rest.OKX.SetApiCredentials(new OKXCredentials(key, secret, pass));
+        }
+        else if (name.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+                 || name.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+        {
+            bag.GateIo = new GateIoCredentials(key, secret);
+            rest.SetApiCredentials(bag);
+            rest.GateIo.SetApiCredentials(new GateIoCredentials(key, secret));
+        }
         else
             return null;
 
         return rest;
     }
 
+    /// <summary>
+    /// Exchange-specific parameters required by CryptoClients shared futures order API.
+    /// Bitget requires both ProductType and MarginAsset/marginCoin.
+    /// </summary>
     private static ExchangeParameters ExParams(string exchange)
     {
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
-            return new ExchangeParameters(new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"));
-        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ExchangeParameters(
+                new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
+                new ExchangeParameter("Bitget", "MarginAsset", "USDT"),
+                new ExchangeParameter("Bitget", "marginCoin", "USDT"));
+        }
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+        {
             return new ExchangeParameters(new ExchangeParameter("GateIo", "SettleAsset", "usdt"));
+        }
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ExchangeParameters(
+                new ExchangeParameter("OKX", "TradeMode", "cross"));
+        }
         return new ExchangeParameters();
+    }
+
+    /// <summary>
+    /// Round base quantity to a precision safe for most USDT-M perps.
+    /// Avoids Binance error -1111 "Precision is over the maximum defined for this asset"
+    /// when fill-estimate produces long fractional tails (e.g. ZKPUSDT).
+    /// Uses refPrice when available for tiered precision; floors (never rounds up).
+    /// </summary>
+    internal static decimal RoundBaseQty(decimal qty, decimal refPrice = 0)
+    {
+        if (qty <= 0) return 0;
+
+        int decimals;
+        if (refPrice > 0)
+        {
+            if (refPrice < 0.01m) decimals = 0;
+            else if (refPrice < 0.1m) decimals = 0;
+            else if (refPrice < 1m) decimals = 1;
+            else if (refPrice < 10m) decimals = 2;
+            else if (refPrice < 100m) decimals = 3;
+            else decimals = 4;
+        }
+        else
+        {
+            if (qty >= 100m) decimals = 0;
+            else if (qty >= 10m) decimals = 1;
+            else if (qty >= 1m) decimals = 2;
+            else decimals = 4;
+        }
+
+        var factor = (decimal)Math.Pow(10, decimals);
+        var rounded = Math.Floor(qty * factor) / factor;
+        return rounded > 0 ? rounded : 0;
     }
 
     private void TryLoad()
