@@ -106,7 +106,7 @@ public sealed class LiveOrderEngine
             positionSide: SharedPositionSide.Long,
             marginMode: null,
             clientOrderId: clientId + "-L",
-            exchangeParameters: ExParams(req.LongExchange));
+            exchangeParameters: ExParams(req.LongExchange, isClose: false));
 
         var longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
         if (!longResult.Success)
@@ -141,7 +141,7 @@ public sealed class LiveOrderEngine
             positionSide: SharedPositionSide.Short,
             marginMode: null,
             clientOrderId: clientId + "-S",
-            exchangeParameters: ExParams(req.ShortExchange));
+            exchangeParameters: ExParams(req.ShortExchange, isClose: false));
 
         var shortResult = await shortClient.PlaceFuturesOrderAsync(req.ShortExchange, shortReq, ct).ConfigureAwait(false);
         if (!shortResult.Success)
@@ -307,19 +307,22 @@ public sealed class LiveOrderEngine
     {
         try
         {
+            // Hedge mode (positionSide Long/Short): do NOT send reduceOnly.
+            // Binance/Bitget reject reduceOnly in dual-side/hedge mode (-1106 / param errors).
+            // Closing is expressed by opposite order side + same positionSide (+ Bitget tradeSide=close).
             var req = new PlaceFuturesOrderRequest(
                 symbol,
                 side,
                 SharedOrderType.Market,
                 qty,
                 price: null,
-                reduceOnly: true,
+                reduceOnly: null,
                 leverage: null,
                 timeInForce: SharedTimeInForce.ImmediateOrCancel,
                 positionSide: posSide,
                 marginMode: null,
                 clientOrderId: "ab-c-" + Guid.NewGuid().ToString("N")[..12],
-                exchangeParameters: ExParams(exchange));
+                exchangeParameters: ExParams(exchange, isClose: true));
 
             var result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
             if (!result.Success)
@@ -397,16 +400,19 @@ public sealed class LiveOrderEngine
 
     /// <summary>
     /// Exchange-specific parameters required by CryptoClients shared futures order API.
-    /// Bitget requires both ProductType and MarginAsset/marginCoin.
+    /// Bitget requires ProductType + MarginAsset/marginCoin; in hedge mode also tradeSide open/close.
     /// </summary>
-    private static ExchangeParameters ExParams(string exchange)
+    private static ExchangeParameters ExParams(string exchange, bool isClose = false)
     {
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
         {
+            // hedge-mode default on Bitget: tradeSide required (open|close); reduceOnly is one-way only
             return new ExchangeParameters(
                 new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
                 new ExchangeParameter("Bitget", "MarginAsset", "USDT"),
-                new ExchangeParameter("Bitget", "marginCoin", "USDT"));
+                new ExchangeParameter("Bitget", "marginCoin", "USDT"),
+                new ExchangeParameter("Bitget", "TradeSide", isClose ? "close" : "open"),
+                new ExchangeParameter("Bitget", "tradeSide", isClose ? "close" : "open"));
         }
         if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
             || exchange.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
