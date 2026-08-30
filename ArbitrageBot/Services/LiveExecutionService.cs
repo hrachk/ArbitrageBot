@@ -636,12 +636,11 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private static async Task<object?> TryNativePositionsAsync(
         ExchangeRestClient rest, string exchange, CancellationToken ct)
     {
-        // Bybit: use native V5 API for positions (shared API often returns empty for Bybit)
+        // Bybit: use native V5 API for positions — shared API often returns empty for Bybit
         if (exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
         {
             try
             {
-                // Try USDT perpetual positions (Unified account)
                 var r = await rest.Bybit.V5Api.Trading.GetPositionsAsync(
                     Bybit.Net.Enums.Category.Linear, settleAsset: "USDT", ct: ct).ConfigureAwait(false);
                 if (r.Success && r.Data?.List != null)
@@ -654,7 +653,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                             side = p.Side.ToString(),
                             quantity = p.Quantity,
                             entryPrice = p.AveragePrice,
-                            unrealizedPnl = p.UnrealisedPnl,
+                            unrealizedPnl = p.UnrealizedPnl,   // correct: UnrealizedPnl (not UnrealisedPnl)
                             leverage = p.Leverage
                         }).Take(50).ToList();
                     return list.Count > 0 ? (object)list : new List<object>();
@@ -668,37 +667,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
             }
         }
 
-        // Binance: native UsdFutures positions
-        if (exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var r = await rest.Binance.UsdFuturesApi.Trading.GetPositionInformationAsync(ct: ct).ConfigureAwait(false);
-                if (r.Success && r.Data != null)
-                {
-                    var list = r.Data
-                        .Where(p => p.Quantity != 0)
-                        .Select(p => new
-                        {
-                            symbol = p.Symbol,
-                            side = p.Quantity > 0 ? "Long" : "Short",
-                            quantity = Math.Abs(p.Quantity),
-                            entryPrice = p.EntryPrice,
-                            unrealizedPnl = p.UnrealizedPnl,
-                            leverage = p.Leverage
-                        }).Take(50).ToList();
-                    return list.Count > 0 ? (object)list : new List<object>();
-                }
-                if (r.Error != null)
-                    return new { error = "Binance positions: " + FormatErr(r.Error, r.OriginalData) };
-            }
-            catch (Exception ex)
-            {
-                return new { error = "Binance native positions: " + ex.Message };
-            }
-        }
-
-        // Fallback: shared API
+        // All other exchanges: shared API (works fine for Binance, Bitget, OKX)
         return await TrySharedPositionsAsync(rest, exchange, ct).ConfigureAwait(false);
     }
 
