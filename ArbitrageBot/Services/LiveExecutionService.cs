@@ -84,8 +84,81 @@ public sealed class LiveExecutionService : ILiveExecutionService
             p.Status,
             p.Message
         }),
-        closed = _orders.GetClosed(20)
+        closed = _orders.GetClosed(20),
+        openCount = _orders.GetOpen().Count
     };
+
+    /// <summary>
+    /// Truth view: bot ledger + raw non-zero futures positions from each exchange.
+    /// Use this in UI so restart / half-filled legs are still visible.
+    /// </summary>
+    public async Task<object> GetLivePositionsViewAsync(CancellationToken ct = default)
+    {
+        var ledgerOpen = _orders.GetOpen();
+        var bal = await FetchAllAsync(includePositions: true, ct).ConfigureAwait(false);
+
+        var exchangeLegs = new List<object>();
+        try
+        {
+            // bal is anonymous — use reflection / dynamic JSON round-trip
+            var json = System.Text.Json.JsonSerializer.Serialize(bal);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("exchanges", out var exArr) && exArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var ex in exArr.EnumerateArray())
+                {
+                    var name = ex.TryGetProperty("exchange", out var en) ? en.GetString() ?? "?" : "?";
+                    if (!ex.TryGetProperty("positions", out var posEl) || posEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+                        continue;
+                    foreach (var p in posEl.EnumerateArray())
+                    {
+                        decimal qty = 0;
+                        if (p.TryGetProperty("quantity", out var q))
+                            q.TryGetDecimal(out qty);
+                        if (qty == 0) continue;
+                        exchangeLegs.Add(new
+                        {
+                            exchange = name,
+                            symbol = p.TryGetProperty("symbol", out var s) ? s.GetString() : null,
+                            side = p.TryGetProperty("side", out var sd) ? sd.GetString() : null,
+                            quantity = qty,
+                            entryPrice = p.TryGetProperty("entryPrice", out var ep) && ep.TryGetDecimal(out var epv) ? epv : (decimal?)null,
+                            unrealizedPnl = p.TryGetProperty("unrealizedPnl", out var up) && up.TryGetDecimal(out var upv) ? upv : (decimal?)null,
+                            leverage = p.TryGetProperty("leverage", out var lv) && lv.TryGetDecimal(out var lvv) ? lvv : (decimal?)null
+                        });
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to flatten exchange positions");
+        }
+
+        return new
+        {
+            utc = DateTime.UtcNow,
+            openLedgerCount = ledgerOpen.Count,
+            exchangeLegCount = exchangeLegs.Count,
+            ledger = ledgerOpen.Select(p => new
+            {
+                tradeId = p.Id,
+                p.Symbol,
+                p.LongExchange,
+                p.ShortExchange,
+                p.BaseQty,
+                p.LongEntry,
+                p.ShortEntry,
+                p.OpenedAt,
+                p.Status,
+                p.Message,
+                source = "ledger"
+            }),
+            exchangeLegs,
+            closed = _orders.GetClosed(20),
+            balances = bal
+        };
+    }
 
     private async Task<object> FetchAllAsync(bool includePositions, CancellationToken ct)
     {

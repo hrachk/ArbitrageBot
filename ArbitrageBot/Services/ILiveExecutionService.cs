@@ -14,6 +14,8 @@ public interface ILiveExecutionService
         CancellationToken ct = default);
     IReadOnlyList<LiveHedgePosition> GetOpenPositions();
     object GetLivePaperSnapshot();
+    /// <summary>Ledger hedges + non-zero positions from each exchange API (truth for UI).</summary>
+    Task<object> GetLivePositionsViewAsync(CancellationToken ct = default);
 }
 
 public sealed class LiveHedgeRequest

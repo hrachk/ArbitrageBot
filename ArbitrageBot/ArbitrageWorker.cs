@@ -144,6 +144,7 @@ public class ArbitrageWorker : BackgroundService
                 if (_state.IsPaused)
                 {
                     PushSnapshotExtras();
+                    await RefreshLivePositionsAsync(stoppingToken);
                     await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
                     await Task.Delay(_options.ScanIntervalMs, stoppingToken);
                     continue;
@@ -154,6 +155,8 @@ public class ArbitrageWorker : BackgroundService
                 else
                     await RunSpotCycleAsync(stoppingToken);
 
+                PushSnapshotExtras();
+                await RefreshLivePositionsAsync(stoppingToken);
                 await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
@@ -460,11 +463,29 @@ public class ArbitrageWorker : BackgroundService
                 StringComparer.OrdinalIgnoreCase));
     }
 
+    private DateTime _lastLivePosPullUtc = DateTime.MinValue;
+
     private void PushSnapshotExtras()
     {
         if (_options.IsFuturesCross) PushFuturesPaper();
         _state.LiveStatus = _liveGuard.Status();
+        // Always publish ledger (instant); exchange pull throttled
         try { _state.LivePositions = _liveExec.GetLivePaperSnapshot(); } catch { /* ignore */ }
+    }
+
+    private async Task RefreshLivePositionsAsync(CancellationToken ct)
+    {
+        // Pull real exchange positions every 12s so UI shows truth after restart / half-fills
+        if ((DateTime.UtcNow - _lastLivePosPullUtc).TotalSeconds < 12) return;
+        _lastLivePosPullUtc = DateTime.UtcNow;
+        try
+        {
+            _state.LivePositions = await _liveExec.GetLivePositionsViewAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Live positions pull failed");
+        }
     }
 
     private async Task RefreshSymbolsAsync(CancellationToken ct)

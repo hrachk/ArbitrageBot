@@ -372,7 +372,8 @@ try
         Results.Ok(await live.VerifyCredentialsAsync(ct)));
     app.MapGet("/api/live/balances", async (ILiveExecutionService live, CancellationToken ct) =>
         Results.Ok(await live.GetLiveBalancesAsync(ct)));
-    app.MapGet("/api/live/positions", (ILiveExecutionService live) => Results.Ok(live.GetLivePaperSnapshot()));
+    app.MapGet("/api/live/positions", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.GetLivePositionsViewAsync(ct)));
     app.MapPost("/api/live/close/{tradeId}", async (string tradeId, ILiveExecutionService live, CancellationToken ct) =>
         Results.Ok(await live.TryCloseHedgeAsync(tradeId, ct)));
     app.MapGet("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>

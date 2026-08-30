@@ -22,7 +22,15 @@ AB.pages.dashboard = {
       }
       html('d_best', best == null ? '—' : AB.fmtPct(best));
       html('d_pnl', AB.fmtUsd(fp.realizedPnlUsd != null ? fp.realizedPnlUsd : (fp.realizedPnl != null ? fp.realizedPnl : 0)));
-      text('d_open', (fp.positions && fp.positions.length) || 0);
+      // Open count: paper + live ledger + real exchange legs
+      const livePos = data.livePositions || {};
+      const paperN = (fp.positions && fp.positions.length) || 0;
+      const ledgerN = livePos.openLedgerCount != null
+        ? livePos.openLedgerCount
+        : ((livePos.open && livePos.open.length) || (livePos.ledger && livePos.ledger.length) || 0);
+      const exLegs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
+      const exN = livePos.exchangeLegCount != null ? livePos.exchangeLegCount : exLegs.length;
+      text('d_open', paperN + 'p / ' + ledgerN + 'L / ' + exN + 'ex');
 
       // Cross-exchange arb board (ranked like terminal UIs)
       const board = document.getElementById('d_arbBoard');
@@ -192,9 +200,38 @@ AB.pages.dashboard = {
       const posEl = $('d_positions');
       if (posEl) {
         const positions = fp.positions || [];
-        posEl.innerHTML = positions.length
-          ? positions.map(function (p) { return AB.posCardHtml(p); }).join('')
-          : '<div class="empty">No open hedges</div>';
+        const ledger = (livePos.ledger || livePos.open || []);
+        const legs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
+        let htmlPos = '';
+        if (legs.length) {
+          htmlPos += '<div class="section-label" style="margin:4px 0 8px">Exchange positions (real)</div>';
+          htmlPos += legs.map(function (p) {
+            const pnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null;
+            const pnlCol = pnl == null ? 'var(--muted)' : (pnl >= 0 ? 'var(--green)' : 'var(--red)');
+            return '<div class="pos-card" style="border-left:3px solid var(--amber)">' +
+              '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
+              '<div class="muted" style="font-size:12px">' + (p.exchange || '?') + ' · ' + (p.side || '?') +
+              ' · qty ' + (p.quantity != null ? p.quantity : '—') +
+              (p.entryPrice != null ? ' @ ' + p.entryPrice : '') + '</div>' +
+              (pnl != null ? '<div class="mono" style="color:' + pnlCol + '">uPnL ' + AB.fmtUsd(pnl) + '</div>' : '') +
+              '</div>';
+          }).join('');
+        }
+        if (ledger.length) {
+          htmlPos += '<div class="section-label" style="margin:12px 0 8px">Live ledger (bot hedges)</div>';
+          htmlPos += ledger.map(function (p) {
+            return '<div class="pos-card" style="border-left:3px solid var(--green)">' +
+              '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
+              '<div class="muted" style="font-size:12px">' + (p.longExchange || '?') + ' long / ' +
+              (p.shortExchange || '?') + ' short · qty ' + (p.baseQty != null ? p.baseQty : '—') + '</div>' +
+              '<div class="muted" style="font-size:11px">' + (p.status || '') + ' ' + (p.message || '') + '</div></div>';
+          }).join('');
+        }
+        if (positions.length) {
+          htmlPos += '<div class="section-label" style="margin:12px 0 8px">Paper hedges</div>';
+          htmlPos += positions.map(function (p) { return AB.posCardHtml(p); }).join('');
+        }
+        posEl.innerHTML = htmlPos || '<div class="empty">No open hedges (paper / ledger / exchange)</div>';
       }
     
       // Live spread bars

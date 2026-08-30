@@ -8,7 +8,7 @@
 
 <div class="page-hd">
   <h1>Live control</h1>
-  <p class="muted">Guard · balances · enable only when funded + trade keys</p>
+  <p class="muted">Guard · balances · real exchange positions</p>
 </div>
 
 <div class="card">
@@ -22,10 +22,19 @@
       <button class="btn" @onclick="Disable">Disable</button>
       <button class="btn danger" @onclick="Kill">KILL</button>
       <button class="btn" @onclick="Verify">Verify balances</button>
+      <button class="btn" @onclick="RefreshPositions">Refresh positions</button>
     </div>
     @if (!string.IsNullOrEmpty(_msg)) { <div class="alert">@_msg</div> }
   </div>
 </div>
+
+@if (_positions != null)
+{
+  <div class="card" style="margin-top:14px">
+    <div class="card-hd"><h2>Positions (ledger + exchange)</h2></div>
+    <pre class="mono pre">@_positions</pre>
+  </div>
+}
 
 @if (_verify != null)
 {
@@ -40,7 +49,10 @@
     bool _readOnly = true;
     string _msg = "";
     string? _verify;
+    string? _positions;
     string StatusJson => System.Text.Json.JsonSerializer.Serialize(Guard.Status(), new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+    protected override async Task OnInitializedAsync() => await RefreshPositions();
 
     void Enable()
     {
@@ -54,6 +66,13 @@
         var creds = await LiveExec.VerifyCredentialsAsync();
         var bal = await LiveExec.GetLiveBalancesAsync();
         _verify = System.Text.Json.JsonSerializer.Serialize(new { credentials = creds, balances = bal },
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await RefreshPositions();
+    }
+    async Task RefreshPositions()
+    {
+        var view = await LiveExec.GetLivePositionsViewAsync();
+        _positions = System.Text.Json.JsonSerializer.Serialize(view,
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
     }
 }
