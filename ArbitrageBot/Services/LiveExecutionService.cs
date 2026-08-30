@@ -450,10 +450,10 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 // Пробуем SpotApiV2 сначала, потом FuturesApiV2 как fallback для Classic
                 string? lastErr = null, lastDetail = null;
 
-                // 1) SpotApiV2 — работает для Unified Account
+                // 1) SpotApiV2.GetSpotBalancesAsync — работает для Unified Account
                 try
                 {
-                    var r = await rest.Bitget.SpotApiV2.Account.GetBalancesAsync(ct: ct).ConfigureAwait(false);
+                    var r = await rest.Bitget.SpotApiV2.Account.GetSpotBalancesAsync(ct: ct).ConfigureAwait(false);
                     if (r.Success && r.Data != null)
                     {
                         var list = r.Data
@@ -722,7 +722,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
             try
             {
                 var r = await rest.Bitget.FuturesApiV2.Trading
-                    .GetPositionsAsync(BitgetProductTypeV2.UsdtFutures, ct: ct).ConfigureAwait(false);
+                    .GetPositionsAsync(BitgetProductTypeV2.UsdtFutures, "USDT", ct: ct).ConfigureAwait(false);
                 if (r.Success && r.Data != null)
                 {
                     var list = r.Data
