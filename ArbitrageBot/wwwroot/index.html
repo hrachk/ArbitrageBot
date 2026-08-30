@@ -262,99 +262,172 @@
 
       <!-- REPORTS -->
       <section class="page" data-page="reports">
-        <div class="panel" id="perfRoot" style="margin-bottom:14px">
-          <div class="panel-hd">
-            <h2 class="panel-title">Performance</h2>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <span class="panel-sub" id="r_modeLabel">📄 PAPER · realized closes</span>
-              <button type="button" class="btn sm" data-perf-days="1">1D</button>
-              <button type="button" class="btn sm" data-perf-days="7">7D</button>
-              <button type="button" class="btn sm" data-perf-days="30">30D</button>
-              <button type="button" class="btn sm" data-perf-days="90">90D</button>
+
+        <!-- ══ LIVE SECTION ══════════════════════════════════════════════ -->
+        <div id="rep_liveSection">
+
+          <!-- Live balances & positions -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.4)">
+            <div class="panel-hd">
+              <h2 class="panel-title">🔴 Live balances &amp; positions</h2>
+              <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Refresh</button>
+            </div>
+            <div class="muted" style="font-size:12px;margin-bottom:10px">REST read-only · USDT-M futures · реальные данные с бирж</div>
+            <div class="g3" id="r_liveBal"><div class="empty">Loading…</div></div>
+          </div>
+
+          <!-- Live open hedges (ledger) -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.25)">
+            <div class="panel-hd">
+              <h2 class="panel-title">🔴 Live open hedges</h2>
+              <span class="panel-sub" id="r_liveOpenCount">—</span>
+            </div>
+            <div class="scroll">
+              <table class="data">
+                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Opened</th></tr></thead>
+                <tbody id="r_posBody"></tbody>
+              </table>
             </div>
           </div>
-          <div class="g4" id="perfKpis"></div>
-          <div class="g4" id="perfKpis2" style="margin-top:10px"></div>
-          <div style="margin-top:14px">
-            <div class="muted" style="font-size:11px;margin-bottom:6px">CUMULATIVE PNL</div>
-            <svg id="perfCurve" viewBox="0 0 640 160" width="100%" height="160" style="background:rgba(0,0,0,0.25);border-radius:10px"></svg>
+
+          <!-- Live trade ledger -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.25)">
+            <div class="panel-hd">
+              <h2 class="panel-title">🔴 Live trade ledger</h2>
+              <span class="panel-sub" id="r_liveLedgerCount">—</span>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+              <div class="kpi" style="margin:0;flex:1;min-width:120px">
+                <div class="kpi-l">Realized PnL</div>
+                <div class="kpi-v" id="r_realized">—</div>
+              </div>
+              <div class="kpi" style="margin:0;flex:1;min-width:120px">
+                <div class="kpi-l">Open hedges</div>
+                <div class="kpi-v" id="r_open">—</div>
+              </div>
+              <div class="kpi" style="margin:0;flex:1;min-width:120px">
+                <div class="kpi-l">Total closes</div>
+                <div class="kpi-v" id="r_attempts">—</div>
+              </div>
+            </div>
+            <div class="scroll" style="max-height:380px">
+              <table class="data">
+                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
+                <tbody id="r_tradeBody"></tbody>
+              </table>
+            </div>
           </div>
-          <div style="margin-top:14px">
-            <div class="muted" style="font-size:11px;margin-bottom:6px">DAILY PNL</div>
-            <div id="perfCalendar" class="g7" style="gap:6px"></div>
-          </div>
-          <div style="margin-top:14px">
-            <div class="muted" style="font-size:11px;margin-bottom:6px">TRADE DETAILS</div>
-            <div id="perfTrades" style="max-height:320px;overflow:auto"></div>
-          </div>
+
         </div>
 
-        <div class="banner info">Paper analytics · files in <code class="mono">data/paper/</code></div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="kpi-l">Realized (net fees)</div><div class="kpi-v" id="r_realized">—</div></div>
-          <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
-          <div class="kpi"><div class="kpi-l">Attempts</div><div class="kpi-v" id="r_attempts">0</div></div>
-          <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="r_open">0</div></div>
-          <div class="kpi"><div class="kpi-l">Leverage</div><div class="kpi-v" id="r_lev">—</div></div>
-          <div class="kpi"><div class="kpi-l">Stop</div><div class="kpi-v" id="r_stop">—</div></div>
-        </div>
-        <div class="g2" style="margin-bottom:12px">
+        <!-- ══ PAPER / DEMO SECTION ══════════════════════════════════════ -->
+        <div id="rep_paperSection">
+          <div class="banner info" style="margin-bottom:12px">
+            📄 <b>PAPER / DEMO</b> — симуляция без реальных ордеров · файлы в <code class="mono">data/paper/</code>
+          </div>
+
+          <!-- Performance KPIs + curve -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Performance</h2>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <button type="button" class="btn sm" data-perf-days="1">1D</button>
+                <button type="button" class="btn sm active" data-perf-days="7">7D</button>
+                <button type="button" class="btn sm" data-perf-days="30">30D</button>
+                <button type="button" class="btn sm" data-perf-days="90">90D</button>
+              </div>
+            </div>
+            <div class="g4" id="perfKpis"></div>
+            <div class="g4" id="perfKpis2" style="margin-top:10px"></div>
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:11px;margin-bottom:6px">CUMULATIVE PNL</div>
+              <svg id="perfCurve" viewBox="0 0 640 160" width="100%" height="160" style="background:rgba(0,0,0,0.25);border-radius:10px"></svg>
+            </div>
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:11px;margin-bottom:6px">DAILY PNL</div>
+              <div id="perfCalendar" class="g7" style="gap:6px"></div>
+            </div>
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:11px;margin-bottom:6px">TRADE DETAILS</div>
+              <div id="perfTrades" style="max-height:320px;overflow:auto"></div>
+            </div>
+          </div>
+
+          <!-- Paper KPIs row -->
+          <div class="kpi-row" style="margin-bottom:12px">
+            <div class="kpi"><div class="kpi-l">Realized (net fees)</div><div class="kpi-v" id="r_paper_realized">—</div></div>
+            <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
+            <div class="kpi"><div class="kpi-l">Closes</div><div class="kpi-v" id="r_paper_closes">0</div></div>
+            <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="r_paper_open">0</div></div>
+            <div class="kpi"><div class="kpi-l">Leverage</div><div class="kpi-v" id="r_lev">—</div></div>
+            <div class="kpi"><div class="kpi-l">Stop</div><div class="kpi-v" id="r_stop">—</div></div>
+          </div>
+
+          <!-- Day summary + Skip reasons -->
+          <div class="g2" style="margin-bottom:12px">
+            <div class="panel">
+              <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
+              <div id="r_daySummary" class="mono muted" style="font-size:12px;line-height:1.7">—</div>
+            </div>
+            <div class="panel">
+              <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
+              <div id="r_skipReasons">—</div>
+            </div>
+          </div>
+
+          <!-- Recent skips -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd"><h2 class="panel-title">Recent skips</h2></div>
+            <div class="scroll" style="max-height:200px">
+              <table class="data">
+                <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
+                <tbody id="r_skipBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Multi-day history -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd"><h2 class="panel-title">Multi-day history</h2><span class="panel-sub">по дням · paper engine</span></div>
+            <div class="scroll" style="max-height:160px">
+              <table class="data">
+                <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best</th></tr></thead>
+                <tbody id="r_daysBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Margin by venue (paper only) -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Margin by venue</h2>
+              <span class="panel-sub">equity = free + locked · paper simulation</span>
+            </div>
+            <div class="g3" id="r_margin"></div>
+          </div>
+
+          <!-- Paper open positions -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd"><h2 class="panel-title">Paper open positions</h2></div>
+            <div class="scroll">
+              <table class="data">
+                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
+                <tbody id="r_paperPosBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Paper trade history -->
           <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
-            <div id="r_daySummary" class="mono muted" style="font-size:12px;line-height:1.7">—</div>
+            <div class="panel-hd"><h2 class="panel-title">Paper trade history</h2></div>
+            <div class="scroll" style="max-height:400px">
+              <table class="data">
+                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
+                <tbody id="r_paperTradeBody"></tbody>
+              </table>
+            </div>
           </div>
-          <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
-            <div id="r_skipReasons">—</div>
-          </div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Recent skips</h2></div>
-          <div class="scroll" style="max-height:200px">
-            <table class="data">
-              <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
-              <tbody id="r_skipBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Multi-day</h2></div>
-          <div class="scroll" style="max-height:160px">
-            <table class="data">
-              <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best</th></tr></thead>
-              <tbody id="r_daysBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Margin by venue</h2><span class="panel-sub">equity = free + locked · not the same as Realized KPI</span></div>
-          <div class="g3" id="r_margin"></div>
-        </div>
-        <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.35)">
-          <div class="panel-hd">
-            <h2 class="panel-title">🔴 Live balances &amp; positions</h2>
-            <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Refresh</button>
-          </div>
-          <div class="muted" style="font-size:12px;margin-bottom:10px">Real-time REST · USDT-M futures · API keys (read-only). Positions показываются только если есть открытые.</div>
-          <div class="g3" id="r_liveBal"><div class="empty">Loading…</div></div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
-          <div class="scroll">
-            <table class="data">
-              <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
-              <tbody id="r_posBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-hd"><h2 class="panel-title">Trade ledger</h2></div>
-          <div class="scroll" style="max-height:400px">
-            <table class="data">
-              <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
-              <tbody id="r_tradeBody"></tbody>
-            </table>
-          </div>
+
         </div>
       </section>
 
