@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Models;
@@ -30,6 +31,10 @@ public sealed class LiveOrderEngine
     private readonly List<LiveHedgePosition> _open = [];
     private readonly List<LiveHedgePosition> _closed = [];
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+
+    /// <summary>Exchange → UTC until which we skip live orders (balance / hard rejects).</summary>
+    private readonly ConcurrentDictionary<string, DateTime> _venueCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan BalanceCooldown = TimeSpan.FromMinutes(3);
 
     private string LedgerPath => Path.Combine(_env.ContentRootPath, "data", "live", "trades-ledger.json");
 
@@ -76,34 +81,47 @@ public sealed class LiveOrderEngine
                 return new { ok = false, error = "already open on symbol" };
         }
 
+        // Venue cooldown after balance / hard rejects — stop spam open→fail→unwind
+        if (IsCoolingDown(req.LongExchange, out var longCd))
+            return new { ok = false, error = $"cooldown {req.LongExchange} {longCd.TotalSeconds:F0}s" };
+        if (IsCoolingDown(req.ShortExchange, out var shortCd))
+            return new { ok = false, error = $"cooldown {req.ShortExchange} {shortCd.TotalSeconds:F0}s" };
+
+        // Both legs must be ready BEFORE any order (never open long without short client)
+        var longClient = CreateClient(req.LongExchange);
+        if (longClient == null)
+            return new { ok = false, error = "no credentials for " + req.LongExchange };
+        var shortClient = CreateClient(req.ShortExchange);
+        if (shortClient == null)
+            return new { ok = false, error = "no credentials for " + req.ShortExchange };
+
         var baseAsset = req.Symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
             ? req.Symbol[..^4] : req.Symbol;
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
 
-        // Round quantity to exchange-safe precision (avoids Binance -1111 Precision error)
         var refPrice = req.LongAsk ?? req.ShortBid ?? 0m;
         var roundedQty = RoundBaseQty(req.BaseQty, refPrice);
-        // Cap by live max notional so legs fit thin balances (Bitget "exceeds the balance")
-        if (refPrice > 0 && _options.LiveMaxNotionalUsd > 0)
+
+        // Hard cap: min(request notional, LiveMaxNotional, 50) — thin accounts can't take 180 USDT legs
+        var maxNotional = _options.LiveMaxNotionalUsd > 0 ? _options.LiveMaxNotionalUsd : 50m;
+        if (maxNotional > 50m) maxNotional = 50m; // safety ceiling until balances are proven
+        if (req.NotionalUsd > 0 && req.NotionalUsd < maxNotional)
+            maxNotional = req.NotionalUsd;
+        if (refPrice > 0)
         {
-            var maxBase = _options.LiveMaxNotionalUsd / refPrice;
+            var maxBase = maxNotional / refPrice;
             if (roundedQty > maxBase)
                 roundedQty = RoundBaseQty(maxBase, refPrice);
         }
         if (roundedQty <= 0)
             return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty})" };
 
-        // Per-exchange quantity unit: OKX linear swaps expect contracts; others base asset
         var longQty = QtyForExchange(req.LongExchange, roundedQty);
         var shortQty = QtyForExchange(req.ShortExchange, roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
+        var lev = req.Leverage > 0 ? req.Leverage : 3;
 
-        // 1) LONG market on cheap exchange
-        var longClient = CreateClient(req.LongExchange);
-        if (longClient == null)
-            return new { ok = false, error = "no credentials for " + req.LongExchange };
-
-        // MARKET + hedge: do not send timeInForce / reduceOnly (Binance rejects both as "not required")
+        // 1) LONG — market, hedge mode: no reduceOnly / no timeInForce
         var longReq = new PlaceFuturesOrderRequest(
             sharedSym,
             SharedOrderSide.Buy,
@@ -111,7 +129,7 @@ public sealed class LiveOrderEngine
             longQty,
             price: null,
             reduceOnly: null,
-            leverage: req.Leverage > 0 ? req.Leverage : 3,
+            leverage: lev,
             timeInForce: null,
             positionSide: SharedPositionSide.Long,
             marginMode: SharedMarginMode.Cross,
@@ -121,53 +139,18 @@ public sealed class LiveOrderEngine
         var longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
         if (!longResult.Success)
         {
-            var err = longResult.Error?.Message ?? "long order failed";
-            // Bitget thin balance: one retry at half size
-            if (err.Contains("exceeds the balance", StringComparison.OrdinalIgnoreCase)
-                || err.Contains("Insufficient", StringComparison.OrdinalIgnoreCase))
-            {
-                var halfBase = RoundBaseQty(roundedQty / 2m, refPrice);
-                if (halfBase > 0 && halfBase < roundedQty)
-                {
-                    roundedQty = halfBase;
-                    longQty = QtyForExchange(req.LongExchange, roundedQty);
-                    shortQty = QtyForExchange(req.ShortExchange, roundedQty);
-                    longReq = new PlaceFuturesOrderRequest(
-                        sharedSym, SharedOrderSide.Buy, SharedOrderType.Market, longQty,
-                        price: null, reduceOnly: null,
-                        leverage: req.Leverage > 0 ? req.Leverage : 3,
-                        timeInForce: null, positionSide: SharedPositionSide.Long,
-                        marginMode: SharedMarginMode.Cross,
-                        clientOrderId: clientId + "-L2",
-                        exchangeParameters: ExParams(req.LongExchange, isClose: false));
-                    longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
-                    if (longResult.Success)
-                    {
-                        _logger.LogWarning("LIVE LONG {Ex} {Sym}: succeeded after half-size retry qty={Q}",
-                            req.LongExchange, req.Symbol, roundedQty);
-                        goto longOk;
-                    }
-                    err = longResult.Error?.Message ?? err;
-                }
-            }
-            _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}", req.LongExchange, req.Symbol, err);
+            var err = FailMsg(longResult.Error?.Message, longResult.OriginalData, "long order failed");
+            if (IsBalanceError(err))
+                MarkCooldown(req.LongExchange, err);
+            _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err} detail={D}",
+                req.LongExchange, req.Symbol, err, Trunc(longResult.OriginalData));
             return new { ok = false, error = "LONG failed: " + err, leg = "long", detail = Trunc(longResult.OriginalData) };
         }
-        longOk:
 
         var longOrderId = longResult.Data?.Id ?? "?";
         var longAvg = req.LongAsk ?? 0;
 
-        // 2) SHORT market on rich exchange
-        var shortClient = CreateClient(req.ShortExchange);
-        if (shortClient == null)
-        {
-            // emergency: try close long
-            await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
-                .ConfigureAwait(false);
-            return new { ok = false, error = "no credentials for " + req.ShortExchange + " — attempted unwind long" };
-        }
-
+        // 2) SHORT — same size; on fail always unwind long
         var shortReq = new PlaceFuturesOrderRequest(
             sharedSym,
             SharedOrderSide.Sell,
@@ -175,7 +158,7 @@ public sealed class LiveOrderEngine
             shortQty,
             price: null,
             reduceOnly: null,
-            leverage: req.Leverage > 0 ? req.Leverage : 3,
+            leverage: lev,
             timeInForce: null,
             positionSide: SharedPositionSide.Short,
             marginMode: SharedMarginMode.Cross,
@@ -185,8 +168,11 @@ public sealed class LiveOrderEngine
         var shortResult = await shortClient.PlaceFuturesOrderAsync(req.ShortExchange, shortReq, ct).ConfigureAwait(false);
         if (!shortResult.Success)
         {
-            var err = shortResult.Error?.Message ?? "short order failed";
-            _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long", req.ShortExchange, req.Symbol, err);
+            var err = FailMsg(shortResult.Error?.Message, shortResult.OriginalData, "short order failed");
+            if (IsBalanceError(err))
+                MarkCooldown(req.ShortExchange, err);
+            _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long detail={D}",
+                req.ShortExchange, req.Symbol, err, Trunc(shortResult.OriginalData));
             await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
                 .ConfigureAwait(false);
             return new { ok = false, error = "SHORT failed: " + err + " (long unwind attempted)", leg = "short", detail = Trunc(shortResult.OriginalData) };
@@ -479,6 +465,52 @@ public sealed class LiveOrderEngine
         if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
             return SharedQuantity.Contracts(baseQty);
         return SharedQuantity.Base(baseQty);
+    }
+
+    private bool IsCoolingDown(string exchange, out TimeSpan remaining)
+    {
+        remaining = TimeSpan.Zero;
+        if (!_venueCooldownUntil.TryGetValue(exchange, out var until))
+            return false;
+        var left = until - DateTime.UtcNow;
+        if (left <= TimeSpan.Zero)
+        {
+            _venueCooldownUntil.TryRemove(exchange, out _);
+            return false;
+        }
+        remaining = left;
+        return true;
+    }
+
+    private void MarkCooldown(string exchange, string reason)
+    {
+        var until = DateTime.UtcNow.Add(BalanceCooldown);
+        _venueCooldownUntil[exchange] = until;
+        _logger.LogWarning("LIVE venue cooldown {Ex} for {Sec:F0}s — {Reason}",
+            exchange, BalanceCooldown.TotalSeconds, Trunc(reason, 120));
+    }
+
+    private static bool IsBalanceError(string err)
+    {
+        if (string.IsNullOrEmpty(err)) return false;
+        return err.Contains("balance", StringComparison.OrdinalIgnoreCase)
+               || err.Contains("not enough", StringComparison.OrdinalIgnoreCase)
+               || err.Contains("Insufficient", StringComparison.OrdinalIgnoreCase)
+               || err.Contains("margin", StringComparison.OrdinalIgnoreCase)
+               || err.Contains("ab not enough", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FailMsg(string? message, string? originalData, string fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(message) && !message.Equals(fallback, StringComparison.OrdinalIgnoreCase))
+            return message;
+        if (!string.IsNullOrWhiteSpace(originalData))
+        {
+            var t = originalData.Trim();
+            if (t.Length > 200) t = t[..200] + "…";
+            return string.IsNullOrWhiteSpace(message) ? t : message + " | " + t;
+        }
+        return string.IsNullOrWhiteSpace(message) ? fallback : message;
     }
 
     /// <summary>
