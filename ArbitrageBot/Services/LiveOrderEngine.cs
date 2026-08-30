@@ -23,7 +23,7 @@ public sealed class LiveOrderEngine
 {
     private readonly ISettingsStore _settings;
     private readonly LiveTradingGuard _guard;
-    private readonly ArbitrageOptions _options;
+    private readonly RuntimeRiskConfig _runtime;
     private readonly ILogger<LiveOrderEngine> _logger;
     private readonly LiveSafetyService _safety;
     private readonly IWebHostEnvironment _env;
@@ -37,18 +37,19 @@ public sealed class LiveOrderEngine
     private static readonly TimeSpan BalanceCooldown = TimeSpan.FromMinutes(3);
 
     private string LedgerPath => Path.Combine(_env.ContentRootPath, "data", "live", "trades-ledger.json");
+    private ArbitrageOptions Opt => _runtime.Snapshot;
 
     public LiveOrderEngine(
         ISettingsStore settings,
         LiveTradingGuard guard,
-        IOptions<ArbitrageOptions> options,
+        RuntimeRiskConfig runtime,
         IWebHostEnvironment env,
         LiveSafetyService safety,
         ILogger<LiveOrderEngine> logger)
     {
         _settings = settings;
         _guard = guard;
-        _options = options.Value;
+        _runtime = runtime;
         _env = env;
         _safety = safety;
         _logger = logger;
@@ -106,12 +107,13 @@ public sealed class LiveOrderEngine
         // Size for ~$5 free equity per exchange:
         // marginUsed = equity * usageFraction  →  notional = marginUsed * leverage
         // e.g. $5 * 0.6 * 5x = $15 notional per leg (~$3 margin on EACH venue)
-        var equity = _options.LiveEquityPerExchangeUsd > 0 ? _options.LiveEquityPerExchangeUsd : 5m;
-        var usage = _options.LiveMarginUsageFraction > 0 ? _options.LiveMarginUsageFraction : 0.6m;
+        var opt = Opt;
+        var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 5m;
+        var usage = opt.LiveMarginUsageFraction > 0 ? opt.LiveMarginUsageFraction : 0.6m;
         usage = Math.Clamp(usage, 0.2m, 0.85m);
         var maxNotional = equity * lev * usage;
-        if (_options.LiveMaxNotionalUsd > 0 && maxNotional > _options.LiveMaxNotionalUsd)
-            maxNotional = _options.LiveMaxNotionalUsd;
+        if (opt.LiveMaxNotionalUsd > 0 && maxNotional > opt.LiveMaxNotionalUsd)
+            maxNotional = opt.LiveMaxNotionalUsd;
         if (req.NotionalUsd > 0 && req.NotionalUsd < maxNotional)
             maxNotional = req.NotionalUsd;
         var absCap = equity * lev;

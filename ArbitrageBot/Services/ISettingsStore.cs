@@ -5,6 +5,7 @@ namespace ArbitrageBot.Services;
 public interface ISettingsStore
 {
     object GetPublicSettings(ArbitrageOptions arb);
+    TradingUiSettings GetTrading();
     Task SaveTradingAsync(TradingUiSettings trading, CancellationToken ct = default);
     Task SaveExchangeCredentialAsync(string exchange, ExchangeCredential cred, CancellationToken ct = default);
     Task ClearExchangeCredentialAsync(string exchange, CancellationToken ct = default);
@@ -13,8 +14,8 @@ public interface ISettingsStore
 }
 
 /// <summary>
-/// In-memory + optional file overlay for demo. Production: User Secrets / KeyVault / encrypted store.
-/// Never writes secrets into the git-tracked appsettings.json.
+/// In-memory + file overlay at data/local-settings.json (gitignored).
+/// Survives rebuild/restart when the file is kept on disk.
 /// </summary>
 public class SettingsStore : ISettingsStore
 {
@@ -30,7 +31,6 @@ public class SettingsStore : ISettingsStore
         _path = Path.Combine(env.ContentRootPath, "data", "local-settings.json");
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
 
-        // Seed from configuration (User Secrets / env)
         var section = config.GetSection(ExchangeCredentialsOptions.SectionName);
         var opts = section.Get<ExchangeCredentialsOptions>();
         if (opts?.Exchanges != null)
@@ -58,6 +58,7 @@ public class SettingsStore : ISettingsStore
                     foreach (var kv in map)
                         _creds[kv.Key] = kv.Value;
             }
+            _logger.LogInformation("Loaded local-settings.json (trading + {N} exchange keys)", _creds.Count);
         }
         catch (Exception ex)
         {
@@ -70,35 +71,68 @@ public class SettingsStore : ISettingsStore
         var payload = new
         {
             trading = _trading,
-            exchanges = _creds
+            exchanges = _creds,
+            savedUtc = DateTime.UtcNow
         };
         var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(_path, json, ct);
+        var tmp = _path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct);
+        File.Copy(tmp, _path, true);
+        try { File.Delete(tmp); } catch { /* ignore */ }
     }
 
-    public object GetPublicSettings(ArbitrageOptions arb) => new
+    public TradingUiSettings GetTrading()
     {
-        trading = new
+        lock (_lock)
         {
-            strategyMode = arb.StrategyMode,
-            paperTrading = arb.PaperTrading,
-            paperAutoExecute = arb.PaperAutoExecute,
-            minProfitPercent = arb.MinProfitPercent,
-            quoteSize = arb.QuoteSize,
-            futuresPaperLeverage = arb.FuturesPaperLeverage,
-            futuresMaxOpenPositions = arb.FuturesMaxOpenPositions,
-            futuresStopLossUsd = arb.FuturesStopLossUsd,
-            futuresDailyLossLimitUsd = arb.FuturesDailyLossLimitUsd,
-            futuresMaxNotionalUsd = arb.FuturesMaxNotionalUsd,
-            scanIntervalMs = arb.ScanIntervalMs,
-            dynamicSymbols = arb.DynamicSymbols,
-            dynamicTopN = arb.DynamicTopN,
-            exchanges = arb.NormalizedExchanges,
-            symbols = arb.NormalizedSymbols
-        },
-        connections = GetMaskedExchanges(),
-        securityNote = "API secrets are never returned to the browser. Stored in data/local-settings.json (gitignored) or User Secrets."
-    };
+            // return a copy so callers can't mutate store state
+            var json = System.Text.Json.JsonSerializer.Serialize(_trading);
+            return System.Text.Json.JsonSerializer.Deserialize<TradingUiSettings>(json) ?? new TradingUiSettings();
+        }
+    }
+
+    public object GetPublicSettings(ArbitrageOptions arb)
+    {
+        var t = GetTrading();
+        // Prefer persisted UI values; fall back to runtime arb snapshot
+        return new
+        {
+            trading = new
+            {
+                strategyMode = !string.IsNullOrWhiteSpace(t.StrategyMode) ? t.StrategyMode : arb.StrategyMode,
+                paperTrading = t.PaperTrading,
+                paperAutoExecute = t.PaperAutoExecute,
+                minProfitPercent = t.MinProfitPercent > 0 ? t.MinProfitPercent : arb.MinProfitPercent,
+                quoteSize = t.QuoteSize > 0 ? t.QuoteSize : arb.QuoteSize,
+                futuresPaperLeverage = t.FuturesPaperLeverage > 0 ? t.FuturesPaperLeverage : arb.FuturesPaperLeverage,
+                futuresMaxOpenPositions = t.FuturesMaxOpenPositions > 0 ? t.FuturesMaxOpenPositions : arb.FuturesMaxOpenPositions,
+                futuresStopLossUsd = t.FuturesStopLossUsd != 0 ? t.FuturesStopLossUsd : arb.FuturesStopLossUsd,
+                futuresDailyLossLimitUsd = t.FuturesDailyLossLimitUsd != 0 ? t.FuturesDailyLossLimitUsd : arb.FuturesDailyLossLimitUsd,
+                maxHoldMinutes = t.MaxHoldMinutes > 0 ? t.MaxHoldMinutes : arb.FuturesMaxHoldMinutes,
+                closeBelowNetPercent = t.CloseBelowNetPercent,
+                maxMarginUsagePercent = t.MaxMarginUsagePercent > 0 ? t.MaxMarginUsagePercent : arb.FuturesMaxMarginUsagePercent,
+                maxNotionalUsd = t.MaxNotionalUsd > 0 ? t.MaxNotionalUsd : arb.FuturesMaxNotionalUsd,
+                paperCooldownMs = t.PaperCooldownMs,
+                paperRequireFullFill = t.PaperRequireFullFill,
+                requireRoundTripEdge = t.RequireRoundTripEdge,
+                includeFunding = t.IncludeFunding,
+                // Live micro ($5/exchange default)
+                liveEquityPerExchangeUsd = t.LiveEquityPerExchangeUsd > 0 ? t.LiveEquityPerExchangeUsd : arb.LiveEquityPerExchangeUsd,
+                liveMarginUsageFraction = t.LiveMarginUsageFraction > 0 ? t.LiveMarginUsageFraction : arb.LiveMarginUsageFraction,
+                liveMaxNotionalUsd = t.LiveMaxNotionalUsd > 0 ? t.LiveMaxNotionalUsd : arb.LiveMaxNotionalUsd,
+                liveMaxOpenPositions = t.LiveMaxOpenPositions > 0 ? t.LiveMaxOpenPositions : arb.LiveMaxOpenPositions,
+                liveStopLossUsd = t.LiveStopLossUsd != 0 ? t.LiveStopLossUsd : arb.LiveStopLossUsd,
+                liveDailyLossLimitUsd = t.LiveDailyLossLimitUsd != 0 ? t.LiveDailyLossLimitUsd : arb.LiveDailyLossLimitUsd,
+                scanIntervalMs = arb.ScanIntervalMs,
+                dynamicSymbols = arb.DynamicSymbols,
+                dynamicTopN = arb.DynamicTopN,
+                exchanges = arb.NormalizedExchanges,
+                symbols = arb.NormalizedSymbols
+            },
+            connections = GetMaskedExchanges(),
+            securityNote = "API secrets never returned to browser. Stored in data/local-settings.json (gitignored)."
+        };
+    }
 
     public IReadOnlyDictionary<string, object> GetMaskedExchanges()
     {
@@ -133,7 +167,9 @@ public class SettingsStore : ISettingsStore
     {
         lock (_lock) _trading = trading;
         await PersistAsync(ct);
-        _logger.LogInformation("Trading UI settings saved (paper={Paper})", trading.PaperTrading);
+        _logger.LogInformation(
+            "Trading settings saved → local-settings.json (paper={Paper} equity={E}$ lev={L} liveMaxN={N})",
+            trading.PaperTrading, trading.LiveEquityPerExchangeUsd, trading.FuturesPaperLeverage, trading.LiveMaxNotionalUsd);
     }
 
     public async Task SaveExchangeCredentialAsync(string exchange, ExchangeCredential cred, CancellationToken ct = default)
@@ -142,12 +178,10 @@ public class SettingsStore : ISettingsStore
         {
             if (_creds.TryGetValue(exchange, out var existing))
             {
-                // Keep previous secret if blank submitted
                 if (string.IsNullOrWhiteSpace(cred.ApiKey)) cred.ApiKey = existing.ApiKey;
                 if (string.IsNullOrWhiteSpace(cred.ApiSecret)) cred.ApiSecret = existing.ApiSecret;
                 if (string.IsNullOrWhiteSpace(cred.Passphrase)) cred.Passphrase = existing.Passphrase;
             }
-            // Strip whitespace/newlines from pasted keys
             if (cred.ApiKey != null) cred.ApiKey = new string(cred.ApiKey.Where(c => !char.IsWhiteSpace(c)).ToArray());
             if (cred.ApiSecret != null) cred.ApiSecret = new string(cred.ApiSecret.Where(c => !char.IsWhiteSpace(c)).ToArray());
             if (cred.Passphrase != null) cred.Passphrase = cred.Passphrase.Trim();

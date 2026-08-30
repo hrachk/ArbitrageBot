@@ -74,6 +74,22 @@ try
 
     var app = builder.Build();
 
+    // Re-apply persisted trading/live settings from data/local-settings.json (survives restart)
+    try
+    {
+        var store = app.Services.GetRequiredService<ISettingsStore>();
+        var risk = app.Services.GetRequiredService<RuntimeRiskConfig>();
+        var saved = store.GetTrading();
+        risk.ApplyTrading(saved);
+        app.Logger.LogInformation(
+            "Runtime settings restored from local-settings.json (equity={E}$ liveMaxN={N} lev={L})",
+            saved.LiveEquityPerExchangeUsd, saved.LiveMaxNotionalUsd, saved.FuturesPaperLeverage);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not restore trading settings from local-settings.json");
+    }
+
     app.UseDefaultFiles();
     app.UseStaticFiles();
     app.UseAntiforgery();
@@ -148,18 +164,33 @@ try
     app.MapPost("/api/settings/risk", async (RiskUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
     {
         risk.ApplyRisk(body);
-        // persist overlapping trading fields
+        var s = risk.Snapshot;
+        var prev = store.GetTrading();
         await store.SaveTradingAsync(new TradingUiSettings
         {
-            StrategyMode = risk.Snapshot.StrategyMode,
-            PaperTrading = risk.Snapshot.PaperTrading,
-            PaperAutoExecute = risk.Snapshot.PaperAutoExecute,
-            MinProfitPercent = risk.Snapshot.MinProfitPercent,
-            QuoteSize = risk.Snapshot.QuoteSize,
-            FuturesPaperLeverage = risk.Snapshot.FuturesPaperLeverage,
-            FuturesMaxOpenPositions = risk.Snapshot.FuturesMaxOpenPositions,
-            FuturesStopLossUsd = risk.Snapshot.FuturesStopLossUsd,
-            FuturesDailyLossLimitUsd = risk.Snapshot.FuturesDailyLossLimitUsd
+            StrategyMode = s.StrategyMode,
+            PaperTrading = s.PaperTrading,
+            PaperAutoExecute = s.PaperAutoExecute,
+            MinProfitPercent = s.MinProfitPercent,
+            QuoteSize = s.QuoteSize,
+            FuturesPaperLeverage = s.FuturesPaperLeverage,
+            FuturesMaxOpenPositions = s.FuturesMaxOpenPositions,
+            FuturesStopLossUsd = s.FuturesStopLossUsd,
+            FuturesDailyLossLimitUsd = s.FuturesDailyLossLimitUsd,
+            MaxHoldMinutes = s.FuturesMaxHoldMinutes,
+            CloseBelowNetPercent = s.FuturesCloseBelowNetPercent,
+            MaxMarginUsagePercent = s.FuturesMaxMarginUsagePercent,
+            MaxNotionalUsd = s.FuturesMaxNotionalUsd,
+            PaperCooldownMs = s.PaperCooldownMs,
+            PaperRequireFullFill = s.PaperRequireFullFill,
+            RequireRoundTripEdge = s.FuturesRequireRoundTripEdge,
+            IncludeFunding = s.FuturesIncludeFunding,
+            LiveEquityPerExchangeUsd = body.LiveEquityPerExchangeUsd > 0 ? body.LiveEquityPerExchangeUsd : prev.LiveEquityPerExchangeUsd,
+            LiveMarginUsageFraction = body.LiveMarginUsageFraction > 0 ? body.LiveMarginUsageFraction : prev.LiveMarginUsageFraction,
+            LiveMaxNotionalUsd = body.LiveMaxNotionalUsd > 0 ? body.LiveMaxNotionalUsd : prev.LiveMaxNotionalUsd,
+            LiveMaxOpenPositions = body.LiveMaxOpenPositions > 0 ? body.LiveMaxOpenPositions : prev.LiveMaxOpenPositions,
+            LiveStopLossUsd = body.LiveStopLossUsd != 0 ? body.LiveStopLossUsd : prev.LiveStopLossUsd,
+            LiveDailyLossLimitUsd = prev.LiveDailyLossLimitUsd
         });
         return Results.Ok(new { saved = true, appliedRuntime = true, risk = risk.Snapshot });
     });
@@ -179,7 +210,12 @@ try
         paperCooldownMs = risk.Snapshot.PaperCooldownMs,
         paperRequireFullFill = risk.Snapshot.PaperRequireFullFill,
         requireRoundTripEdge = risk.Snapshot.FuturesRequireRoundTripEdge,
-        includeFunding = risk.Snapshot.FuturesIncludeFunding
+        includeFunding = risk.Snapshot.FuturesIncludeFunding,
+        liveEquityPerExchangeUsd = risk.Snapshot.LiveEquityPerExchangeUsd,
+        liveMarginUsageFraction = risk.Snapshot.LiveMarginUsageFraction,
+        liveMaxNotionalUsd = risk.Snapshot.LiveMaxNotionalUsd,
+        liveMaxOpenPositions = risk.Snapshot.LiveMaxOpenPositions,
+        liveStopLossUsd = risk.Snapshot.LiveStopLossUsd
     }));
 
     app.MapPost("/api/paper/close/{tradeId:guid}", (

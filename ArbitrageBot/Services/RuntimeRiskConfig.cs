@@ -38,14 +38,30 @@ public sealed class RuntimeRiskConfig
                 _opts.FuturesMaxOpenPositions = t.FuturesMaxOpenPositions;
             _opts.FuturesStopLossUsd = t.FuturesStopLossUsd;
             _opts.FuturesDailyLossLimitUsd = t.FuturesDailyLossLimitUsd;
-            // keep notional gate in sync with size from UI
-            if (t.QuoteSize > 0)
-            {
-                _opts.FuturesMaxNotionalUsd = t.QuoteSize;
-                _opts.LiveMaxNotionalUsd = t.QuoteSize;
-            }
-            if (t.FuturesMaxOpenPositions > 0)
-                _opts.LiveMaxOpenPositions = t.FuturesMaxOpenPositions;
+
+            if (t.MaxHoldMinutes > 0) _opts.FuturesMaxHoldMinutes = t.MaxHoldMinutes;
+            if (t.CloseBelowNetPercent >= 0) _opts.FuturesCloseBelowNetPercent = t.CloseBelowNetPercent;
+            if (t.MaxMarginUsagePercent > 0)
+                _opts.FuturesMaxMarginUsagePercent = Math.Clamp(t.MaxMarginUsagePercent, 0.05m, 0.9m);
+            if (t.MaxNotionalUsd > 0) _opts.FuturesMaxNotionalUsd = t.MaxNotionalUsd;
+            if (t.PaperCooldownMs >= 0) _opts.PaperCooldownMs = t.PaperCooldownMs;
+            _opts.PaperRequireFullFill = t.PaperRequireFullFill;
+            _opts.FuturesRequireRoundTripEdge = t.RequireRoundTripEdge;
+            _opts.FuturesIncludeFunding = t.IncludeFunding;
+
+            // Live micro-account — NEVER overwrite LiveMaxNotional with QuoteSize
+            if (t.LiveEquityPerExchangeUsd > 0)
+                _opts.LiveEquityPerExchangeUsd = t.LiveEquityPerExchangeUsd;
+            if (t.LiveMarginUsageFraction > 0)
+                _opts.LiveMarginUsageFraction = Math.Clamp(t.LiveMarginUsageFraction, 0.2m, 0.85m);
+            if (t.LiveMaxNotionalUsd > 0)
+                _opts.LiveMaxNotionalUsd = t.LiveMaxNotionalUsd;
+            if (t.LiveMaxOpenPositions > 0)
+                _opts.LiveMaxOpenPositions = t.LiveMaxOpenPositions;
+            if (t.LiveStopLossUsd != 0)
+                _opts.LiveStopLossUsd = t.LiveStopLossUsd;
+            if (t.LiveDailyLossLimitUsd != 0)
+                _opts.LiveDailyLossLimitUsd = t.LiveDailyLossLimitUsd;
         }
     }
 
@@ -68,6 +84,12 @@ public sealed class RuntimeRiskConfig
             if (r.QuoteSize > 0) _opts.QuoteSize = r.QuoteSize;
             if (r.Leverage > 0) _opts.FuturesPaperLeverage = Math.Clamp(r.Leverage, 1, 10);
             if (r.MaxOpenPositions > 0) _opts.FuturesMaxOpenPositions = r.MaxOpenPositions;
+            if (r.LiveEquityPerExchangeUsd > 0) _opts.LiveEquityPerExchangeUsd = r.LiveEquityPerExchangeUsd;
+            if (r.LiveMarginUsageFraction > 0)
+                _opts.LiveMarginUsageFraction = Math.Clamp(r.LiveMarginUsageFraction, 0.2m, 0.85m);
+            if (r.LiveMaxNotionalUsd > 0) _opts.LiveMaxNotionalUsd = r.LiveMaxNotionalUsd;
+            if (r.LiveMaxOpenPositions > 0) _opts.LiveMaxOpenPositions = r.LiveMaxOpenPositions;
+            if (r.LiveStopLossUsd != 0) _opts.LiveStopLossUsd = r.LiveStopLossUsd;
         }
     }
 
@@ -119,8 +141,19 @@ public sealed class RuntimeRiskConfig
         PaperCloseFeeFactor = o.PaperCloseFeeFactor,
         RequireSpreadingEdge = o.RequireSpreadingEdge,
         ExcludeToxicBases = o.ExcludeToxicBases?.ToList() ?? [],
+        LiveTradingEnabled = o.LiveTradingEnabled,
+        LiveReadOnlyMode = o.LiveReadOnlyMode,
         LiveMaxOpenPositions = o.LiveMaxOpenPositions,
-        LiveMaxNotionalUsd = o.LiveMaxNotionalUsd
+        LiveMaxNotionalUsd = o.LiveMaxNotionalUsd,
+        LiveEquityPerExchangeUsd = o.LiveEquityPerExchangeUsd,
+        LiveMarginUsageFraction = o.LiveMarginUsageFraction,
+        LiveDailyLossLimitUsd = o.LiveDailyLossLimitUsd,
+        LiveStopLossUsd = o.LiveStopLossUsd,
+        LiveEnableConfirmPhrase = o.LiveEnableConfirmPhrase,
+        LiveRequireHealthyBooks = o.LiveRequireHealthyBooks,
+        LiveMinOrderIntervalMs = o.LiveMinOrderIntervalMs,
+        LiveAlertWebhookUrl = o.LiveAlertWebhookUrl,
+        LiveAllowedExchanges = o.LiveAllowedExchanges?.ToList() ?? []
     };
 }
 
@@ -140,4 +173,9 @@ public class RiskUiSettings
     public bool PaperRequireFullFill { get; set; }
     public bool RequireRoundTripEdge { get; set; }
     public bool IncludeFunding { get; set; }
+    public decimal LiveEquityPerExchangeUsd { get; set; }
+    public decimal LiveMarginUsageFraction { get; set; }
+    public decimal LiveMaxNotionalUsd { get; set; }
+    public int LiveMaxOpenPositions { get; set; }
+    public decimal LiveStopLossUsd { get; set; }
 }

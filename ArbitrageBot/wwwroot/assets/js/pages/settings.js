@@ -1,53 +1,67 @@
 AB.pages.settings = {
   presets: {
-    conservative: {
+    micro5: {
       minProfitPercent: 0.08,
-      quoteSize: 80,
-      leverage: 3,
-      maxOpenPositions: 2,
-      stopLossUsd: -12,
-      dailyLossLimitUsd: -50,
-      maxHoldMinutes: 8,
-      closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.25,
-      maxNotionalUsd: 80,
-      paperCooldownMs: 1500,
-      paperRequireFullFill: true,
-      requireRoundTripEdge: true,
-      includeFunding: true
-    },
-    balanced: {
-      // QUALITY — default (no kopeck churn)
-      minProfitPercent: 0.08,
-      quoteSize: 100,
+      quoteSize: 15,
       leverage: 5,
       maxOpenPositions: 2,
-      stopLossUsd: -12,
-      dailyLossLimitUsd: -40,
+      stopLossUsd: -2.5,
+      dailyLossLimitUsd: -8,
       maxHoldMinutes: 12,
       closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.30,
-      maxNotionalUsd: 100,
+      maxMarginUsagePercent: 0.6,
+      maxNotionalUsd: 15,
       paperCooldownMs: 12000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
-      includeFunding: true
+      includeFunding: true,
+      liveEquityPerExchangeUsd: 5,
+      liveMarginUsageFraction: 0.6,
+      liveMaxNotionalUsd: 15,
+      liveMaxOpenPositions: 1,
+      liveStopLossUsd: -2.5
     },
-    aggressive: {
-      minProfitPercent: 0.035,
-      quoteSize: 120,
+    conservative: {
+      minProfitPercent: 0.10,
+      quoteSize: 15,
+      leverage: 3,
+      maxOpenPositions: 1,
+      stopLossUsd: -2,
+      dailyLossLimitUsd: -6,
+      maxHoldMinutes: 8,
+      closeBelowNetPercent: 0.02,
+      maxMarginUsagePercent: 0.5,
+      maxNotionalUsd: 10,
+      paperCooldownMs: 15000,
+      paperRequireFullFill: true,
+      requireRoundTripEdge: true,
+      includeFunding: true,
+      liveEquityPerExchangeUsd: 5,
+      liveMarginUsageFraction: 0.5,
+      liveMaxNotionalUsd: 10,
+      liveMaxOpenPositions: 1,
+      liveStopLossUsd: -2
+    },
+    balanced: {
+      minProfitPercent: 0.08,
+      quoteSize: 15,
       leverage: 5,
-      maxOpenPositions: 5,
-      stopLossUsd: -20,
-      dailyLossLimitUsd: -100,
-      maxHoldMinutes: 15,
-      closeBelowNetPercent: 0.025,
-      maxMarginUsagePercent: 0.4,
-      maxNotionalUsd: 120,
-      paperCooldownMs: 500,
-      paperRequireFullFill: false,
-      requireRoundTripEdge: false,
-      includeFunding: true
+      maxOpenPositions: 2,
+      stopLossUsd: -2.5,
+      dailyLossLimitUsd: -8,
+      maxHoldMinutes: 12,
+      closeBelowNetPercent: 0.02,
+      maxMarginUsagePercent: 0.6,
+      maxNotionalUsd: 15,
+      paperCooldownMs: 12000,
+      paperRequireFullFill: true,
+      requireRoundTripEdge: true,
+      includeFunding: true,
+      liveEquityPerExchangeUsd: 5,
+      liveMarginUsageFraction: 0.6,
+      liveMaxNotionalUsd: 15,
+      liveMaxOpenPositions: 1,
+      liveStopLossUsd: -2.5
     }
   },
 
@@ -59,8 +73,7 @@ AB.pages.settings = {
       try {
         const r = await AB.api.get('/api/settings/risk');
         this.fillRisk(r);
-        // Ensure BEST defaults visible if API returned zeros
-        if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) this.applyPreset('balanced');
+        if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) this.applyPreset('micro5');
       } catch (_) {}
     } catch (e) {
       AB.$('s_msg').className = 'alert warn';
@@ -83,17 +96,21 @@ AB.pages.settings = {
     set('s_marginUse', r.maxMarginUsagePercent);
     set('s_maxNotional', r.maxNotionalUsd);
     set('s_cooldown', r.paperCooldownMs);
+    set('s_liveEquity', r.liveEquityPerExchangeUsd ?? 5);
+    set('s_liveUsage', r.liveMarginUsageFraction ?? 0.6);
+    set('s_liveMaxN', r.liveMaxNotionalUsd ?? 15);
+    set('s_liveMaxOpen', r.liveMaxOpenPositions ?? 1);
+    set('s_liveStop', r.liveStopLossUsd ?? -2.5);
     if (AB.$('s_fullFill')) AB.$('s_fullFill').checked = !!r.paperRequireFullFill;
     if (AB.$('s_reqRt')) AB.$('s_reqRt').checked = !!r.requireRoundTripEdge;
     if (AB.$('s_funding')) AB.$('s_funding').checked = r.includeFunding !== false;
   },
 
   applyPreset(name) {
-    const p = this.presets[name];
-    if (!p) return;
+    const p = this.presets[name] || this.presets.micro5;
     this.fillRisk(p);
     AB.$('s_msg').className = 'alert info';
-    AB.$('s_msg').textContent = 'Preset «' + name + '» loaded into form — нажми Apply trading parameters.';
+    AB.$('s_msg').textContent = 'Preset «' + name + '» — нажми Save all (persist + apply).';
     AB.$('s_msg').classList.remove('hidden');
   },
 
@@ -103,11 +120,24 @@ AB.pages.settings = {
     if (AB.$('s_paper')) AB.$('s_paper').checked = t.paperTrading !== false;
     if (AB.$('s_auto')) AB.$('s_auto').checked = !!t.paperAutoExecute;
     if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.08;
-    if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 2000;
+    if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 15;
     if (AB.$('s_lev')) AB.$('s_lev').value = t.futuresPaperLeverage ?? 5;
-    if (AB.$('s_maxPos')) AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 6;
-    if (AB.$('s_stop')) AB.$('s_stop').value = t.futuresStopLossUsd ?? -80;
-    if (AB.$('s_dayLimit')) AB.$('s_dayLimit').value = t.futuresDailyLossLimitUsd ?? -400;
+    if (AB.$('s_maxPos')) AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 2;
+    if (AB.$('s_stop')) AB.$('s_stop').value = t.futuresStopLossUsd ?? -2.5;
+    if (AB.$('s_dayLimit')) AB.$('s_dayLimit').value = t.futuresDailyLossLimitUsd ?? -8;
+    if (AB.$('s_liveEquity')) AB.$('s_liveEquity').value = t.liveEquityPerExchangeUsd ?? 5;
+    if (AB.$('s_liveUsage')) AB.$('s_liveUsage').value = t.liveMarginUsageFraction ?? 0.6;
+    if (AB.$('s_liveMaxN')) AB.$('s_liveMaxN').value = t.liveMaxNotionalUsd ?? 15;
+    if (AB.$('s_liveMaxOpen')) AB.$('s_liveMaxOpen').value = t.liveMaxOpenPositions ?? 1;
+    if (AB.$('s_liveStop')) AB.$('s_liveStop').value = t.liveStopLossUsd ?? -2.5;
+    if (AB.$('s_maxNotional')) AB.$('s_maxNotional').value = t.maxNotionalUsd ?? t.liveMaxNotionalUsd ?? 15;
+    if (AB.$('s_marginUse')) AB.$('s_marginUse').value = t.maxMarginUsagePercent ?? 0.6;
+    if (AB.$('s_hold')) AB.$('s_hold').value = t.maxHoldMinutes ?? 12;
+    if (AB.$('s_closeWidth')) AB.$('s_closeWidth').value = t.closeBelowNetPercent ?? 0.02;
+    if (AB.$('s_cooldown')) AB.$('s_cooldown').value = t.paperCooldownMs ?? 12000;
+    if (AB.$('s_fullFill')) AB.$('s_fullFill').checked = t.paperRequireFullFill !== false;
+    if (AB.$('s_reqRt')) AB.$('s_reqRt').checked = t.requireRoundTripEdge !== false;
+    if (AB.$('s_funding')) AB.$('s_funding').checked = t.includeFunding !== false;
 
     const conns = s.connections || {};
     AB.$('s_exchanges').innerHTML = Object.entries(conns).map(([name, c]) => `
@@ -152,7 +182,7 @@ AB.pages.settings = {
         try {
           await AB.api.post('/api/settings/exchanges/' + encodeURIComponent(name), body);
           AB.$('s_msg').className = 'alert ok';
-          AB.$('s_msg').textContent = name + ' credentials saved (masked in UI). Still PAPER until live is enabled.';
+          AB.$('s_msg').textContent = name + ' credentials saved → local-settings.json';
           AB.$('s_msg').classList.remove('hidden');
           this.load();
         } catch (e) {
@@ -170,7 +200,7 @@ AB.pages.settings = {
         try {
           await AB.api.del('/api/settings/exchanges/' + encodeURIComponent(name));
           AB.$('s_msg').className = 'alert ok';
-          AB.$('s_msg').textContent = name + ' keys cleared. Paste new key/secret/passphrase and Save.';
+          AB.$('s_msg').textContent = name + ' keys cleared.';
           AB.$('s_msg').classList.remove('hidden');
           this.load();
         } catch (e) {
@@ -185,8 +215,8 @@ AB.pages.settings = {
 };
 
 document.getElementById('presetConservative')?.addEventListener('click', () => AB.pages.settings.applyPreset('conservative'));
-document.getElementById('presetBalanced')?.addEventListener('click', () => AB.pages.settings.applyPreset('balanced'));
-document.getElementById('presetAggressive')?.addEventListener('click', () => AB.pages.settings.applyPreset('aggressive'));
+document.getElementById('presetBalanced')?.addEventListener('click', () => AB.pages.settings.applyPreset('micro5'));
+document.getElementById('presetAggressive')?.addEventListener('click', () => AB.pages.settings.applyPreset('balanced'));
 
 document.getElementById('btnSaveTrading')?.addEventListener('click', async () => {
   const num = (id, fallback) => {
@@ -203,11 +233,25 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     paperTrading: !!AB.$('s_paper')?.checked,
     paperAutoExecute: !!AB.$('s_auto')?.checked,
     minProfitPercent: num('s_minProfit', 0.08),
-    quoteSize: num('s_size', 2000),
+    quoteSize: num('s_size', 15),
     futuresPaperLeverage: Math.min(10, Math.max(1, num('s_lev', 5))),
-    futuresMaxOpenPositions: int('s_maxPos', 6),
-    futuresStopLossUsd: num('s_stop', -80),
-    futuresDailyLossLimitUsd: num('s_dayLimit', -400)
+    futuresMaxOpenPositions: int('s_maxPos', 2),
+    futuresStopLossUsd: num('s_stop', -2.5),
+    futuresDailyLossLimitUsd: num('s_dayLimit', -8),
+    maxHoldMinutes: int('s_hold', 12),
+    closeBelowNetPercent: num('s_closeWidth', 0.02),
+    maxMarginUsagePercent: Math.min(0.9, Math.max(0.05, num('s_marginUse', 0.6))),
+    maxNotionalUsd: num('s_maxNotional', 15),
+    paperCooldownMs: int('s_cooldown', 12000),
+    paperRequireFullFill: !!AB.$('s_fullFill')?.checked,
+    requireRoundTripEdge: !!AB.$('s_reqRt')?.checked,
+    includeFunding: !!AB.$('s_funding')?.checked,
+    liveEquityPerExchangeUsd: num('s_liveEquity', 5),
+    liveMarginUsageFraction: Math.min(0.85, Math.max(0.2, num('s_liveUsage', 0.6))),
+    liveMaxNotionalUsd: num('s_liveMaxN', 15),
+    liveMaxOpenPositions: int('s_liveMaxOpen', 1),
+    liveStopLossUsd: num('s_liveStop', -2.5),
+    liveDailyLossLimitUsd: num('s_dayLimit', -8)
   };
   const risk = {
     minProfitPercent: trading.minProfitPercent,
@@ -216,20 +260,27 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     maxOpenPositions: trading.futuresMaxOpenPositions,
     stopLossUsd: trading.futuresStopLossUsd,
     dailyLossLimitUsd: trading.futuresDailyLossLimitUsd,
-    maxHoldMinutes: int('s_hold', 20),
-    closeBelowNetPercent: num('s_closeWidth', 0.02),
-    maxMarginUsagePercent: Math.min(0.9, Math.max(0.05, num('s_marginUse', 0.25))),
-    maxNotionalUsd: num('s_maxNotional', 6000),
-    paperCooldownMs: int('s_cooldown', 4000),
-    paperRequireFullFill: !!AB.$('s_fullFill')?.checked,
-    requireRoundTripEdge: !!AB.$('s_reqRt')?.checked,
-    includeFunding: !!AB.$('s_funding')?.checked
+    maxHoldMinutes: trading.maxHoldMinutes,
+    closeBelowNetPercent: trading.closeBelowNetPercent,
+    maxMarginUsagePercent: trading.maxMarginUsagePercent,
+    maxNotionalUsd: trading.maxNotionalUsd,
+    paperCooldownMs: trading.paperCooldownMs,
+    paperRequireFullFill: trading.paperRequireFullFill,
+    requireRoundTripEdge: trading.requireRoundTripEdge,
+    includeFunding: trading.includeFunding,
+    liveEquityPerExchangeUsd: trading.liveEquityPerExchangeUsd,
+    liveMarginUsageFraction: trading.liveMarginUsageFraction,
+    liveMaxNotionalUsd: trading.liveMaxNotionalUsd,
+    liveMaxOpenPositions: trading.liveMaxOpenPositions,
+    liveStopLossUsd: trading.liveStopLossUsd
   };
   try {
     await AB.api.post('/api/settings/trading', trading);
     await AB.api.post('/api/settings/risk', risk);
+    const n = (trading.liveEquityPerExchangeUsd * trading.futuresPaperLeverage * trading.liveMarginUsageFraction).toFixed(1);
+    const m = (n / trading.futuresPaperLeverage).toFixed(1);
     AB.$('s_msg').className = 'alert ok';
-    AB.$('s_msg').textContent = 'Trading parameters applied at runtime. Paper engine uses new limits immediately.';
+    AB.$('s_msg').textContent = 'Saved → local-settings.json · live ~$' + n + ' notional / ~$' + m + ' margin per venue. Survives restart.';
     AB.$('s_msg').classList.remove('hidden');
   } catch (e) {
     AB.$('s_msg').className = 'alert warn';
@@ -237,7 +288,6 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     AB.$('s_msg').classList.remove('hidden');
   }
 });
-
 
 async function refreshLiveStatus() {
   try {
@@ -262,7 +312,7 @@ document.getElementById('btnLiveVerify')?.addEventListener('click', async () => 
 document.getElementById('btnLiveEnable')?.addEventListener('click', async () => {
   const phrase = AB.$('live_phrase')?.value || '';
   const readOnly = !!AB.$('live_readonly')?.checked;
-  if (!readOnly && !confirm('Enable LIVE ORDERS? Phase 1 still cannot place orders, but guard will allow Phase 3 code.')) return;
+  if (!readOnly && !confirm('Enable LIVE ORDERS? Real money on exchanges.')) return;
   try {
     const r = await AB.api.post('/api/live/enable', { confirmPhrase: phrase, readOnly });
     if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);

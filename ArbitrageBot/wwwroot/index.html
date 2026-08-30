@@ -368,9 +368,9 @@
             <div class="panel-hd"><h2 class="panel-title">Trading parameters</h2></div>
             <div class="section-label">Preset</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-              <button type="button" class="btn sm" id="presetConservative">Conservative</button>
-              <button type="button" class="btn sm primary" id="presetBalanced">QUALITY (no churn)</button>
-              <button type="button" class="btn sm" id="presetAggressive">Aggressive</button>
+              <button type="button" class="btn sm" id="presetConservative">Conservative ($5)</button>
+              <button type="button" class="btn sm primary" id="presetBalanced">Micro $5 / exchange</button>
+              <button type="button" class="btn sm" id="presetAggressive">Balanced</button>
             </div>
             <div class="section-label">Mode</div>
             <div class="form-row">
@@ -385,10 +385,10 @@
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_auto" type="checkbox"/> Auto-execute</label>
               </div>
             </div>
-            <div class="section-label">Entry · size</div>
+            <div class="section-label">Entry · size (scan / paper)</div>
             <div class="form-row">
               <div class="field"><label>Min open edge %</label><input id="s_minProfit" type="number" step="0.005"/><div class="hint">After open fees</div></div>
-              <div class="field"><label>Quote size USDT</label><input id="s_size" type="number" step="50"/></div>
+              <div class="field"><label>Quote size USDT</label><input id="s_size" type="number" step="1"/><div class="hint">Scan depth; live size uses Live block</div></div>
             </div>
             <div class="form-row">
               <div class="field"><label>Leverage</label><input id="s_lev" type="number" min="1" max="10"/></div>
@@ -398,25 +398,40 @@
               <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number"/></div>
               <div class="field"><label>Cooldown ms</label><input id="s_cooldown" type="number"/></div>
             </div>
-            <div class="section-label">Risk</div>
+            <div class="section-label">Live micro ($5 / exchange)</div>
+            <div class="banner info" style="margin-bottom:10px;font-size:12px">
+              notional ≈ <b>equity × leverage × usage</b>. Default: $5 × 5x × 0.6 → <b>~$15 notional / ~$3 margin</b> on each leg.
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Equity / exchange USDT</label><input id="s_liveEquity" type="number" step="0.5"/><div class="hint">Free USDT on EACH venue</div></div>
+              <div class="field"><label>Margin usage</label><input id="s_liveUsage" type="number" step="0.05" min="0.2" max="0.85"/><div class="hint">0.6 = use 60% of equity</div></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Live max notional</label><input id="s_liveMaxN" type="number" step="1"/></div>
+              <div class="field"><label>Live max open</label><input id="s_liveMaxOpen" type="number"/></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Live stop-loss USD</label><input id="s_liveStop" type="number" step="0.1"/><div class="hint">Negative</div></div>
+              <div class="field"><label>Daily loss limit</label><input id="s_dayLimit" type="number"/></div>
+            </div>
+            <div class="section-label">Risk (paper)</div>
             <div class="form-row">
               <div class="field"><label>Stop-loss USD</label><input id="s_stop" type="number"/><div class="hint">Negative number</div></div>
-              <div class="field"><label>Daily loss limit</label><input id="s_dayLimit" type="number"/></div>
+              <div class="field"><label>Max hold minutes</label><input id="s_hold" type="number"/></div>
             </div>
             <div class="form-row">
               <div class="field"><label>Max margin usage</label><input id="s_marginUse" type="number" step="0.01" min="0.05" max="0.9"/></div>
-              <div class="field"><label>Max hold minutes</label><input id="s_hold" type="number"/></div>
+              <div class="field"><label>Close width ≤ %</label><input id="s_closeWidth" type="number" step="0.005"/></div>
             </div>
             <div class="section-label">Exit · filters</div>
             <div class="form-row">
-              <div class="field"><label>Close width ≤ %</label><input id="s_closeWidth" type="number" step="0.005"/></div>
               <div class="field" style="display:flex;flex-direction:column;gap:8px;justify-content:center">
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_fullFill" type="checkbox"/> Full fill</label>
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_reqRt" type="checkbox"/> Require RT edge</label>
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_funding" type="checkbox"/> Include funding</label>
               </div>
             </div>
-            <button type="button" class="btn primary" id="btnSaveTrading">Apply parameters</button>
+            <button type="button" class="btn primary" id="btnSaveTrading">Save all (persist + apply)</button>
           </div>
           <div>
             <div class="panel">

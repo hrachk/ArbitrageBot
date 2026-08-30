@@ -9,66 +9,119 @@
 
 <div class="page-hd">
   <h1>Settings</h1>
-  <p class="muted">Trading parameters · API keys (local store, never in git)</p>
+  <p class="muted">Один экран: Paper + Live ($5/биржа) · сохраняется в <code class="mono">data/local-settings.json</code></p>
 </div>
+
+@if (!string.IsNullOrEmpty(_msg))
+{
+  <div class="alert" style="margin-bottom:12px">@_msg</div>
+}
 
 <div class="grid-2">
   <div class="card">
-    <div class="card-hd"><h2>Trading</h2></div>
+    <div class="card-hd"><h2>Trading / Paper</h2></div>
     <div class="form">
-      <label>Notional (USDT) <input type="number" @bind="_quote" /></label>
-      <label>Min profit % <input type="number" step="0.01" @bind="_min" /></label>
-      <label>Max open <input type="number" @bind="_maxOpen" /></label>
-      <label>Leverage <input type="number" @bind="_lev" /></label>
+      <label>Min open edge % <input type="number" step="0.01" @bind="_min" /></label>
+      <label>Quote size (scan/paper) USDT <input type="number" @bind="_quote" /></label>
+      <label>Leverage <input type="number" min="1" max="10" @bind="_lev" /></label>
+      <label>Max open hedges <input type="number" @bind="_maxOpen" /></label>
+      <label>Stop-loss USD <input type="number" step="0.1" @bind="_stop" /></label>
+      <label>Daily loss limit USD <input type="number" step="0.1" @bind="_dayLimit" /></label>
       <label class="chk"><input type="checkbox" @bind="_paper" /> Paper trading</label>
       <label class="chk"><input type="checkbox" @bind="_auto" /> Auto execute</label>
-      <button class="btn primary" @onclick="SaveTrading">Save trading</button>
-      @if (!string.IsNullOrEmpty(_msg)) { <div class="alert">@_msg</div> }
+      <label class="chk"><input type="checkbox" @bind="_reqRt" /> Require round-trip edge</label>
     </div>
   </div>
-  <div class="card">
-    <div class="card-hd"><h2>Exchange API keys</h2></div>
-    <p class="muted tiny">Clear then paste new key/secret/passphrase.</p>
-    @foreach (var name in _exNames)
-    {
-      var c = Store.GetCredential(name);
-      <div class="ex-block">
-        <strong>@name</strong>
-        <span class="muted tiny">@(Mask(c?.ApiKey))</span>
-        <input placeholder="API Key" @bind="_keys[name].Key" />
-        <input placeholder="Secret" type="password" @bind="_keys[name].Secret" />
-        <input placeholder="Passphrase (OKX/Bitget)" type="password" @bind="_keys[name].Pass" />
-        <div class="btn-row">
-          <button class="btn sm primary" @onclick="() => SaveKey(name)">Save</button>
-          <button class="btn sm" @onclick="() => ClearKey(name)">Clear</button>
-        </div>
+
+  <div class="card" style="border-color:rgba(248,113,113,0.35)">
+    <div class="card-hd"><h2>Live micro ($5 / exchange)</h2></div>
+    <p class="muted tiny">notional ≈ equity × leverage × usage · маржа на <b>каждой</b> бирже</p>
+    <div class="form">
+      <label>Equity per exchange USDT <input type="number" step="0.5" @bind="_liveEquity" /></label>
+      <label>Margin usage (0.2–0.85) <input type="number" step="0.05" min="0.2" max="0.85" @bind="_liveUsage" /></label>
+      <label>Live max notional USDT <input type="number" step="1" @bind="_liveMaxN" /></label>
+      <label>Live max open <input type="number" @bind="_liveMaxOpen" /></label>
+      <label>Live stop-loss USD <input type="number" step="0.1" @bind="_liveStop" /></label>
+      <div class="muted tiny" style="margin-top:8px">
+        Пример: @_liveEquity$ × @_lev x × @_liveUsage → ~@EstNotional.ToString("F1")$ notional / ~@EstMargin.ToString("F1")$ margin
       </div>
-    }
+    </div>
   </div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="card-hd"><h2>Save</h2></div>
+  <div class="btn-row">
+    <button class="btn primary" @onclick="SaveAll">Save all settings</button>
+    <button class="btn" @onclick="ResetMicroDefaults">Reset $5 defaults</button>
+  </div>
+  <p class="muted tiny" style="margin-top:8px">После Save параметры живут в <code class="mono">data/local-settings.json</code> и поднимаются при restart/rebuild (если файл не удалять).</p>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="card-hd"><h2>Exchange API keys</h2></div>
+  <p class="muted tiny">OKX/Bitget — passphrase обязателен. Permission = trade для live-ордеров.</p>
+  @foreach (var name in _exNames)
+  {
+    var c = Store.GetCredential(name);
+    <div class="ex-block">
+      <strong>@name</strong>
+      <span class="muted tiny">@(Mask(c?.ApiKey)) · @(c?.Permission ?? "—")</span>
+      <input placeholder="API Key" @bind="_keys[name].Key" />
+      <input placeholder="Secret" type="password" @bind="_keys[name].Secret" />
+      <input placeholder="Passphrase (OKX/Bitget)" type="password" @bind="_keys[name].Pass" />
+      <label class="chk"><input type="checkbox" @bind="_keys[name].Trade" /> Trade permission</label>
+      <div class="btn-row">
+        <button class="btn sm primary" @onclick="() => SaveKey(name)">Save</button>
+        <button class="btn sm" @onclick="() => ClearKey(name)">Clear</button>
+      </div>
+    </div>
+  }
 </div>
 
 @code {
     static readonly string[] _exNames = ["Binance", "Bybit", "OKX", "Bitget"];
-    decimal _quote, _min, _lev;
-    int _maxOpen;
-    bool _paper, _auto;
+    decimal _quote, _min, _lev, _stop, _dayLimit;
+    decimal _liveEquity, _liveUsage, _liveMaxN, _liveStop;
+    int _maxOpen, _liveMaxOpen;
+    bool _paper, _auto, _reqRt;
     string _msg = "";
     Dictionary<string, KeyForm> _keys = new();
 
-    class KeyForm { public string Key { get; set; } = ""; public string Secret { get; set; } = ""; public string Pass { get; set; } = ""; }
+    decimal EstNotional => Math.Min(_liveMaxN > 0 ? _liveMaxN : 15m, _liveEquity * _lev * Math.Clamp(_liveUsage, 0.2m, 0.85m));
+    decimal EstMargin => _lev > 0 ? EstNotional / _lev : EstNotional;
+
+    class KeyForm
+    {
+        public string Key { get; set; } = "";
+        public string Secret { get; set; } = "";
+        public string Pass { get; set; } = "";
+        public bool Trade { get; set; }
+    }
 
     protected override void OnInitialized()
     {
-        var o = Opt.Value;
+        var t = Store.GetTrading();
         var snap = Risk.Snapshot;
-        _quote = snap.QuoteSize;
-        _min = snap.MinProfitPercent;
-        _maxOpen = snap.FuturesMaxOpenPositions;
-        _lev = snap.FuturesPaperLeverage;
-        _paper = snap.PaperTrading;
-        _auto = snap.PaperAutoExecute;
+        _quote = t.QuoteSize > 0 ? t.QuoteSize : snap.QuoteSize;
+        _min = t.MinProfitPercent > 0 ? t.MinProfitPercent : snap.MinProfitPercent;
+        _maxOpen = t.FuturesMaxOpenPositions > 0 ? t.FuturesMaxOpenPositions : snap.FuturesMaxOpenPositions;
+        _lev = t.FuturesPaperLeverage > 0 ? t.FuturesPaperLeverage : snap.FuturesPaperLeverage;
+        _paper = t.PaperTrading;
+        _auto = t.PaperAutoExecute;
+        _stop = t.FuturesStopLossUsd != 0 ? t.FuturesStopLossUsd : snap.FuturesStopLossUsd;
+        _dayLimit = t.FuturesDailyLossLimitUsd != 0 ? t.FuturesDailyLossLimitUsd : snap.FuturesDailyLossLimitUsd;
+        _reqRt = t.RequireRoundTripEdge;
+        _liveEquity = t.LiveEquityPerExchangeUsd > 0 ? t.LiveEquityPerExchangeUsd : 5m;
+        _liveUsage = t.LiveMarginUsageFraction > 0 ? t.LiveMarginUsageFraction : 0.6m;
+        _liveMaxN = t.LiveMaxNotionalUsd > 0 ? t.LiveMaxNotionalUsd : 15m;
+        _liveMaxOpen = t.LiveMaxOpenPositions > 0 ? t.LiveMaxOpenPositions : 1;
+        _liveStop = t.LiveStopLossUsd != 0 ? t.LiveStopLossUsd : -2.5m;
         foreach (var n in _exNames)
-            _keys[n] = new KeyForm();
+        {
+            var c = Store.GetCredential(n);
+            _keys[n] = new KeyForm { Trade = string.Equals(c?.Permission, "trade", StringComparison.OrdinalIgnoreCase) };
+        }
     }
 
     static string Mask(string? key)
@@ -77,21 +130,50 @@
         return key[..4] + "…" + key[^4..];
     }
 
-    async Task SaveTrading()
+    void ResetMicroDefaults()
+    {
+        _liveEquity = 5m;
+        _liveUsage = 0.6m;
+        _liveMaxN = 15m;
+        _liveMaxOpen = 1;
+        _liveStop = -2.5m;
+        _quote = 15m;
+        _lev = 5m;
+        _maxOpen = 2;
+        _stop = -2.5m;
+        _dayLimit = -8m;
+        _min = 0.08m;
+        _msg = "Defaults loaded into form — press Save all settings.";
+    }
+
+    async Task SaveAll()
     {
         var t = new TradingUiSettings
         {
-            QuoteSize = _quote,
-            MinProfitPercent = _min,
-            FuturesMaxOpenPositions = _maxOpen,
-            FuturesPaperLeverage = _lev,
+            StrategyMode = "FuturesCross",
             PaperTrading = _paper,
             PaperAutoExecute = _auto,
-            StrategyMode = Opt.Value.StrategyMode
+            MinProfitPercent = _min,
+            QuoteSize = _quote,
+            FuturesPaperLeverage = _lev,
+            FuturesMaxOpenPositions = _maxOpen,
+            FuturesStopLossUsd = _stop,
+            FuturesDailyLossLimitUsd = _dayLimit,
+            RequireRoundTripEdge = _reqRt,
+            PaperRequireFullFill = true,
+            IncludeFunding = true,
+            MaxMarginUsagePercent = _liveUsage,
+            MaxNotionalUsd = _liveMaxN,
+            LiveEquityPerExchangeUsd = _liveEquity,
+            LiveMarginUsageFraction = _liveUsage,
+            LiveMaxNotionalUsd = _liveMaxN,
+            LiveMaxOpenPositions = _liveMaxOpen,
+            LiveStopLossUsd = _liveStop,
+            LiveDailyLossLimitUsd = _dayLimit
         };
         await Store.SaveTradingAsync(t);
         Risk.ApplyTrading(t);
-        _msg = "Trading settings saved.";
+        _msg = $"Saved → local-settings.json · live notional≈{EstNotional:F1}$ (margin≈{EstMargin:F1}$ per venue)";
     }
 
     async Task SaveKey(string name)
@@ -103,7 +185,7 @@
             ApiKey = string.IsNullOrWhiteSpace(k.Key) ? null! : k.Key,
             ApiSecret = string.IsNullOrWhiteSpace(k.Secret) ? null! : k.Secret,
             Passphrase = string.IsNullOrWhiteSpace(k.Pass) ? null! : k.Pass,
-            Permission = "read-only"
+            Permission = k.Trade ? "trade" : "read-only"
         });
         _msg = name + " credentials saved.";
         k.Key = k.Secret = k.Pass = "";
