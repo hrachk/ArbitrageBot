@@ -101,12 +101,22 @@ public sealed class LiveOrderEngine
 
         var refPrice = req.LongAsk ?? req.ShortBid ?? 0m;
         var roundedQty = RoundBaseQty(req.BaseQty, refPrice);
+        var lev = req.Leverage > 0 ? req.Leverage : 3m;
 
-        // Hard cap: min(request notional, LiveMaxNotional, 50) — thin accounts can't take 180 USDT legs
-        var maxNotional = _options.LiveMaxNotionalUsd > 0 ? _options.LiveMaxNotionalUsd : 50m;
-        if (maxNotional > 50m) maxNotional = 50m; // safety ceiling until balances are proven
+        // Size for ~$5 free equity per exchange:
+        // marginUsed = equity * usageFraction  →  notional = marginUsed * leverage
+        // e.g. $5 * 0.6 * 5x = $15 notional per leg (~$3 margin on EACH venue)
+        var equity = _options.LiveEquityPerExchangeUsd > 0 ? _options.LiveEquityPerExchangeUsd : 5m;
+        var usage = _options.LiveMarginUsageFraction > 0 ? _options.LiveMarginUsageFraction : 0.6m;
+        usage = Math.Clamp(usage, 0.2m, 0.85m);
+        var maxNotional = equity * lev * usage;
+        if (_options.LiveMaxNotionalUsd > 0 && maxNotional > _options.LiveMaxNotionalUsd)
+            maxNotional = _options.LiveMaxNotionalUsd;
         if (req.NotionalUsd > 0 && req.NotionalUsd < maxNotional)
             maxNotional = req.NotionalUsd;
+        var absCap = equity * lev;
+        if (maxNotional > absCap) maxNotional = absCap;
+
         if (refPrice > 0)
         {
             var maxBase = maxNotional / refPrice;
@@ -116,10 +126,15 @@ public sealed class LiveOrderEngine
         if (roundedQty <= 0)
             return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty})" };
 
+        var estNotional = refPrice > 0 ? roundedQty * refPrice : maxNotional;
+        var estMargin = lev > 0 ? estNotional / lev : estNotional;
+        _logger.LogInformation(
+            "LIVE size {Sym} qty={Q} notional≈{N:F2}$ margin≈{M:F2}$ (equity={E}$ lev={L}x usage={U:P0})",
+            req.Symbol, roundedQty, estNotional, estMargin, equity, lev, usage);
+
         var longQty = QtyForExchange(req.LongExchange, roundedQty);
         var shortQty = QtyForExchange(req.ShortExchange, roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
-        var lev = req.Leverage > 0 ? req.Leverage : 3;
 
         // 1) LONG — market, hedge mode: no reduceOnly / no timeInForce
         var longReq = new PlaceFuturesOrderRequest(

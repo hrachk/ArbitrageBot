@@ -108,8 +108,15 @@ public class ArbitrageOptions
     public bool LiveReadOnlyMode { get; set; } = true;
     /// <summary>Hard ceiling: max concurrent live hedges.</summary>
     public int LiveMaxOpenPositions { get; set; } = 1;
-    /// <summary>Max notional USD per leg on live.</summary>
+    /// <summary>Max notional USD per leg on live (hard ceiling).</summary>
     public decimal LiveMaxNotionalUsd { get; set; } = 200m;
+    /// <summary>
+    /// Assumed free USDT equity available for margin on EACH exchange.
+    /// Live notional = equity × leverage × LiveMarginUsageFraction (capped by LiveMaxNotionalUsd).
+    /// </summary>
+    public decimal LiveEquityPerExchangeUsd { get; set; } = 5m;
+    /// <summary>Fraction of per-exchange equity to lock as margin (0.6 = use $3 of $5).</summary>
+    public decimal LiveMarginUsageFraction { get; set; } = 0.6m;
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
     public decimal LiveDailyLossLimitUsd { get; set; } = -50m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
