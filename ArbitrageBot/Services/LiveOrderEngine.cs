@@ -83,10 +83,19 @@ public sealed class LiveOrderEngine
         // Round quantity to exchange-safe precision (avoids Binance -1111 Precision error)
         var refPrice = req.LongAsk ?? req.ShortBid ?? 0m;
         var roundedQty = RoundBaseQty(req.BaseQty, refPrice);
+        // Cap by live max notional so legs fit thin balances (Bitget "exceeds the balance")
+        if (refPrice > 0 && _options.LiveMaxNotionalUsd > 0)
+        {
+            var maxBase = _options.LiveMaxNotionalUsd / refPrice;
+            if (roundedQty > maxBase)
+                roundedQty = RoundBaseQty(maxBase, refPrice);
+        }
         if (roundedQty <= 0)
             return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty})" };
 
-        var qty = SharedQuantity.Base(roundedQty);
+        // Per-exchange quantity unit: OKX linear swaps expect contracts; others base asset
+        var longQty = QtyForExchange(req.LongExchange, roundedQty);
+        var shortQty = QtyForExchange(req.ShortExchange, roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
 
         // 1) LONG market on cheap exchange
@@ -94,15 +103,16 @@ public sealed class LiveOrderEngine
         if (longClient == null)
             return new { ok = false, error = "no credentials for " + req.LongExchange };
 
+        // MARKET: never send timeInForce (Binance -1106 "Parameter 'timeinforce' sent when not required")
         var longReq = new PlaceFuturesOrderRequest(
             sharedSym,
             SharedOrderSide.Buy,
             SharedOrderType.Market,
-            qty,
+            longQty,
             price: null,
             reduceOnly: false,
             leverage: req.Leverage > 0 ? req.Leverage : 3,
-            timeInForce: SharedTimeInForce.ImmediateOrCancel,
+            timeInForce: null,
             positionSide: SharedPositionSide.Long,
             marginMode: null,
             clientOrderId: clientId + "-L",
@@ -124,7 +134,7 @@ public sealed class LiveOrderEngine
         if (shortClient == null)
         {
             // emergency: try close long
-            await TryReduceAsync(longClient, req.LongExchange, sharedSym, qty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
+            await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
                 .ConfigureAwait(false);
             return new { ok = false, error = "no credentials for " + req.ShortExchange + " — attempted unwind long" };
         }
@@ -133,11 +143,11 @@ public sealed class LiveOrderEngine
             sharedSym,
             SharedOrderSide.Sell,
             SharedOrderType.Market,
-            qty,
+            shortQty,
             price: null,
             reduceOnly: false,
             leverage: req.Leverage > 0 ? req.Leverage : 3,
-            timeInForce: SharedTimeInForce.ImmediateOrCancel,
+            timeInForce: null,
             positionSide: SharedPositionSide.Short,
             marginMode: null,
             clientOrderId: clientId + "-S",
@@ -148,7 +158,7 @@ public sealed class LiveOrderEngine
         {
             var err = shortResult.Error?.Message ?? "short order failed";
             _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long", req.ShortExchange, req.Symbol, err);
-            await TryReduceAsync(longClient, req.LongExchange, sharedSym, qty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
+            await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
                 .ConfigureAwait(false);
             return new { ok = false, error = "SHORT failed: " + err + " (long unwind attempted)", leg = "short", detail = Trunc(shortResult.OriginalData) };
         }
@@ -217,7 +227,8 @@ public sealed class LiveOrderEngine
 
         var baseAsset = pos.Symbol.EndsWith("USDT") ? pos.Symbol[..^4] : pos.Symbol;
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
-        var qty = SharedQuantity.Base(pos.BaseQty);
+        var longQty = QtyForExchange(pos.LongExchange, pos.BaseQty);
+        var shortQty = QtyForExchange(pos.ShortExchange, pos.BaseQty);
 
         var longClient = CreateClient(pos.LongExchange);
         var shortClient = CreateClient(pos.ShortExchange);
@@ -225,10 +236,10 @@ public sealed class LiveOrderEngine
             return new { ok = false, error = "missing credentials to close" };
 
         // Close long: sell reduce
-        var closeLong = await TryReduceAsync(longClient, pos.LongExchange, sharedSym, qty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
+        var closeLong = await TryReduceAsync(longClient, pos.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
             .ConfigureAwait(false);
         // Close short: buy reduce
-        var closeShort = await TryReduceAsync(shortClient, pos.ShortExchange, sharedSym, qty, SharedOrderSide.Buy, SharedPositionSide.Short, ct)
+        var closeShort = await TryReduceAsync(shortClient, pos.ShortExchange, sharedSym, shortQty, SharedOrderSide.Buy, SharedPositionSide.Short, ct)
             .ConfigureAwait(false);
 
         decimal? pnl = null;
@@ -318,7 +329,7 @@ public sealed class LiveOrderEngine
                 price: null,
                 reduceOnly: null,
                 leverage: null,
-                timeInForce: SharedTimeInForce.ImmediateOrCancel,
+                timeInForce: null, // MARKET: no TIF (Binance rejects timeInForce on market)
                 positionSide: posSide,
                 marginMode: null,
                 clientOrderId: "ab-c-" + Guid.NewGuid().ToString("N")[..12],
@@ -425,6 +436,17 @@ public sealed class LiveOrderEngine
                 new ExchangeParameter("OKX", "TradeMode", "cross"));
         }
         return new ExchangeParameters();
+    }
+
+    /// <summary>
+    /// OKX linear swaps size is in contracts; most alts have ctVal=1 so contracts ≈ base.
+    /// Binance/Bybit/Bitget shared path accepts base asset quantity.
+    /// </summary>
+    private static SharedQuantity QtyForExchange(string exchange, decimal baseQty)
+    {
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            return SharedQuantity.Contracts(baseQty);
+        return SharedQuantity.Base(baseQty);
     }
 
     /// <summary>
