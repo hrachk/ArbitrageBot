@@ -310,14 +310,53 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
 async function refreshLiveStatus() {
   try {
     const st = await AB.api.get('/api/live/status');
-    if (AB.$('livePhase')) AB.$('livePhase').textContent = st.phase || '—';
-    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(st, null, 2);
+    _applyLiveStatus(st);
   } catch (e) {
     if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
   }
 }
 
-document.getElementById('btnLiveVerify')?.addEventListener('click', async () => {
+function _applyLiveStatus(st) {
+  const phase = st.phase || 'PAPER_ONLY';
+  const canOrder = st.canPlaceOrders;
+  const isEnabled = st.enabled;
+  const isReadOnly = st.readOnly;
+
+  // Badge
+  const badge = AB.$('livePhase');
+  if (badge) {
+    if (canOrder) {
+      badge.textContent = '🔴 LIVE — ORDERS ON';
+      badge.style.background = 'rgba(248,113,113,0.2)';
+      badge.style.color = '#f87171';
+    } else if (isEnabled && isReadOnly) {
+      badge.textContent = '🟡 LIVE — READ ONLY';
+      badge.style.background = 'rgba(251,191,36,0.15)';
+      badge.style.color = '#fbbf24';
+    } else {
+      badge.textContent = '📄 PAPER_ONLY';
+      badge.style.background = 'rgba(148,163,184,0.15)';
+      badge.style.color = '#94a3b8';
+    }
+  }
+
+  // Status card labels
+  const modeEl = AB.$('live_mode_label');
+  const ordersEl = AB.$('live_orders_label');
+  const phaseEl = AB.$('live_phase_label');
+  if (modeEl) modeEl.innerHTML = canOrder ? '<span style="color:#f87171">🔴 LIVE</span>' : (isEnabled ? '<span style="color:#fbbf24">🟡 LIVE-RO</span>' : '📄 PAPER');
+  if (ordersEl) ordersEl.innerHTML = canOrder ? '<span style="color:#f87171">✅ включены</span>' : (isEnabled && isReadOnly ? '<span style="color:#fbbf24">👁 read-only</span>' : '🚫 выключены');
+  if (phaseEl) phaseEl.textContent = phase;
+
+  // Panel border color
+  const panel = document.getElementById('livePanel');
+  if (panel) panel.style.borderColor = canOrder ? 'rgba(248,113,113,0.8)' : (isEnabled ? 'rgba(251,191,36,0.5)' : 'rgba(248,113,113,0.5)');
+
+  if (AB.$('live_phase')) AB.$('live_phase').textContent = phase;
+  if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(st, null, 2);
+}
+
+document.getElementById('btnLiveVerify_REPLACED')?.addEventListener('click', async () => {
   try {
     const r = await AB.api.get('/api/live/balances');
     if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
@@ -330,12 +369,20 @@ document.getElementById('btnLiveVerify')?.addEventListener('click', async () => 
 document.getElementById('btnLiveEnable')?.addEventListener('click', async () => {
   const phrase = AB.$('live_phrase')?.value || '';
   const readOnly = !!AB.$('live_readonly')?.checked;
-  if (!readOnly && !confirm('Enable LIVE ORDERS? Real money on exchanges.')) return;
+  if (!phrase) { alert('Введи confirm phrase: ENABLE LIVE TRADING'); return; }
+  if (!readOnly && !confirm('⚠️ Enable LIVE ORDERS? Реальные деньги на биржах!')) return;
   try {
     const r = await AB.api.post('/api/live/enable', { confirmPhrase: phrase, readOnly });
+    if (r.status) _applyLiveStatus(r.status);
     if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
-    if (AB.$('livePhase') && r.status) AB.$('livePhase').textContent = r.status.phase || '—';
+    if (r.ok) {
+      AB.$('live_phrase').value = '';
+      alert('✅ ' + (r.message || 'Live enabled'));
+    } else {
+      alert('❌ ' + (r.message || 'Failed'));
+    }
   } catch (e) {
+    alert('Error: ' + e.message);
     if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
   }
 });
@@ -365,3 +412,40 @@ AB.pages.settings.onShow = function () {
   if (typeof _oldOnShow === 'function') _oldOnShow.call(this);
   refreshLiveStatus();
 };
+
+// ── Live panel button handlers (updated) ─────────────────────────────────────
+document.getElementById('btnLiveVerify')?.addEventListener('click', async () => {
+  try {
+    const r = await AB.api.get('/api/live/balances');
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+    if (r.guard) _applyLiveStatus(r.guard);
+    const det = document.querySelector('#livePanel details');
+    if (det) det.open = true;
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});
+
+document.getElementById('btnLiveDisable')?.removeEventListener?.('click', null);
+document.getElementById('btnLiveDisable')?.addEventListener('click', async () => {
+  if (!confirm('Disable Live — переключиться в PAPER?')) return;
+  try {
+    const r = await AB.api.post('/api/live/disable');
+    _applyLiveStatus(r);
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});
+
+document.getElementById('btnLiveKill')?.removeEventListener?.('click', null);
+document.getElementById('btnLiveKill')?.addEventListener('click', async () => {
+  if (!confirm('⛔ KILL SWITCH — немедленно выключить всё Live?')) return;
+  try {
+    const r = await AB.api.post('/api/live/kill', { reason: 'ui-kill' });
+    _applyLiveStatus(r);
+    if (AB.$('live_status')) AB.$('live_status').textContent = JSON.stringify(r, null, 2);
+  } catch (e) {
+    if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
+  }
+});

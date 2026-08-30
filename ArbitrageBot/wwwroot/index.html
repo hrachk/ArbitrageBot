@@ -509,29 +509,55 @@
             <div class="panel">
               <div class="panel-hd"><h2 class="panel-title">Exchange API keys</h2></div>
               
-        <div class="panel" id="livePanel" style="margin-top:12px;border-color:rgba(248,113,113,0.35)">
-          <div class="panel-hd">
-            <h2 class="panel-title">Live trading (Phase 1)</h2>
-            <span class="panel-sub" id="livePhase">PAPER_ONLY</span>
-          </div>
-          <div class="banner warn" style="margin-bottom:12px">
-            <b>По умолчанию PAPER.</b> Ордера на биржу в Phase 1 <b>не отправляются</b>.
-            Сначала verify keys (read-only) → enable read-only → Phase 2–3 код ордеров.
-            Confirm phrase: <code class="mono">ENABLE LIVE TRADING</code>
-          </div>
-          <div class="form-row">
-            <div class="field"><label>Confirm phrase</label><input id="live_phrase" type="text" placeholder="ENABLE LIVE TRADING" autocomplete="off"/></div>
-            <div class="field" style="display:flex;flex-direction:column;justify-content:end;gap:8px">
-              <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="live_readonly" type="checkbox" checked/> Read-only (no orders)</label>
+        <div class="panel" id="livePanel" style="margin-top:12px;border-color:rgba(248,113,113,0.5)">
+          <div class="panel-hd" style="flex-wrap:wrap;gap:8px">
+            <h2 class="panel-title">🔴 Live trading</h2>
+            <div id="liveStatusBadge" style="display:flex;align-items:center;gap:8px">
+              <span id="livePhase" style="font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;background:rgba(148,163,184,0.15);color:#94a3b8">📄 PAPER_ONLY</span>
             </div>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-            <button type="button" class="btn" id="btnLiveVerify">Verify keys</button>
-            <button type="button" class="btn primary" id="btnLiveEnable">Enable live</button>
-            <button type="button" class="btn" id="btnLiveDisable">Disable</button>
-            <button type="button" class="btn danger" id="btnLiveKill">KILL SWITCH</button>
+
+          <!-- Current status card -->
+          <div id="liveStatusCard" style="background:rgba(0,0,0,0.2);border-radius:10px;padding:12px;margin-bottom:14px">
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <div><span class="muted" style="font-size:11px">Режим</span><br/><b id="live_mode_label" style="font-size:14px">📄 PAPER</b></div>
+              <div><span class="muted" style="font-size:11px">Ордера</span><br/><b id="live_orders_label" style="font-size:14px">🚫 выключены</b></div>
+              <div><span class="muted" style="font-size:11px">Phase</span><br/><span id="live_phase_label" class="mono muted" style="font-size:12px">PAPER_ONLY</span></div>
+            </div>
           </div>
-          <pre id="live_status" class="mono muted" style="font-size:11px;white-space:pre-wrap;max-height:220px;overflow:auto;margin:0">—</pre>
+
+          <!-- Step 1: Read-only (balances only) -->
+          <div style="border:1px solid rgba(56,189,248,0.3);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:700;color:#38bdf8;margin-bottom:8px">ШАГ 1 — Read-only (балансы, без ордеров)</div>
+            <div class="muted" style="font-size:12px;margin-bottom:10px">Введи фразу и включи read-only — можно видеть реальные балансы и позиции с бирж. Ордера <b>не отправляются</b>.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+              <div class="field" style="flex:1;min-width:180px;margin:0">
+                <label style="font-size:11px">Confirm phrase</label>
+                <input id="live_phrase" type="text" placeholder="ENABLE LIVE TRADING" autocomplete="off" style="font-family:monospace"/>
+              </div>
+              <label style="display:flex;gap:6px;align-items:center;margin-bottom:4px;white-space:nowrap">
+                <input id="live_readonly" type="checkbox" checked/> <span style="font-size:12px">Read-only (без ордеров)</span>
+              </label>
+              <button type="button" class="btn primary" id="btnLiveEnable" style="white-space:nowrap">✓ Enable Live</button>
+              <button type="button" class="btn sm" id="btnLiveVerify">Verify keys</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Full live orders -->
+          <div style="border:1px solid rgba(248,113,113,0.3);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:700;color:#f87171;margin-bottom:8px">ШАГ 2 — Full LIVE (реальные ордера) ⚠️</div>
+            <div class="muted" style="font-size:12px;margin-bottom:10px">Снять галочку Read-only выше и нажать Enable Live ещё раз. <b>Реальные деньги на биржах!</b></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn" id="btnLiveDisable">Disable Live</button>
+              <button type="button" class="btn danger" id="btnLiveKill">⛔ KILL SWITCH</button>
+            </div>
+          </div>
+
+          <!-- Status output -->
+          <details style="margin-top:8px">
+            <summary class="muted" style="font-size:11px;cursor:pointer">Debug / status JSON</summary>
+            <pre id="live_status" class="mono muted" style="font-size:10px;white-space:pre-wrap;max-height:180px;overflow:auto;margin-top:6px">—</pre>
+          </details>
         </div>
 
               <div id="s_exchanges"></div>
