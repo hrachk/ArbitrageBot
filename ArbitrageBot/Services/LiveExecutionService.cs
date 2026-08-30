@@ -446,33 +446,82 @@ public sealed class LiveExecutionService : ILiveExecutionService
 
             if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
             {
-                var r = await rest.Bitget.FuturesApiV2.Account
-                    .GetBalancesAsync(BitgetProductTypeV2.UsdtFutures, ct).ConfigureAwait(false);
-                if (!r.Success)
-                    return (false, [], FormatErr(r.Error, r.OriginalData),
-                        Truncate(r.OriginalData), "Bitget.UsdtFutures");
+                // Bitget Unified Account → баланс в SpotApiV2 (не FuturesApiV2 который Classic only)
+                // Пробуем SpotApiV2 сначала, потом FuturesApiV2 как fallback для Classic
+                string? lastErr = null, lastDetail = null;
 
-                var list = (r.Data ?? [])
-                    .Select(b =>
+                // 1) SpotApiV2 — работает для Unified Account
+                try
+                {
+                    var r = await rest.Bitget.SpotApiV2.Account.GetBalancesAsync(ct: ct).ConfigureAwait(false);
+                    if (r.Success && r.Data != null)
                     {
-                        // property names may vary — use reflection-safe
-                        var asset = b.GetType().GetProperty("MarginCoin")?.GetValue(b)?.ToString()
-                                    ?? b.GetType().GetProperty("Asset")?.GetValue(b)?.ToString()
-                                    ?? "USDT";
-                        decimal Dec(string n)
-                        {
-                            var v = b.GetType().GetProperty(n)?.GetValue(b);
-                            return v is decimal d ? d : 0;
-                        }
-                        var total = Dec("Available") + Dec("Locked") + Dec("Equity");
-                        if (total == 0) total = Dec("AccountEquity");
-                        if (total == 0) total = Dec("Available");
-                        var avail = Dec("Available") != 0 ? Dec("Available") : Dec("MaxOpenPosAvailable");
-                        return (asset, avail, total != 0 ? total : avail);
-                    })
-                    .Where(x => x.Item3 != 0 || x.Item2 != 0)
-                    .ToList();
-                return (true, list, null, null, "Bitget.UsdtFutures");
+                        var list = r.Data
+                            .Select(b =>
+                            {
+                                var asset = b.GetType().GetProperty("Asset")?.GetValue(b)?.ToString()
+                                            ?? b.GetType().GetProperty("Coin")?.GetValue(b)?.ToString()
+                                            ?? "?";
+                                decimal Dec(string n)
+                                {
+                                    var v = b.GetType().GetProperty(n)?.GetValue(b);
+                                    return v is decimal d ? d : 0;
+                                }
+                                var avail = Dec("Available");
+                                var locked = Dec("Locked") + Dec("Frozen");
+                                var total = avail + locked;
+                                if (total == 0) total = Dec("Equity") != 0 ? Dec("Equity") : avail;
+                                return (asset, avail, total != 0 ? total : avail);
+                            })
+                            .Where(x => x.Item1 is "USDT" or "USDC" || x.Item3 > 1)
+                            .OrderByDescending(x => x.Item3).Take(20).ToList();
+                        if (list.Count > 0)
+                            return (true, list, null, null, "Bitget.Spot(Unified)");
+                        // empty list — fall through to FuturesApiV2
+                    }
+                    else if (!r.Success)
+                    {
+                        lastErr    = FormatErr(r.Error, r.OriginalData);
+                        lastDetail = Truncate(r.OriginalData);
+                    }
+                }
+                catch (Exception ex) { lastErr = "SpotApiV2: " + ex.Message; }
+
+                // 2) FuturesApiV2 — Classic Account
+                try
+                {
+                    var r = await rest.Bitget.FuturesApiV2.Account
+                        .GetBalancesAsync(BitgetProductTypeV2.UsdtFutures, ct).ConfigureAwait(false);
+                    if (r.Success && r.Data != null)
+                    {
+                        var list = (r.Data ?? [])
+                            .Select(b =>
+                            {
+                                var asset = b.GetType().GetProperty("MarginCoin")?.GetValue(b)?.ToString()
+                                            ?? b.GetType().GetProperty("Asset")?.GetValue(b)?.ToString()
+                                            ?? "USDT";
+                                decimal Dec(string n)
+                                {
+                                    var v = b.GetType().GetProperty(n)?.GetValue(b);
+                                    return v is decimal d ? d : 0;
+                                }
+                                var avail = Dec("Available") != 0 ? Dec("Available") : Dec("MaxOpenPosAvailable");
+                                var total = Dec("Available") + Dec("Locked");
+                                if (total == 0) total = Dec("AccountEquity");
+                                if (total == 0) total = avail;
+                                return (asset, avail, total != 0 ? total : avail);
+                            })
+                            .Where(x => x.Item3 != 0 || x.Item2 != 0)
+                            .ToList();
+                        return (true, list, null, null, "Bitget.UsdtFutures(Classic)");
+                    }
+                    lastErr    ??= FormatErr(r.Error, r.OriginalData);
+                    lastDetail ??= Truncate(r.OriginalData);
+                }
+                catch (Exception ex) { lastErr = (lastErr ?? "") + " | FuturesApiV2: " + ex.Message; }
+
+                return (false, [], lastErr ?? "Bitget: both APIs failed", lastDetail,
+                    "Bitget — hint: Unified Account нужны SpotApiV2 права; Classic — FuturesApiV2");
             }
 
             if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
@@ -653,7 +702,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                             side = p.Side.ToString(),
                             quantity = p.Quantity,
                             entryPrice = p.AveragePrice,
-                            unrealizedPnl = p.UnrealizedPnl,   // correct: UnrealizedPnl (not UnrealisedPnl)
+                            unrealizedPnl = p.UnrealizedPnl,
                             leverage = p.Leverage
                         }).Take(50).ToList();
                     return list.Count > 0 ? (object)list : new List<object>();
@@ -667,7 +716,37 @@ public sealed class LiveExecutionService : ILiveExecutionService
             }
         }
 
-        // All other exchanges: shared API (works fine for Binance, Bitget, OKX)
+        // Bitget: try FuturesApiV2 positions (Classic), fallback to shared
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var r = await rest.Bitget.FuturesApiV2.Trading
+                    .GetPositionsAsync(BitgetProductTypeV2.UsdtFutures, ct: ct).ConfigureAwait(false);
+                if (r.Success && r.Data != null)
+                {
+                    var list = r.Data
+                        .Where(p => { var v = p.GetType().GetProperty("Quantity")?.GetValue(p); return v is decimal d && d != 0; })
+                        .Select(p =>
+                        {
+                            decimal Dec(string n) { var v = p.GetType().GetProperty(n)?.GetValue(p); return v is decimal d ? d : 0; }
+                            string Str(string n) => p.GetType().GetProperty(n)?.GetValue(p)?.ToString() ?? "—";
+                            return new
+                            {
+                                symbol = Str("Symbol"),
+                                side = Str("PositionSide"),
+                                quantity = Dec("Quantity"),
+                                entryPrice = (decimal?)Dec("AverageOpenPrice"),
+                                unrealizedPnl = (decimal?)Dec("UnrealizedPnl"),
+                                leverage = (decimal?)Dec("Leverage")
+                            };
+                        }).Take(50).ToList();
+                    return list.Count > 0 ? (object)list : new List<object>();
+                }
+                // If Classic API fails (Unified account) — fall through to shared
+            }
+            catch { /* fall through */ }
+        }
         return await TrySharedPositionsAsync(rest, exchange, ct).ConfigureAwait(false);
     }
 
