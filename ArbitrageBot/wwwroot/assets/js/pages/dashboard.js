@@ -99,8 +99,13 @@ AB.pages.dashboard = {
           if (Number(bestNet) < Number(data.minProfitPercent))
             why += ' — below threshold, no open';
         }
+        const isLive = mode === 'LIVE';
+        const modeTag = isLive
+          ? '<span style="color:#f87171;font-weight:800;font-size:13px">🔴 LIVE — REAL MONEY</span>'
+          : '<span style="font-weight:700">📄 PAPER</span>';
+        banner.className = 'banner ' + (isLive ? 'warn' : 'info');
         banner.innerHTML =
-          '<b>' + mode + pause + '</b> — ' +
+          modeTag + pause + ' &nbsp;·&nbsp; ' +
           exchanges.length + ' exchanges · ' + symbols.length + ' symbols · ' +
           'scan #' + (data.scanCount != null ? data.scanCount : 0) +
           ' · books ' + (data.lastBooksReady != null ? data.lastBooksReady : '—') +

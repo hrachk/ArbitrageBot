@@ -1,3 +1,7 @@
+// ── helpers ──────────────────────────────────────────────────────────────────
+function _modeCls(mode) { return (mode || '').toUpperCase() === 'LIVE' ? 'pos' : 'muted'; }
+function _modeLabel(mode) { return (mode || '').toUpperCase() === 'LIVE' ? '🔴 LIVE' : '📄 PAPER'; }
+
 AB.pages.reports = {
   async loadDays() {
     try {
@@ -23,14 +27,39 @@ AB.pages.reports = {
   render(data) {
     const fp = data.futuresPaper || data.paper || {};
     const trades = fp.trades || [];
-    const positions = fp.positions || [];
+    // Paper positions from paper engine
+    const paperPositions = fp.positions || [];
+    // Live positions from exchange ledger
+    const livePos = data.livePositions || {};
+    const ledgerOpen = livePos.ledger || livePos.open || [];
+    const exchangeLegs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
+    const mode = (data.mode || 'PAPER').toUpperCase();
+    const isLive = mode === 'LIVE';
 
-    AB.$('r_realized').innerHTML = AB.fmtUsd(fp.realizedPnlUsd ?? fp.realizedPnl);
-    AB.$('r_day').innerHTML = AB.fmtUsd(fp.dailyRealizedPnlUsd);
+    // Mode banner in reports
+    const modeLabelEl = document.getElementById('r_modeLabel');
+    if (modeLabelEl) {
+      modeLabelEl.innerHTML = `<span style="font-weight:700;${isLive ? 'color:#f87171' : ''}">${_modeLabel(mode)}</span> &nbsp;· realized closes`;
+    }
+
+    // For KPI: if Live mode → show live ledger realized, else paper
+    const realizedPnl = isLive
+      ? (livePos.realizedPnlUsd ?? fp.realizedPnlUsd ?? fp.realizedPnl)
+      : (fp.realizedPnlUsd ?? fp.realizedPnl);
+    const dayPnl = fp.dailyRealizedPnlUsd;
+
+    AB.$('r_realized').innerHTML = AB.fmtUsd(realizedPnl);
+    AB.$('r_day').innerHTML = AB.fmtUsd(dayPnl);
     AB.$('r_attempts').textContent = fp.tradeCount ?? fp.tradeAttempts ?? 0;
-    AB.$('r_open').textContent = positions.length;
+    // Open: paper + live ledger
+    const totalOpen = isLive ? ledgerOpen.length : paperPositions.length;
+    AB.$('r_open').textContent = isLive
+      ? `${ledgerOpen.length}L / ${exchangeLegs.length}ex`
+      : paperPositions.length;
     AB.$('r_lev').textContent = (fp.leverage || 5) + 'x';
     AB.$('r_stop').textContent = fp.stopLossUsd ?? '—';
+    // Use all positions: paper in paper mode, live ledger in live mode
+    const positions = isLive ? ledgerOpen : paperPositions;
 
     // margins: free vs locked vs equity
     const bd = fp.marginBreakdown || {};
@@ -78,14 +107,42 @@ AB.pages.reports = {
       }
     }
 
-    AB.$('r_posBody').innerHTML = positions.length ? positions.map(p => `<tr>
-      <td class="mono">${p.symbol}</td>
-      <td class="mono" style="font-size:11px">${p.longExchange}→${p.shortExchange}</td>
-      <td class="mono">${AB.fmt(p.baseQty,6)}</td>
-      <td>${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</td>
-      <td class="mono muted">${AB.fmt(p.currentWidthPercent,3)}%</td>
-      <td class="muted">${p.openedAt ? new Date(p.openedAt).toLocaleString() : '—'}</td>
-    </tr>`).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No open hedges</td></tr>';
+    // Show positions: live ledger if live mode, paper otherwise
+    // Also show raw exchange legs for live mode
+    let posRows = '';
+    if (isLive) {
+      if (ledgerOpen.length) {
+        posRows += ledgerOpen.map(p => `<tr>
+          <td class="mono">${p.symbol || p.Symbol || '—'}</td>
+          <td class="mono" style="font-size:11px">${p.longExchange || p.LongExchange || '?'}→${p.shortExchange || p.ShortExchange || '?'}</td>
+          <td class="mono">${AB.fmt(p.baseQty || p.BaseQty, 6)}</td>
+          <td class="muted">—</td>
+          <td class="mono muted">—</td>
+          <td class="muted">${(p.openedAt || p.OpenedAt) ? new Date(p.openedAt || p.OpenedAt).toLocaleString() : '—'}</td>
+        </tr>`).join('');
+      }
+      if (exchangeLegs.length) {
+        posRows += exchangeLegs.map(leg => `<tr style="background:rgba(56,189,248,0.05)">
+          <td class="mono" style="color:var(--blue)">${leg.symbol || '—'} <span class="muted" style="font-size:10px">[${leg.exchange || '?'}]</span></td>
+          <td class="mono" style="font-size:11px">${leg.exchange || '?'} · ${leg.side || '—'}</td>
+          <td class="mono">${AB.fmt(leg.quantity, 6)}</td>
+          <td class="${leg.unrealizedPnl >= 0 ? 'pos' : 'neg'}">${leg.unrealizedPnl != null ? AB.fmtUsd(leg.unrealizedPnl) : '—'}</td>
+          <td class="muted" style="font-size:10px">exchange leg</td>
+          <td class="muted">entry: ${leg.entryPrice ? AB.fmt(leg.entryPrice, 4) : '—'}</td>
+        </tr>`).join('');
+      }
+      if (!posRows) posRows = '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No open live positions / hedges</td></tr>';
+    } else {
+      posRows = positions.length ? positions.map(p => `<tr>
+        <td class="mono">${p.symbol}</td>
+        <td class="mono" style="font-size:11px">${p.longExchange}→${p.shortExchange}</td>
+        <td class="mono">${AB.fmt(p.baseQty, 6)}</td>
+        <td>${AB.fmtUsd(p.unrealizedPnlUsd ?? p.unrealizedPnl)}</td>
+        <td class="mono muted">${AB.fmt(p.currentWidthPercent, 3)}%</td>
+        <td class="muted">${p.openedAt ? new Date(p.openedAt).toLocaleString() : '—'}</td>
+      </tr>`).join('') : '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">No open paper hedges</td></tr>';
+    }
+    AB.$('r_posBody').innerHTML = posRows;
 
     // analytics from snapshot
     const an = data.paperAnalytics || {};
@@ -139,30 +196,55 @@ AB.pages.reports.loadLiveBalances = async function () {
     const data = await AB.api.get('/api/live/balances');
     const rows = data.exchanges || [];
     if (!rows.length) {
-      el.innerHTML = '<div class="empty">No exchanges</div>';
+      el.innerHTML = '<div class="empty">No exchanges configured — add API keys in Settings</div>';
       return;
     }
-    el.innerHTML = rows.map(function (x) {
+
+    const cards = rows.map(function (x) {
       if (!x.ok) {
-        return '<div class="kpi" style="margin:0;border-color:rgba(248,113,113,0.25)">' +
-          '<div class="kpi-l">' + x.exchange + '</div>' +
-          '<div class="neg" style="margin-top:6px;font-size:12px;word-break:break-word">' + (x.error || 'fail') + '</div>' +
-          (x.detail ? '<div class="muted mono" style="font-size:10px;margin-top:4px;word-break:break-all">' + x.detail + '</div>' : '') +
-          (x.hint ? '<div class="muted" style="font-size:10px;margin-top:4px">' + x.hint + '</div>' : '') +
-          '</div>';
+        return `<div class="kpi" style="margin:0;border-color:rgba(248,113,113,0.25)">
+          <div class="kpi-l">${x.exchange} <span class="neg" style="font-size:10px">● no key / error</span></div>
+          <div class="neg" style="margin-top:6px;font-size:12px;word-break:break-word">${x.error || 'fail'}</div>
+          ${x.hint ? `<div class="muted" style="font-size:10px;margin-top:4px">${x.hint}</div>` : ''}
+        </div>`;
       }
+
       const usdt = x.usdtTotal != null ? x.usdtTotal : 0;
-      const posN = Array.isArray(x.positions) ? x.positions.length : 0;
-      return '<div class="kpi" style="margin:0;border-color:rgba(56,189,248,0.25)">' +
-        '<div class="kpi-l">' + x.exchange + ' · live</div>' +
-        '<div class="mono" style="font-size:18px;font-weight:700;margin-top:6px;color:var(--blue)">' + AB.fmt(usdt, 2) + ' USDT</div>' +
-        '<div class="muted mono" style="font-size:11px;margin-top:6px">perm ' + (x.permission || '—') +
-        ' · positions ' + posN + '</div></div>';
-    }).join('') +
-      '<div class="kpi" style="margin:0;border-color:rgba(45,212,191,0.3)">' +
-      '<div class="kpi-l">SUM USDT (approx)</div>' +
-      '<div class="mono" style="font-size:18px;font-weight:700;margin-top:6px;color:var(--accent)">' +
-      AB.fmt(data.totalUsdtApprox || 0, 2) + '</div></div>';
+      const positions = Array.isArray(x.positions) ? x.positions.filter(p => p.quantity !== 0) : [];
+      const posHtml = positions.length
+        ? `<table style="width:100%;border-collapse:collapse;font-size:10px;margin-top:6px">
+            <thead><tr class="muted"><th style="text-align:left;padding:2px 4px">Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>uPnL</th><th>Lev</th></tr></thead>
+            <tbody>${positions.map(p => {
+              const pnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null;
+              const pnlCls = pnl == null ? '' : (pnl >= 0 ? 'pos' : 'neg');
+              const pnlS = pnl == null ? '—' : ((pnl >= 0 ? '+' : '') + AB.fmt(pnl, 2));
+              return `<tr style="border-top:1px solid rgba(148,163,184,0.1)">
+                <td class="mono" style="padding:2px 4px">${p.symbol || '—'}</td>
+                <td class="${p.side === 'Buy' || p.side === 'Long' ? 'pos' : 'neg'}" style="padding:2px 4px">${p.side || '—'}</td>
+                <td class="mono" style="padding:2px 4px">${AB.fmt(p.quantity, 4)}</td>
+                <td class="mono" style="padding:2px 4px">${p.entryPrice ? AB.fmt(p.entryPrice, 2) : '—'}</td>
+                <td class="mono ${pnlCls}" style="padding:2px 4px">${pnlS}</td>
+                <td class="muted" style="padding:2px 4px">${p.leverage ? p.leverage + 'x' : '—'}</td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table>`
+        : `<div class="muted" style="font-size:11px;margin-top:6px">No open positions</div>`;
+
+      return `<div class="kpi" style="margin:0;border-color:rgba(56,189,248,0.25)">
+        <div class="kpi-l">${x.exchange} <span class="pos" style="font-size:10px">● connected</span></div>
+        <div class="mono" style="font-size:20px;font-weight:700;margin-top:4px;color:var(--blue)">${AB.fmt(usdt, 2)} <span class="muted" style="font-size:11px">USDT</span></div>
+        <div class="muted mono" style="font-size:11px;margin-top:4px">perm: ${x.permission || '—'} · mode: ${x.accountMode || '—'}</div>
+        <div style="margin-top:4px"><span class="muted" style="font-size:11px">Positions (${positions.length})</span>${posHtml}</div>
+      </div>`;
+    }).join('');
+
+    const sum = `<div class="kpi" style="margin:0;border-color:rgba(45,212,191,0.3)">
+      <div class="kpi-l">🔴 LIVE TOTAL (approx)</div>
+      <div class="mono" style="font-size:22px;font-weight:700;margin-top:6px;color:var(--accent)">${AB.fmt(data.totalUsdtApprox || 0, 2)} <span class="muted" style="font-size:11px">USDT</span></div>
+      <div class="muted" style="font-size:11px;margin-top:4px">UTC: ${data.utc ? new Date(data.utc).toLocaleTimeString() : '—'} · ${rows.filter(r => r.ok).length}/${rows.length} exchanges OK</div>
+    </div>`;
+
+    el.innerHTML = sum + cards;
   } catch (e) {
     el.innerHTML = '<div class="empty neg">' + (e.message || e) + '</div>';
   }

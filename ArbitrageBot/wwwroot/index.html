@@ -47,7 +47,7 @@
       <!-- DASHBOARD -->
       <section class="page active" data-page="dashboard">
         <div class="banner info" id="d_banner">
-          <b>PAPER · live-like rules</b> — same thresholds as intended real trading (RT edge, full fill, min 0.10%). Few signals is normal. No real orders.
+          <b id="d_modeBadgeInline">📄 PAPER · live-like rules</b> — same thresholds as intended real trading (RT edge, full fill, min 0.10%). Few signals is normal. No real orders.
         </div>
         <div class="kpi-row">
           <div class="kpi"><div class="kpi-l">Scans</div><div class="kpi-v" id="d_scans">0</div></div>
@@ -266,7 +266,7 @@
           <div class="panel-hd">
             <h2 class="panel-title">Performance</h2>
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <span class="panel-sub">Paper · realized closes</span>
+              <span class="panel-sub" id="r_modeLabel">📄 PAPER · realized closes</span>
               <button type="button" class="btn sm" data-perf-days="1">1D</button>
               <button type="button" class="btn sm" data-perf-days="7">7D</button>
               <button type="button" class="btn sm" data-perf-days="30">30D</button>
@@ -330,14 +330,13 @@
           <div class="panel-hd"><h2 class="panel-title">Margin by venue</h2><span class="panel-sub">equity = free + locked · not the same as Realized KPI</span></div>
           <div class="g3" id="r_margin"></div>
         </div>
-        <div class="panel" style="margin-bottom:12px;border-color:rgba(56,189,248,0.25)">
+        <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.35)">
           <div class="panel-hd">
-            <h2 class="panel-title">Live balances (read-only)</h2>
-            <button type="button" class="btn sm" id="btnRefreshLiveBal">Refresh</button>
+            <h2 class="panel-title">🔴 Live balances &amp; positions</h2>
+            <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Refresh</button>
           </div>
-          <div class="muted" style="font-size:12px;margin-bottom:10px">Phase 2 · REST futures USDT from API keys. No orders.</div>
-          <div class="g3" id="r_liveBal"><div class="empty">Click Refresh or open Reports with keys saved</div></div>
-          <pre id="r_liveBalRaw" class="mono muted" style="font-size:10px;max-height:120px;overflow:auto;margin-top:10px;display:none"></pre>
+          <div class="muted" style="font-size:12px;margin-bottom:10px">Real-time REST · USDT-M futures · API keys (read-only). Positions показываются только если есть открытые.</div>
+          <div class="g3" id="r_liveBal"><div class="empty">Loading…</div></div>
         </div>
         <div class="panel" style="margin-bottom:12px">
           <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>

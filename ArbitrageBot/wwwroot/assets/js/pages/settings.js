@@ -73,12 +73,30 @@ AB.pages.settings = {
       try {
         const r = await AB.api.get('/api/settings/risk');
         this.fillRisk(r);
-        if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) this.applyPreset('micro5');
+        // Apply Live ($5) preset on first load if nothing saved yet
+        if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) {
+          this.applyPreset('micro5');
+          // Default: Live mode (paper=false) for this branch
+          if (AB.$('s_paper')) AB.$('s_paper').checked = false;
+        }
       } catch (_) {}
+      // Show active mode in settings header
+      this._updateModeHint(s);
     } catch (e) {
       AB.$('s_msg').className = 'alert warn';
       AB.$('s_msg').textContent = 'Settings load failed: ' + e.message;
       AB.$('s_msg').classList.remove('hidden');
+    }
+  },
+
+  _updateModeHint(s) {
+    const t = (s && s.trading) || {};
+    const isPaper = t.paperTrading !== false;
+    const modeEl = document.querySelector('#s_tradingPanel .panel-hd h2');
+    if (modeEl) {
+      modeEl.innerHTML = isPaper
+        ? 'Trading parameters <span class="muted" style="font-size:12px;font-weight:400">· 📄 PAPER mode</span>'
+        : 'Trading parameters <span class="pos" style="font-size:12px;font-weight:400">· 🔴 LIVE mode</span>';
     }
   },
 
