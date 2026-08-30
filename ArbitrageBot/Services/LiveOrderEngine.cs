@@ -103,18 +103,18 @@ public sealed class LiveOrderEngine
         if (longClient == null)
             return new { ok = false, error = "no credentials for " + req.LongExchange };
 
-        // MARKET: never send timeInForce (Binance -1106 "Parameter 'timeinforce' sent when not required")
+        // MARKET + hedge: do not send timeInForce / reduceOnly (Binance rejects both as "not required")
         var longReq = new PlaceFuturesOrderRequest(
             sharedSym,
             SharedOrderSide.Buy,
             SharedOrderType.Market,
             longQty,
             price: null,
-            reduceOnly: false,
+            reduceOnly: null,
             leverage: req.Leverage > 0 ? req.Leverage : 3,
             timeInForce: null,
             positionSide: SharedPositionSide.Long,
-            marginMode: null,
+            marginMode: SharedMarginMode.Cross,
             clientOrderId: clientId + "-L",
             exchangeParameters: ExParams(req.LongExchange, isClose: false));
 
@@ -122,9 +122,38 @@ public sealed class LiveOrderEngine
         if (!longResult.Success)
         {
             var err = longResult.Error?.Message ?? "long order failed";
+            // Bitget thin balance: one retry at half size
+            if (err.Contains("exceeds the balance", StringComparison.OrdinalIgnoreCase)
+                || err.Contains("Insufficient", StringComparison.OrdinalIgnoreCase))
+            {
+                var halfBase = RoundBaseQty(roundedQty / 2m, refPrice);
+                if (halfBase > 0 && halfBase < roundedQty)
+                {
+                    roundedQty = halfBase;
+                    longQty = QtyForExchange(req.LongExchange, roundedQty);
+                    shortQty = QtyForExchange(req.ShortExchange, roundedQty);
+                    longReq = new PlaceFuturesOrderRequest(
+                        sharedSym, SharedOrderSide.Buy, SharedOrderType.Market, longQty,
+                        price: null, reduceOnly: null,
+                        leverage: req.Leverage > 0 ? req.Leverage : 3,
+                        timeInForce: null, positionSide: SharedPositionSide.Long,
+                        marginMode: SharedMarginMode.Cross,
+                        clientOrderId: clientId + "-L2",
+                        exchangeParameters: ExParams(req.LongExchange, isClose: false));
+                    longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
+                    if (longResult.Success)
+                    {
+                        _logger.LogWarning("LIVE LONG {Ex} {Sym}: succeeded after half-size retry qty={Q}",
+                            req.LongExchange, req.Symbol, roundedQty);
+                        goto longOk;
+                    }
+                    err = longResult.Error?.Message ?? err;
+                }
+            }
             _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}", req.LongExchange, req.Symbol, err);
             return new { ok = false, error = "LONG failed: " + err, leg = "long", detail = Trunc(longResult.OriginalData) };
         }
+        longOk:
 
         var longOrderId = longResult.Data?.Id ?? "?";
         var longAvg = req.LongAsk ?? 0;
@@ -145,11 +174,11 @@ public sealed class LiveOrderEngine
             SharedOrderType.Market,
             shortQty,
             price: null,
-            reduceOnly: false,
+            reduceOnly: null,
             leverage: req.Leverage > 0 ? req.Leverage : 3,
             timeInForce: null,
             positionSide: SharedPositionSide.Short,
-            marginMode: null,
+            marginMode: SharedMarginMode.Cross,
             clientOrderId: clientId + "-S",
             exchangeParameters: ExParams(req.ShortExchange, isClose: false));
 
@@ -331,7 +360,7 @@ public sealed class LiveOrderEngine
                 leverage: null,
                 timeInForce: null, // MARKET: no TIF (Binance rejects timeInForce on market)
                 positionSide: posSide,
-                marginMode: null,
+                marginMode: SharedMarginMode.Cross,
                 clientOrderId: "ab-c-" + Guid.NewGuid().ToString("N")[..12],
                 exchangeParameters: ExParams(exchange, isClose: true));
 
@@ -432,8 +461,11 @@ public sealed class LiveOrderEngine
         }
         if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
         {
+            // Shared API requires MarginMode; TradeMode maps to tdMode=cross
             return new ExchangeParameters(
-                new ExchangeParameter("OKX", "TradeMode", "cross"));
+                new ExchangeParameter("OKX", "TradeMode", "cross"),
+                new ExchangeParameter("OKX", "MarginMode", "Cross"),
+                new ExchangeParameter("OKX", "tdMode", "cross"));
         }
         return new ExchangeParameters();
     }
