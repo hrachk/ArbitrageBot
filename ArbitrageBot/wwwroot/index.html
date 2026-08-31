@@ -11,7 +11,7 @@
 <body>
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand">
+    <div class="brand-block">
       <div class="brand-mark">AB</div>
       <div class="brand-text">
         <strong>ArbitrageBot</strong>
@@ -36,7 +36,7 @@
   </aside>
 
   <div class="workspace">
-    <header class="topbar">
+    <header class="topbar-spa">
       <h1 id="pageTitle">Dashboard</h1>
       <div class="topbar-right">
         <span class="top-meta" id="topHint">waiting for data…</span>
@@ -114,7 +114,7 @@
           <div class="panel">
             <div class="panel-hd"><h2 class="panel-title">Venue mid snapshot</h2><span class="panel-sub">best signal symbol</span></div>
             <div id="d_venueMids" class="muted" style="font-size:13px">—</div>
-            <canvas id="d_overlayMini" width="800" height="120" style="width:100%;height:120px;margin-top:8px;background:#0a0e14;border-radius:8px;border:1px solid rgba(148,163,184,0.1)"></canvas>
+            <div class="canvas-box" style="margin-top:8px"><canvas id="d_overlayMini"></canvas></div>
           </div>
         </div>
         <div class="panel" style="margin-top:12px">
@@ -157,75 +157,156 @@
           <div id="live_holdCards"><div class="empty">No open positions</div></div>
         </div>
       </section>
-      <!-- MARKET -->
+      <!-- MARKET: multi-exchange terminal 1:1 -->
       <section class="page" data-page="market">
-        <div class="mkt-toolbar">
-          <div class="left">
-            <select id="m_symbol"></select>
-            <select id="m_interval">
-              <option value="1">1m</option>
-              <option value="5">5m</option>
-              <option value="15" selected>15m</option>
-              <option value="60">1h</option>
-              <option value="240">4h</option>
-            </select>
-            <span class="price-pill" id="m_last">—</span>
-            <span class="muted mono" id="m_chartSrc" style="font-size:11px"></span>
-          </div>
-          <div class="right">
-            <span class="tag" id="m_streams">streams —</span>
-          </div>
-        </div>
-        <div class="mkt-layout">
-          <div>
-            <div class="chart-box" id="tv_wrap">
-              <div class="chart-placeholder" id="tv_placeholder">Select a symbol to load chart…</div>
-              <iframe id="tv_frame" title="TradingView" style="display:none" allowtransparency="true" scrolling="no" allowfullscreen></iframe>
+        <div class="terminal">
+          <div class="topbar">
+            <div class="tb-left">
+              <span class="brand">AB</span>
+              <div id="m_symTabs" style="display:flex;gap:4px;flex-wrap:wrap"></div>
             </div>
-            <div class="panel" style="margin-top:12px">
-              <div class="panel-hd"><h2 class="panel-title">Signals</h2></div>
-              <div class="scroll" style="max-height:220px">
-                <table class="data">
-                  <thead><tr><th>Symbol</th><th>Route</th><th>Open%</th><th>RT%</th><th>Est $</th></tr></thead>
-                  <tbody id="m_oppBody"><tr><td colspan="5" class="empty">No signals</td></tr></tbody>
-                </table>
+            <div class="tb-right">
+              <span class="tb-stat" id="m_scanStat">scan —</span>
+              <span class="led" id="m_led"></span>
+              <span class="tb-stat" id="m_exLive">— ex</span>
+              <span class="mode-pill ro" id="m_modePill">PAPER</span>
+            </div>
+          </div>
+          <div class="layout">
+            <div class="left-col">
+              <div class="panel-hd">
+                <span class="ph-title">Order book</span>
+                <span class="ph-sub" id="obSym">—</span>
+              </div>
+              <div class="ex-tabs" id="m_exTabs"></div>
+              <div class="ob-wrap">
+                <div class="ob-asks" id="ob-asks"></div>
+                <div class="ob-mid">
+                  <span class="ob-price" id="ob-mid-price">—</span>
+                  <span class="ob-spread" id="ob-spread">spd —</span>
+                </div>
+                <div class="ob-bids" id="ob-bids"></div>
+              </div>
+              <div style="padding:8px 10px;border-top:1px solid var(--b)">
+                <div style="font-size:9px;color:var(--t3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Arb opportunity</div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <div>
+                    <div style="font-size:10px;color:var(--t2)" id="m_liveRoute">—</div>
+                    <div style="font-family:var(--mono);font-size:13px;font-weight:800;color:var(--green)" id="liveEdge">—</div>
+                  </div>
+                  <button type="button" class="arb-exec" id="m_oneClick" disabled>1-click</button>
+                </div>
               </div>
             </div>
-            <div class="panel" style="margin-top:12px">
-              <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
-              <div id="m_positions" class="pos-list"><div class="empty">No open hedges</div></div>
+
+            <div class="center-col">
+              <div class="chart-area" style="position:relative;overflow:hidden">
+                <div class="chart-hd">
+                  <div>
+                    <div style="font-size:9px;color:var(--t3);margin-bottom:1px" id="chartSym">— · Futures perp</div>
+                    <div style="display:flex;align-items:baseline;gap:8px">
+                      <span class="price-big" id="chartPrice">—</span>
+                      <span class="price-chg" id="chartChg" style="color:var(--t3)">—</span>
+                      <span style="font-size:10px;color:var(--t3);font-family:var(--mono)" id="m_chartSrc"></span>
+                    </div>
+                  </div>
+                  <div class="tf-btns" id="m_tfBtns">
+                    <button type="button" class="tf-btn" data-tf="1">1m</button>
+                    <button type="button" class="tf-btn" data-tf="5">5m</button>
+                    <button type="button" class="tf-btn active" data-tf="15">15m</button>
+                    <button type="button" class="tf-btn" data-tf="60">1h</button>
+                    <button type="button" class="tf-btn" data-tf="240">4h</button>
+                  </div>
+                </div>
+                <div class="ex-compare" id="exCompare"></div>
+                <div style="position:absolute;inset:56px 0 0 0">
+                  <canvas id="mainChart" style="width:100%;height:100%;display:block"></canvas>
+                </div>
+              </div>
+              <div class="bottom-area">
+                <div class="bottom-panel">
+                  <div class="panel-hd"><span class="ph-title">Arb scanner — live</span><span class="ph-sub" id="arbCount">—</span></div>
+                  <div id="arbList" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                </div>
+                <div class="bottom-panel">
+                  <div class="panel-hd"><span class="ph-title">Open positions</span><span class="ph-sub" id="m_posSub">hedges</span></div>
+                  <div style="display:grid;grid-template-columns:70px 44px 60px 50px 56px;padding:3px 8px;border-bottom:1px solid var(--b)">
+                    <span style="font-size:9px;color:var(--t3)">Symbol</span>
+                    <span style="font-size:9px;color:var(--t3)">Side</span>
+                    <span style="font-size:9px;color:var(--t3)">Entry</span>
+                    <span style="font-size:9px;color:var(--t3)">uPnL</span>
+                    <span></span>
+                  </div>
+                  <div id="posTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                  <div style="padding:6px 10px;border-top:1px solid var(--b);display:flex;justify-content:space-between;align-items:center">
+                    <span style="font-size:9px;color:var(--t3)">Realized</span>
+                    <span style="font-family:var(--mono);font-size:11px;font-weight:700" id="m_posRealized">—</span>
+                  </div>
+                </div>
+                <div class="bottom-panel">
+                  <div class="panel-hd"><span class="ph-title">Funding rates</span><span class="ph-sub">5 min poll</span></div>
+                  <div style="display:grid;grid-template-columns:70px 50px 50px 1fr;padding:3px 10px;border-bottom:1px solid var(--b)">
+                    <span style="font-size:9px;color:var(--t3)">Pair</span>
+                    <span style="font-size:9px;color:var(--t3)">Delta</span>
+                    <span style="font-size:9px;color:var(--t3)">APR</span>
+                    <span style="font-size:9px;color:var(--t3)">Intensity</span>
+                  </div>
+                  <div id="fundTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="right-col">
+              <div class="trade-tabs">
+                <button type="button" class="t-tab long active" id="longTab">Long</button>
+                <button type="button" class="t-tab short" id="shortTab">Short</button>
+              </div>
+              <div class="trade-form" id="tradeForm">
+                <div class="tf-row">
+                  <span class="tf-label">Exchange</span>
+                  <select id="m_tradeEx" style="background:var(--s2);border:1px solid var(--b);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px"></select>
+                </div>
+                <div class="tf-row">
+                  <span class="tf-label">Order type</span>
+                  <select id="m_ordType" style="background:var(--s2);border:1px solid var(--b);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px">
+                    <option>Market</option><option>Limit</option>
+                  </select>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span class="tf-label">Price (USDT)</span><span style="font-size:9px;color:var(--t3)" id="m_markLbl">Mark: —</span></div>
+                  <input class="tf-input" type="text" id="priceIn" readonly/>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span class="tf-label">Size (USDT)</span><span style="font-size:9px;color:var(--t3);font-family:var(--mono)" id="sizeEst">—</span></div>
+                  <input class="tf-input" type="text" id="sizeIn" value="100"/>
+                </div>
+                <div>
+                  <div style="margin-bottom:3px"><span class="tf-label">Leverage</span></div>
+                  <div class="lev-btns" id="m_levBtns">
+                    <button type="button" class="lev-btn" data-lev="1">1x</button>
+                    <button type="button" class="lev-btn" data-lev="3">3x</button>
+                    <button type="button" class="lev-btn active" data-lev="5">5x</button>
+                    <button type="button" class="lev-btn" data-lev="10">10x</button>
+                  </div>
+                </div>
+                <div style="background:var(--s2);border:1px solid var(--b);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:3px">
+                  <div style="display:flex;justify-content:space-between"><span style="font-size:9px;color:var(--t3)">Margin</span><span style="font-family:var(--mono);font-size:10px" id="marginOut">—</span></div>
+                  <div style="display:flex;justify-content:space-between"><span style="font-size:9px;color:var(--t3)">Mode</span><span style="font-family:var(--mono);font-size:10px;color:var(--amber)">PAPER / RO</span></div>
+                </div>
+                <button type="button" class="exec-btn long" id="execBtn" disabled title="Manual single-leg disabled — bot opens hedges">Hedge via bot only</button>
+              </div>
+              <div style="border-top:1px solid var(--b);padding:8px 10px">
+                <div style="font-size:9px;color:var(--t3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Hedge leg (auto)</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                  <span style="font-size:10px;color:var(--t2)" id="m_hedgeHint">Select arb route</span>
+                  <span style="font-family:var(--mono);font-size:10px;color:var(--red)" id="m_hedgePx">—</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="panel ob-panel">
-            <div class="panel-hd"><h2 class="panel-title">Order books</h2><span class="panel-sub">live WS</span></div>
-            <div id="m_depth"><div class="empty">Waiting for books…</div></div>
-          </div>
         </div>
-        <div class="panel" style="margin-top:12px">
-          <div class="panel-hd">
-            <h2 class="panel-title">Cross-exchange overlay</h2>
-            <span class="panel-sub" id="m_overlayHint">live mid · same symbol</span>
-          </div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-            <div id="m_overlayLegend" class="muted" style="font-size:12px"></div>
-            <div id="m_overlayDiv" class="mono" style="font-weight:700;font-size:14px;margin-left:auto"></div>
-          </div>
-          <div class="chart-box" style="height:220px;position:relative;background:#0a0e14;border-radius:8px;border:1px solid rgba(148,163,184,0.12)">
-            <canvas id="m_overlay" width="900" height="220" style="width:100%;height:220px;display:block"></canvas>
-          </div>
-          <div class="muted" style="font-size:11px;margin-top:6px">Lines = mid price per venue. Gap between top &amp; bottom line ≈ live divergence (arb width).</div>
-        </div>
-        <div class="panel" style="margin-top:12px">
-          <div class="panel-hd"><h2 class="panel-title">Cross-exchange tape</h2></div>
-          <div class="scroll" style="max-height:200px">
-            <table class="data">
-              <thead><tr><th>Symbol</th><th>Exchange</th><th>Bid</th><th>Ask</th><th>Spread</th></tr></thead>
-              <tbody id="m_bookBody"><tr><td colspan="5" class="empty">—</td></tr></tbody>
-            </table>
-          </div>
-        </div>
+        <div class="toast" id="toast"></div>
       </section>
-
 
       <!-- SCREENER -->
       <section class="page" data-page="screener">

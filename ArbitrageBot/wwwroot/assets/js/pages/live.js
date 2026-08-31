@@ -30,7 +30,41 @@ AB.pages.live = {
       if (cards) cards.innerHTML = '<div class="empty">' + (e.message || e) + '</div>';
     }
   },
-  render() { this.load(); }
+  render(data) {
+    this.load();
+    // open hedges from snapshot (paper + live ledger) — real data
+    const hold = document.getElementById('live_holdCards');
+    if (!hold || !data) return;
+    const fp = data.futuresPaper || data.paper || {};
+    const paper = Array.isArray(fp.positions) ? fp.positions : [];
+    const live = data.livePositions || {};
+    const ledger = Array.isArray(live.ledger) ? live.ledger : (Array.isArray(live.open) ? live.open : []);
+    const rows = [];
+    paper.forEach(p => rows.push({
+      sym: p.symbol, route: (p.longExchange||'?')+' → '+(p.shortExchange||'?'),
+      upnl: Number(p.unrealizedPnlUsd??p.unrealizedPnl)||0,
+      entry: p.longEntry, id: p.id||p.tradeId, src: 'paper'
+    }));
+    ledger.forEach(p => rows.push({
+      sym: p.symbol, route: (p.exchange||'')+' '+(p.side||''),
+      upnl: Number(p.unrealizedPnl)||0, entry: p.entryPrice||p.averagePrice,
+      id: p.id||p.tradeId, src: 'live'
+    }));
+    const openN = document.getElementById('live_openN');
+    if (openN) openN.textContent = String(rows.length);
+    if (!rows.length) {
+      hold.innerHTML = '<div class="empty">No open hedges (paper/live ledger empty)</div>';
+      return;
+    }
+    hold.innerHTML = rows.map(p => {
+      const up = p.upnl;
+      return '<div class="hold-card" style="border:1px solid var(--b);border-radius:8px;padding:10px;margin-bottom:8px">' +
+        '<div style="display:flex;justify-content:space-between"><span class="mono" style="color:var(--blue);font-weight:700">' +
+        (p.sym||'') + '</span><span class="mono" style="color:' + (up>=0?'var(--green)':'var(--red)') + '">' +
+        (up>=0?'+':'') + up.toFixed(2) + '</span></div>' +
+        '<div class="muted" style="font-size:11px;margin-top:4px">' + p.route + ' · ' + p.src + '</div></div>';
+    }).join('');
+  }
 };
 document.addEventListener('DOMContentLoaded', () => {
   const b = document.getElementById('btnLiveRefresh');

@@ -287,7 +287,11 @@ AB.pages.dashboard = {
       }
       if (mini && venues.length) {
         const dpr = window.devicePixelRatio || 1;
-        const w = mini.clientWidth || 800, h = 120;
+        const box = mini.parentElement;
+        const w = Math.max(120, (box && box.clientWidth) || mini.clientWidth || 400);
+        const h = 120;
+        mini.style.width = '100%';
+        mini.style.height = h + 'px';
         mini.width = Math.floor(w * dpr); mini.height = Math.floor(h * dpr);
         const ctx = mini.getContext('2d');
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
