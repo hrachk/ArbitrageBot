@@ -104,6 +104,11 @@ public class ArbitrageWorker : BackgroundService
         {
             try
             {
+                // Обновляем Mode динамически — чтобы UI сразу видел смену Live/Paper
+                _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE"
+                            : _liveGuard.IsEnabled      ? "LIVE-RO"
+                            : "PAPER";
+
                 // Visible heartbeat — proves engine is alive
                 if ((DateTime.UtcNow - _lastHeartbeatLogUtc).TotalSeconds >= 30)
                 {

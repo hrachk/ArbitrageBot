@@ -8,6 +8,8 @@ public class ArbitrageState
     private readonly object _lock = new();
 
     public DateTime LastScanUtc { get; private set; }
+
+    // Mode обновляется динамически из LiveTradingGuard в каждом heartbeat
     public string Mode { get; set; } = "PAPER";
     public IReadOnlyList<string> Symbols { get; set; } = [];
     public IReadOnlyList<string> Exchanges { get; set; } = [];
