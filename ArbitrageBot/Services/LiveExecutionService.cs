@@ -8,6 +8,7 @@ using Bitget.Net;
 using OKX.Net;
 using GateIo.Net;
 using Bitget.Net.Enums;
+using Bitget.Net.Enums.Uta;
 using Bybit.Net.Enums;
 using CryptoClients.Net;
 using CryptoClients.Net.Models;
@@ -446,11 +447,41 @@ public sealed class LiveExecutionService : ILiveExecutionService
 
             if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
             {
-                // Bitget Unified Account → баланс в SpotApiV2 (не FuturesApiV2 который Classic only)
-                // Пробуем SpotApiV2 сначала, потом FuturesApiV2 как fallback для Classic
+                // Bitget UTA (Unified) uses /api/v3 via UnifiedApi — Classic FuturesApiV2 returns 40085.
                 string? lastErr = null, lastDetail = null;
 
-                // 1) SpotApiV2.GetSpotBalancesAsync — работает для Unified Account
+                // 1) UnifiedApi.Account.GetBalancesAsync — primary for UTA
+                try
+                {
+                    var r = await rest.Bitget.UnifiedApi.Account.GetBalancesAsync(ct).ConfigureAwait(false);
+                    if (r.Success && r.Data != null)
+                    {
+                        var assets = r.Data.Assets ?? [];
+                        var list = assets
+                            .Select(b =>
+                            {
+                                var avail = b.Available;
+                                var total = b.Equity != 0 ? b.Equity : (b.Balance != 0 ? b.Balance : avail + b.Locked);
+                                return (b.Asset ?? "?", avail, total);
+                            })
+                            .Where(x => x.Item1 is "USDT" or "USDC" || x.Item3 > 0.01m)
+                            .OrderByDescending(x => x.Item3)
+                            .Take(20)
+                            .ToList();
+                        if (list.Count == 0 && r.Data.UsdtEquity != 0)
+                            list.Add(("USDT", r.Data.UsdtEquity, r.Data.UsdtEquity));
+                        if (list.Count > 0)
+                            return (true, list, null, null, "Bitget.UnifiedApi(UTA)");
+                    }
+                    else if (!r.Success)
+                    {
+                        lastErr = FormatErr(r.Error, r.OriginalData);
+                        lastDetail = Truncate(r.OriginalData);
+                    }
+                }
+                catch (Exception ex) { lastErr = "UnifiedApi: " + ex.Message; }
+
+                // 2) SpotApiV2 — sometimes still works for funding/spot wallet
                 try
                 {
                     var r = await rest.Bitget.SpotApiV2.Account.GetSpotBalancesAsync(ct: ct).ConfigureAwait(false);
@@ -476,18 +507,17 @@ public sealed class LiveExecutionService : ILiveExecutionService
                             .Where(x => x.Item1 is "USDT" or "USDC" || x.Item3 > 1)
                             .OrderByDescending(x => x.Item3).Take(20).ToList();
                         if (list.Count > 0)
-                            return (true, list, null, null, "Bitget.Spot(Unified)");
-                        // empty list — fall through to FuturesApiV2
+                            return (true, list, null, null, "Bitget.SpotApiV2");
                     }
                     else if (!r.Success)
                     {
-                        lastErr    = FormatErr(r.Error, r.OriginalData);
-                        lastDetail = Truncate(r.OriginalData);
+                        lastErr ??= FormatErr(r.Error, r.OriginalData);
+                        lastDetail ??= Truncate(r.OriginalData);
                     }
                 }
-                catch (Exception ex) { lastErr = "SpotApiV2: " + ex.Message; }
+                catch (Exception ex) { lastErr = (lastErr ?? "") + " | SpotApiV2: " + ex.Message; }
 
-                // 2) FuturesApiV2 — Classic Account
+                // 3) FuturesApiV2 — Classic only (fails with 40085 on UTA)
                 try
                 {
                     var r = await rest.Bitget.FuturesApiV2.Account
@@ -515,13 +545,16 @@ public sealed class LiveExecutionService : ILiveExecutionService
                             .ToList();
                         return (true, list, null, null, "Bitget.UsdtFutures(Classic)");
                     }
-                    lastErr    ??= FormatErr(r.Error, r.OriginalData);
+                    var classicErr = FormatErr(r.Error, r.OriginalData);
+                    lastErr ??= classicErr;
                     lastDetail ??= Truncate(r.OriginalData);
+                    if (classicErr != null && classicErr.Contains("40085", StringComparison.Ordinal))
+                        lastErr = "Bitget UTA (Unified): Classic Futures API blocked (40085). Using UnifiedApi path required.";
                 }
                 catch (Exception ex) { lastErr = (lastErr ?? "") + " | FuturesApiV2: " + ex.Message; }
 
-                return (false, [], lastErr ?? "Bitget: both APIs failed", lastDetail,
-                    "Bitget — hint: Unified Account нужны SpotApiV2 права; Classic — FuturesApiV2");
+                return (false, [], lastErr ?? "Bitget: Unified+Spot+Classic all failed", lastDetail,
+                    "Bitget UTA needs Unified API key permissions (uta trade/read). Classic keys only work on Classic accounts.");
             }
 
             if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
@@ -716,9 +749,38 @@ public sealed class LiveExecutionService : ILiveExecutionService
             }
         }
 
-        // Bitget: try FuturesApiV2 positions (Classic), fallback to shared
+        // Bitget: UTA UnifiedApi first, then Classic FuturesApiV2, then shared
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
         {
+            try
+            {
+                // symbol null = all USDT-M positions on UTA
+                var r = await rest.Bitget.UnifiedApi.Trading
+                    .GetPositionsAsync(ProductCategory.UsdtFutures, symbol: null!, ct: ct).ConfigureAwait(false);
+                if (r.Success && r.Data != null)
+                {
+                    var list = r.Data
+                        .Select(p =>
+                        {
+                            var qty = p.Total != 0 ? p.Total : p.Available;
+                            return new
+                            {
+                                symbol = p.Symbol,
+                                side = p.PositionSide?.ToString() ?? "—",
+                                quantity = qty,
+                                entryPrice = (decimal?)p.AveragePrice,
+                                unrealizedPnl = (decimal?)p.UnrealisedPnl,
+                                leverage = (decimal?)p.Leverage
+                            };
+                        })
+                        .Where(x => x.quantity != 0)
+                        .Take(50)
+                        .ToList();
+                    return list.Count > 0 ? (object)list : new List<object>();
+                }
+            }
+            catch { /* fall through */ }
+
             try
             {
                 var r = await rest.Bitget.FuturesApiV2.Trading
@@ -743,7 +805,6 @@ public sealed class LiveExecutionService : ILiveExecutionService
                         }).Take(50).ToList();
                     return list.Count > 0 ? (object)list : new List<object>();
                 }
-                // If Classic API fails (Unified account) — fall through to shared
             }
             catch { /* fall through */ }
         }
@@ -797,6 +858,8 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private static string? HintForError(string? err)
     {
         if (string.IsNullOrEmpty(err)) return "Enable Futures on API key; check IP whitelist; Bitget needs passphrase";
+        if (err.Contains("40085", StringComparison.Ordinal) || err.Contains("Unified Account mode", StringComparison.OrdinalIgnoreCase))
+            return "Bitget UTA: Classic API blocked. Bot now uses UnifiedApi; recreate key with UTA read/trade perms if still failing.";
         if (err.Contains("Invalid", StringComparison.OrdinalIgnoreCase)
             || err.Contains("signature", StringComparison.OrdinalIgnoreCase)
             || err.Contains("API-key", StringComparison.OrdinalIgnoreCase))
