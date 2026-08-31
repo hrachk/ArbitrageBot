@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using ArbitrageBot.Configuration;
-using CryptoExchange.Net.CommonObjects;
 using Microsoft.Extensions.Options;
 
 namespace ArbitrageBot.Services;
@@ -194,9 +193,12 @@ public sealed class FundingRateService : BackgroundService
 
             decimal rate = 0, markPrice = 0;
             long nextTime = 0;
-            el.TryGetProperty("lastFundingRate", out var r) && decimal.TryParse(r.GetString(), out rate);
-            el.TryGetProperty("markPrice", out var mp) && decimal.TryParse(mp.GetString(), out markPrice);
-            el.TryGetProperty("nextFundingTime", out var nft) && nft.TryGetInt64(out nextTime);
+            if (el.TryGetProperty("lastFundingRate", out var r))
+                decimal.TryParse(r.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out rate);
+            if (el.TryGetProperty("markPrice", out var mp))
+                decimal.TryParse(mp.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out markPrice);
+            if (el.TryGetProperty("nextFundingTime", out var nft))
+                nft.TryGetInt64(out nextTime);
 
             result.Add(new FundingRateSnapshot(
                 Symbol:         normalized,
@@ -233,8 +235,10 @@ public sealed class FundingRateService : BackgroundService
             if (!IsWatched(normalized, symbols)) continue;
 
             decimal rate = 0, markPrice = 0;
-            el.TryGetProperty("fundingRate", out var r) && decimal.TryParse(r.GetString(), out rate);
-            el.TryGetProperty("markPrice",   out var mp) && decimal.TryParse(mp.GetString(), out markPrice);
+            if (el.TryGetProperty("fundingRate", out var r))
+                decimal.TryParse(r.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out rate);
+            if (el.TryGetProperty("markPrice", out var mp))
+                decimal.TryParse(mp.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out markPrice);
 
             long nextTime = 0;
             if (el.TryGetProperty("nextFundingTime", out var nft))
@@ -257,7 +261,6 @@ public sealed class FundingRateService : BackgroundService
         IReadOnlyList<string> symbols, CancellationToken ct)
     {
         var client = _http.CreateClient("discovery");
-        var url = "https://www.okx.com/api/v5/public/funding-rate?instType=SWAP";
         // OKX requires per-instrument calls — batch by symbol
         var result = new List<FundingRateSnapshot>();
 
@@ -278,9 +281,11 @@ public sealed class FundingRateService : BackgroundService
                 foreach (var el in data.EnumerateArray())
                 {
                     decimal rate = 0;
-                    el.TryGetProperty("fundingRate", out var fr) && decimal.TryParse(fr.GetString(), out rate);
+                    if (el.TryGetProperty("fundingRate", out var fr))
+                        decimal.TryParse(fr.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out rate);
                     long nextTime = 0;
-                    el.TryGetProperty("nextFundingTime", out var nft) && long.TryParse(nft.GetString(), out nextTime);
+                    if (el.TryGetProperty("nextFundingTime", out var nft))
+                        long.TryParse(nft.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out nextTime);
 
                     result.Add(new FundingRateSnapshot(
                         Symbol:         Normalize(sym),
@@ -321,7 +326,8 @@ public sealed class FundingRateService : BackgroundService
             if (!IsWatched(normalized, symbols)) continue;
 
             decimal rate = 0;
-            el.TryGetProperty("fundingRate", out var fr) && decimal.TryParse(fr.GetString(), out rate);
+            if (el.TryGetProperty("fundingRate", out var fr))
+                decimal.TryParse(fr.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out rate);
 
             result.Add(new FundingRateSnapshot(
                 Symbol:         normalized,
@@ -355,7 +361,8 @@ public sealed class FundingRateService : BackgroundService
             if (!IsWatched(normalized, symbols)) continue;
 
             decimal rate = 0;
-            el.TryGetProperty("funding_rate", out var fr) && decimal.TryParse(fr.GetString(), out rate);
+            if (el.TryGetProperty("funding_rate", out var fr))
+                decimal.TryParse(fr.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out rate);
 
             result.Add(new FundingRateSnapshot(
                 Symbol:         normalized,
