@@ -260,3 +260,8 @@ if (document.readyState === 'loading') {
   setTimeout(AB.boot, 50);
 }
 window.addEventListener('load', () => setTimeout(AB.boot, 100));
+
+document.addEventListener('DOMContentLoaded', () => {
+  const r = document.getElementById('btnRefreshTop');
+  if (r) r.addEventListener('click', () => { if (AB.refreshSnapshot) AB.refreshSnapshot(); if (AB.pages.funding) AB.pages.funding.load(); if (AB.pages.live) AB.pages.live.load(); });
+});

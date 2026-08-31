@@ -61,26 +61,25 @@ AB.pages.dashboard = {
             : ('threshold ' + AB.fmt(minShow, 2) + '% · waiting books');
         }
         if (!list.length) {
-          board.innerHTML = '<div class="arb-empty">Нет строк — ждём WS books / scan. Universe: ' +
+          board.innerHTML = '<div class="arb-empty">No routes — waiting WS books / scan. Universe: ' +
             (symbols.length || 0) + ' pairs</div>';
         } else {
-          board.innerHTML = list.map((r, i) => {
-            const hot = r.net >= 0.15 ? ' hot' : '';
-            const sc = r.net >= 0.2 ? 'strong' : (r.net >= 0.08 ? 'mid' : 'weak');
-            const tag = r.exec ? ' <span class="pos" style="font-size:10px">EXEC</span>' : ' <span class="muted" style="font-size:10px">watch</span>';
-            return '<div class="arb-row' + hot + '">' +
-              '<div class="arb-rank">' + (i + 1) + '</div>' +
-              '<div class="arb-sym">' + r.symbol + tag + '</div>' +
-              '<div class="arb-route">' +
-                '<div class="arb-leg long"><span class="lbl">long ' + r.longEx + '</span>' +
-                  '<span class="val">' + (r.midOnly ? 'cheap' : 'buy') + '</span></div>' +
-                '<div class="arb-leg short"><span class="lbl">short ' + r.shortEx + '</span>' +
-                  '<span class="val">' + (r.midOnly ? 'rich' : 'sell') + '</span></div>' +
-                (r.rt ? '<span class="muted mono" style="font-size:11px">RT ' + r.rt.toFixed(3) + '%</span>' : '') +
-              '</div>' +
-              '<div class="arb-spread ' + sc + '">' + r.net.toFixed(4) + '%</div>' +
+          const top = list.slice(0, 12);
+          board.innerHTML = '<div class="arb-body" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">' +
+            top.map((r, i) => {
+              const tags = [];
+              if (r.exec) tags.push('<span class="tag">executable</span>');
+              else tags.push('<span class="tag amber">watch</span>');
+              if (r.fund) tags.push('<span class="tag blue">funding ' + (r.fund >= 0 ? '+' : '') + r.fund.toFixed(3) + '%</span>');
+              if (r.rt) tags.push('<span class="tag" style="background:rgba(167,139,250,.1);color:var(--purple);border-color:rgba(167,139,250,.2)">RT ' + r.rt.toFixed(3) + '%</span>');
+              return '<div class="arb-card">' +
+                (i === 0 ? '<div class="bar-live"></div>' : '') +
+                '<div class="sym">' + (r.full || r.symbol) + '</div>' +
+                '<div class="spread">' + (r.net >= 0 ? '+' : '') + r.net.toFixed(3) + '%</div>' +
+                '<div class="route">' + r.longEx + ' LONG → ' + r.shortEx + ' SHORT</div>' +
+                '<div class="tags">' + tags.join('') + '</div>' +
               '</div>';
-          }).join('');
+            }).join('') + '</div>';
         }
       }
 

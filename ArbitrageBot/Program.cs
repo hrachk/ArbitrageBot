@@ -99,6 +99,19 @@ try
 
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
+    app.MapGet("/api/funding", (FundingRateService funding, ArbitrageState state) =>
+    {
+        var ex = state.Exchanges?.ToList() ?? [];
+        var rows = new List<FundingDelta>();
+        foreach (var sym in state.Symbols ?? Array.Empty<string>())
+        {
+            var best = funding.GetBestDelta(sym, ex);
+            if (best != null) rows.Add(best);
+        }
+        rows.Sort((a, b) => b.DeltaRate.CompareTo(a.DeltaRate));
+        return Results.Json(rows);
+    });
+    app.MapGet("/api/funding/all", (FundingRateService funding) => Results.Json(funding.GetAllLatest()));
     app.MapGet("/api/health", (ArbitrageState state) =>
     {
         var snap = state.GetSnapshot();

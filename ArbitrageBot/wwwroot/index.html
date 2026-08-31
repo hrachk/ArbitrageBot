@@ -15,21 +15,23 @@
       <div class="brand-mark">AB</div>
       <div class="brand-text">
         <strong>ArbitrageBot</strong>
-        <span>Futures cross · console</span>
+        <span>Futures cross</span>
       </div>
     </div>
     <nav class="nav">
       <button type="button" class="nav-item active" data-page="dashboard"><span class="nav-ico">▣</span> Dashboard</button>
-      <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◈</span> Market</button>
+      <button type="button" class="nav-item" data-page="funding"><span class="nav-ico">◈</span> Funding rates</button>
+      <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◇</span> Market</button>
       <button type="button" class="nav-item" data-page="screener"><span class="nav-ico">▦</span> Screener</button>
       <button type="button" class="nav-item" data-page="reports"><span class="nav-ico">▤</span> Reports</button>
+      <button type="button" class="nav-item" data-page="live"><span class="nav-ico">⬤</span> Live positions</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-ico">⚙</span> Settings</button>
       <button type="button" class="nav-item" data-page="help"><span class="nav-ico">?</span> Help</button>
     </nav>
     <div class="side-meta">
-      <span class="pill paper" id="modeBadge">PAPER</span>
+      <div id="modeBadge" class="pill paper">PAPER</div>
       <div class="status-line"><span class="led" id="connDot"></span><span id="connText">Connecting…</span></div>
-      <div class="mono" id="lastScan">scan —</div>
+      <div class="mono" style="font-size:10px;color:var(--text3)" id="lastScan">scan —</div>
     </div>
   </aside>
 
@@ -38,8 +40,9 @@
       <h1 id="pageTitle">Dashboard</h1>
       <div class="topbar-right">
         <span class="top-meta" id="topHint">waiting for data…</span>
-        <button type="button" class="btn sm" id="btnPause">Pause</button>
-        <button type="button" class="btn sm danger" id="btnResetPaper">Reset paper</button>
+        <button type="button" class="btn" id="btnPause">Pause</button>
+        <button type="button" class="btn danger" id="btnResetPaper">Reset paper</button>
+        <button type="button" class="btn primary" id="btnRefreshTop">↻ Refresh</button>
       </div>
     </header>
 
@@ -59,9 +62,9 @@
         </div>
 
         <div class="panel arb-board">
-          <div class="arb-board-hd">
-            <h2>Арбитраж между биржами</h2>
-            <span class="sub" id="d_arbBoardSub">live scan · net after open fees</span>
+          <div class="arb-hd">
+            <span class="panel-title">Live arbitrage board</span>
+            <span class="panel-sub" id="d_arbBoardSub">real-time · net after fees · sorted by edge</span>
           </div>
           <div id="d_arbBoard" class="arb-board-body"><div class="arb-empty">Waiting for scan…</div></div>
         </div>
@@ -120,6 +123,40 @@
         </div>
       </section>
 
+
+      <!-- FUNDING -->
+      <section class="page" data-page="funding">
+        <div class="panel">
+          <div class="panel-hd">
+            <span class="panel-title">Funding rates — all pairs</span>
+            <span class="panel-sub">delta = receive(short) − pay(long) · polled every 5 min</span>
+          </div>
+          <div id="fundingList"><div class="empty">Loading funding…</div></div>
+        </div>
+      </section>
+
+      <!-- LIVE -->
+      <section class="page" data-page="live">
+        <div class="banner warn" id="live_banner"><b>Live mode</b> · balances and positions from API keys</div>
+        <div class="g3" style="margin-bottom:12px">
+          <div class="kpi" style="border-color:rgba(45,212,191,.3)">
+            <div class="kpi-l">Live total (USDT)</div>
+            <div class="kpi-v" style="color:var(--accent)" id="live_total">—</div>
+          </div>
+          <div class="kpi"><div class="kpi-l">Open hedges</div><div class="kpi-v" id="live_openN">—</div></div>
+          <div class="kpi"><div class="kpi-l">Funding this period</div><div class="kpi-v" id="live_fund">—</div></div>
+        </div>
+        <div class="panel" style="border-color:rgba(56,189,248,.25);margin-bottom:12px">
+          <div class="panel-hd"><span class="panel-title">Exchange balances</span>
+            <button type="button" class="btn sm" id="btnLiveRefresh">↻ Refresh</button>
+          </div>
+          <div class="g3" id="live_balCards"><div class="empty">Open Settings → API keys, then refresh</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-hd"><span class="panel-title">Hold decisions</span><span class="panel-sub">HOLD / CLOSE engine</span></div>
+          <div id="live_holdCards"><div class="empty">No open positions</div></div>
+        </div>
+      </section>
       <!-- MARKET -->
       <section class="page" data-page="market">
         <div class="mkt-toolbar">
@@ -701,6 +738,8 @@ rm -f ArbitrageBot/data/paper/daily-*.json</pre>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 <script src="/assets/js/core.js"></script>
 <script src="/assets/js/pages/dashboard.js"></script>
+<script src="/assets/js/pages/funding.js"></script>
+<script src="/assets/js/pages/live.js"></script>
 <script src="/assets/js/pages/market.js"></script>
 <script src="/assets/js/pages/screener.js"></script>
 <script src="/assets/js/pages/reports.js"></script>
