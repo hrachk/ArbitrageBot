@@ -23,6 +23,8 @@ public class ArbitrageWorker : BackgroundService
     private readonly RuntimeRiskConfig _runtime;
     private readonly LiveTradingGuard _liveGuard;
     private readonly ILiveExecutionService _liveExec;
+    private readonly FundingRateService _fundingRates;
+    private readonly HoldDecisionEngine _holdEngine;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
     private DateTime _lastHeartbeatLogUtc = DateTime.MinValue;
@@ -42,7 +44,9 @@ public class ArbitrageWorker : BackgroundService
         IPaperAnalyticsStore analytics,
         RuntimeRiskConfig runtime,
         LiveTradingGuard liveGuard,
-        ILiveExecutionService liveExec)
+        ILiveExecutionService liveExec,
+        FundingRateService fundingRates,
+        HoldDecisionEngine holdEngine)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -59,6 +63,8 @@ public class ArbitrageWorker : BackgroundService
         _runtime = runtime;
         _liveGuard = liveGuard;
         _liveExec = liveExec;
+        _fundingRates = fundingRates;
+        _holdEngine = holdEngine;
 
         _state.StrategyMode = _options.StrategyMode;
         _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE" : (_liveGuard.IsEnabled ? "LIVE-RO" : "PAPER");
@@ -476,6 +482,57 @@ public class ArbitrageWorker : BackgroundService
         _state.LiveStatus = _liveGuard.Status();
         // Always publish ledger (instant); exchange pull throttled
         try { _state.LivePositions = _liveExec.GetLivePaperSnapshot(); } catch { /* ignore */ }
+        // Push funding rates snapshot for UI (Dashboard + Reports)
+        try { PushFundingRatesSnapshot(); } catch { /* ignore */ }
+    }
+
+    private void PushFundingRatesSnapshot()
+    {
+        var exchanges = _state.Exchanges;
+        var symbols   = _state.Symbols;
+        if (symbols.Count == 0 || exchanges.Count == 0) return;
+
+        // Build per-symbol funding table
+        var rows = symbols.Select(sym =>
+        {
+            var rates = exchanges.Select(ex =>
+            {
+                var snap = _fundingRates.GetLatest(sym, ex);
+                return new
+                {
+                    exchange = ex,
+                    rate     = snap?.Rate,
+                    apr      = snap?.AnnualizedApr,
+                    nextUtc  = snap?.NextFundingUtc
+                };
+            }).ToList();
+
+            // Best delta (max ShortRate - LongRate across all pairs)
+            var bestDelta = _fundingRates.GetBestDelta(sym, exchanges);
+
+            return new
+            {
+                symbol    = sym,
+                rates,
+                bestDelta = bestDelta == null ? null : new
+                {
+                    longExchange  = bestDelta.LongExchange,
+                    shortExchange = bestDelta.ShortExchange,
+                    deltaRate     = bestDelta.DeltaRate,
+                    apr           = bestDelta.AnnualizedApr,
+                    trend         = bestDelta.Trend,
+                    ema5          = bestDelta.Ema5,
+                    ema20         = bestDelta.Ema20,
+                    nextFundingUtc = bestDelta.NextFundingUtc
+                }
+            };
+        }).OrderByDescending(r => r.bestDelta?.apr ?? 0).ToList();
+
+        _state.FundingRates = new
+        {
+            updatedUtc = DateTime.UtcNow,
+            symbols    = rows
+        };
     }
 
     private async Task RefreshLivePositionsAsync(CancellationToken ct)

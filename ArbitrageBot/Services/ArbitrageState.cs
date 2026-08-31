@@ -25,6 +25,7 @@ public class ArbitrageState
     public string? DiscoveryMessage { get; set; }
     public object? LiveStatus { get; set; }
     public object? LivePositions { get; set; }
+    public object? FundingRates { get; set; }  // latest funding snapshot for UI
     /// <summary>Best gross/open net seen last scan (even if below threshold).</summary>
     public decimal? LastBestGrossPercent { get; set; }
     public decimal? LastBestNetOpenPercent { get; set; }
@@ -174,6 +175,7 @@ public class ArbitrageState
                 discoveryMessage = DiscoveryMessage,
                 liveStatus = LiveStatus,
                 livePositions = LivePositions,
+                fundingRates = FundingRates,
                 lastBestGrossPercent = LastBestGrossPercent,
                 lastBestNetOpenPercent = LastBestNetOpenPercent,
                 lastBooksReady = LastBooksReady,

@@ -282,12 +282,23 @@
               <h2 class="panel-title">🔴 Live open hedges</h2>
               <span class="panel-sub" id="r_liveOpenCount">—</span>
             </div>
+            <!-- Hold decisions with funding PnL -->
+            <div class="g2" id="r_holdDecisions" style="margin-bottom:10px"></div>
             <div class="scroll">
               <table class="data">
                 <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Opened</th></tr></thead>
                 <tbody id="r_posBody"></tbody>
               </table>
             </div>
+          </div>
+
+          <!-- Funding rates table -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(45,212,191,0.3)">
+            <div class="panel-hd">
+              <h2 class="panel-title">📊 Funding rates — все пары</h2>
+              <span class="panel-sub">delta = получаем на шорте − платим на лонге · обновляется каждые 5 мин</span>
+            </div>
+            <div id="r_fundingRates"><div class="empty">Loading…</div></div>
           </div>
 
           <!-- Live trade ledger -->

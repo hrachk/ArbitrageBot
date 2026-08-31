@@ -63,6 +63,9 @@ try
     builder.Services.AddSingleton<LiveSafetyService>();
     builder.Services.AddHttpClient("live-alerts");
     builder.Services.AddSingleton<ILiveExecutionService, LiveExecutionService>();
+    builder.Services.AddSingleton<FundingRateService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<FundingRateService>());
+    builder.Services.AddSingleton<HoldDecisionEngine>();
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();

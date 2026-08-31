@@ -14,8 +14,15 @@ AB.pages.reports = {
     if (liveSection)  liveSection.style.display  = isLive ? '' : 'none';
     if (paperSection) paperSection.style.display = isLive ? 'none' : '';
 
-    if (isLive) this._renderLive(data);
-    else        this._renderPaper(data);
+    if (isLive) {
+      this._renderLive(data);
+      this.renderFunding(data.fundingRates);
+      this.renderHoldDecisions(data.livePositions);
+    } else {
+      this._renderPaper(data);
+      // Also render funding in paper mode (bottom of page for analysis)
+      this.renderFunding(data.fundingRates);
+    }
   },
 
   // ── LIVE render ──────────────────────────────────────────────────────────
@@ -422,3 +429,97 @@ document.querySelectorAll('[data-perf-days]').forEach(btn => {
     AB.pages.reports.loadPerformance(parseInt(btn.getAttribute('data-perf-days'), 10));
   });
 });
+
+// ── Funding Rates panel (Live mode) ──────────────────────────────────────────
+AB.pages.reports.renderFunding = function (fundingData) {
+  const el = document.getElementById('r_fundingRates');
+  if (!el || !fundingData) return;
+
+  const rows = fundingData.symbols || [];
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">Funding rates loading… (5 min poll)</div>';
+    return;
+  }
+
+  const fmt = (v, dig) => v != null ? (Number(v) * 100).toFixed(dig ?? 4) + '%' : '—';
+  const fmtApr = (v) => v != null ? (Number(v) * 100).toFixed(1) + '%' : '—';
+  const trendIcon = (t) => t === 'expanding' ? '↑' : (t === 'converging' ? '↓' : '—');
+
+  el.innerHTML = `<div class="scroll" style="max-height:400px">
+    <table class="data" style="font-size:11px">
+      <thead><tr>
+        <th>Symbol</th>
+        <th>Best delta</th>
+        <th>APR</th>
+        <th>Route (L→S)</th>
+        <th>Trend</th>
+        <th>Next funding</th>
+        ${(rows[0]?.rates || []).map(r => `<th>${r.exchange}</th>`).join('')}
+      </tr></thead>
+      <tbody>
+        ${rows.map(row => {
+          const d = row.bestDelta;
+          const apr = d?.apr != null ? Number(d.apr) * 100 : null;
+          const aprCls = apr != null ? (apr > 5 ? 'pos' : apr > 1 ? '' : 'muted') : '';
+          const next = d?.nextFundingUtc ? new Date(d.nextFundingUtc) : null;
+          const nextStr = next ? next.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '—';
+          return `<tr>
+            <td class="mono" style="color:var(--cyan)">${row.symbol}</td>
+            <td class="mono ${d?.deltaRate > 0 ? 'pos' : 'muted'}">${fmt(d?.deltaRate)}</td>
+            <td class="mono ${aprCls}" style="font-weight:${apr > 10 ? '700' : '400'}">${fmtApr(d?.apr)}</td>
+            <td class="muted" style="font-size:10px">${d ? d.longExchange + '→' + d.shortExchange : '—'}</td>
+            <td style="font-size:13px">${trendIcon(d?.trend)} <span class="muted" style="font-size:10px">${d?.trend || '—'}</span></td>
+            <td class="muted mono" style="font-size:10px">${nextStr}</td>
+            ${(row.rates || []).map(r => {
+              const rateN = r.rate != null ? Number(r.rate) * 100 : null;
+              const cls = rateN != null ? (rateN > 0.02 ? 'pos' : rateN < 0 ? 'neg' : '') : 'muted';
+              return `<td class="mono ${cls}" style="font-size:10px">${rateN != null ? rateN.toFixed(4) + '%' : '—'}</td>`;
+            }).join('')}
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+  <div class="muted" style="font-size:10px;margin-top:6px">
+    Обновляется каждые 5 минут · delta = rate(short) - rate(long) · APR = delta × 3 × 365 · trend: ↑ expanding / ↓ converging
+  </div>`;
+};
+
+// ── Hold decisions для open live hedges ──────────────────────────────────────
+AB.pages.reports.renderHoldDecisions = function (livePositions) {
+  const el = document.getElementById('r_holdDecisions');
+  if (!el) return;
+  const ledger = Array.isArray(livePositions?.ledger) ? livePositions.ledger
+               : Array.isArray(livePositions?.open)   ? livePositions.open : [];
+  if (!ledger.length) {
+    el.innerHTML = '<div class="empty muted">No open live hedges</div>';
+    return;
+  }
+
+  el.innerHTML = ledger.map(p => {
+    const accFunding = p.accumulatedFundingPnlUsd ?? p.AccumulatedFundingPnlUsd ?? 0;
+    const pType = p.positionType ?? p.PositionType ?? 'Spatial';
+    const hold = p.shouldHold ?? p.ShouldHold;
+    const reason = p.lastHoldDecisionReason ?? p.LastHoldDecisionReason ?? '—';
+    const pricePnl = p.unrealizedPricePnlUsd ?? 0;
+    const totalPnl = Number(accFunding) + Number(pricePnl);
+
+    return `<div class="kpi" style="margin:0;border-color:${hold === false ? 'rgba(248,113,113,0.5)' : 'rgba(45,212,191,0.3)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span class="mono" style="color:var(--cyan);font-weight:700">${p.symbol || p.Symbol}</span>
+        <span style="font-size:12px;padding:2px 8px;border-radius:12px;background:${hold === false ? 'rgba(248,113,113,0.15)' : 'rgba(45,212,191,0.15)'};color:${hold === false ? '#f87171' : '#2dd4bf'}">
+          ${hold === false ? '⚡ CLOSE' : '⏳ HOLD'}
+        </span>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px">
+        <div><span class="muted">Route</span><br/><b>${p.longExchange || p.LongExchange} → ${p.shortExchange || p.ShortExchange}</b></div>
+        <div><span class="muted">Type</span><br/><b>${pType}</b></div>
+        <div><span class="muted">Funding PnL</span><br/><b class="${accFunding >= 0 ? 'pos' : 'neg'}">${accFunding >= 0 ? '+' : ''}${Number(accFunding).toFixed(3)} USD</b></div>
+        <div><span class="muted">Price PnL</span><br/><b class="${pricePnl >= 0 ? 'pos' : 'neg'}">${pricePnl >= 0 ? '+' : ''}${Number(pricePnl).toFixed(3)} USD</b></div>
+        <div><span class="muted">Total PnL</span><br/><b class="${totalPnl >= 0 ? 'pos' : 'neg'}" style="font-size:13px;font-weight:700">${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} USD</b></div>
+        <div><span class="muted">Funding periods</span><br/><b>${p.fundingPeriodsSettled ?? 0}</b></div>
+      </div>
+      <div class="muted" style="font-size:10px;margin-top:6px;border-top:1px solid rgba(148,163,184,0.1);padding-top:6px">${reason}</div>
+    </div>`;
+  }).join('');
+};
