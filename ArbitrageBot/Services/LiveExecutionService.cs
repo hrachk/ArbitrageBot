@@ -74,19 +74,32 @@ public sealed class LiveExecutionService : ILiveExecutionService
     {
         open = _orders.GetOpen().Select(p => new
         {
-            tradeId = p.Id,
+            tradeId  = p.Id,
             p.Symbol,
             p.LongExchange,
             p.ShortExchange,
             p.BaseQty,
+            p.NotionalUsd,
             p.LongEntry,
             p.ShortEntry,
             p.OpenedAt,
             p.Status,
-            p.Message
+            p.Message,
+            p.PositionType,
+            p.AccumulatedFundingPnlUsd,
+            p.EntryFundingDeltaRate,
+            p.FundingPeriodsSettled,
+            p.LastFundingSettlementUtc,
+            p.ShouldHold,
+            p.LastHoldDecisionReason,
+            p.UnrealizedPricePnlUsd,
+            totalUnrealizedPnlUsd = p.TotalUnrealizedPnlUsd
         }),
-        closed = _orders.GetClosed(20),
-        openCount = _orders.GetOpen().Count
+        closed   = _orders.GetClosed(20),
+        openCount = _orders.GetOpen().Count,
+        realizedPnlUsd = _orders.GetClosed(1000)
+            .Where(t => t.RealizedPnlUsd.HasValue)
+            .Sum(t => t.RealizedPnlUsd!.Value)
     };
 
     /// <summary>
@@ -139,20 +152,33 @@ public sealed class LiveExecutionService : ILiveExecutionService
         return new
         {
             utc = DateTime.UtcNow,
-            openLedgerCount = ledgerOpen.Count,
+            openLedgerCount  = ledgerOpen.Count,
             exchangeLegCount = exchangeLegs.Count,
+            realizedPnlUsd   = _orders.GetClosed(1000)
+                .Where(t => t.RealizedPnlUsd.HasValue)
+                .Sum(t => t.RealizedPnlUsd!.Value),
             ledger = ledgerOpen.Select(p => new
             {
-                tradeId = p.Id,
+                tradeId  = p.Id,
                 p.Symbol,
                 p.LongExchange,
                 p.ShortExchange,
                 p.BaseQty,
+                p.NotionalUsd,
                 p.LongEntry,
                 p.ShortEntry,
                 p.OpenedAt,
                 p.Status,
                 p.Message,
+                p.PositionType,
+                p.AccumulatedFundingPnlUsd,
+                p.EntryFundingDeltaRate,
+                p.FundingPeriodsSettled,
+                p.LastFundingSettlementUtc,
+                p.ShouldHold,
+                p.LastHoldDecisionReason,
+                p.UnrealizedPricePnlUsd,
+                totalUnrealizedPnlUsd = p.TotalUnrealizedPnlUsd,
                 source = "ledger"
             }),
             exchangeLegs,
