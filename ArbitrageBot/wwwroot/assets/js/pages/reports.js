@@ -5,24 +5,94 @@ AB.pages.reports = {
 
   // ── вызывается из SignalR при каждом тике ────────────────────────────────
   render(data) {
-    const mode = (data.mode || 'PAPER').toUpperCase();
-    const isLive = mode === 'LIVE';
-
-    // Показываем/скрываем секции
+    if (!data) return;
+    const mode = String(data.mode || 'PAPER').toUpperCase();
+    // LIVE / LIVE_READONLY / LIVE-RO / LIVE_FULL — anything with LIVE
+    const isLive = mode.indexOf('LIVE') >= 0 && mode.indexOf('PAPER') < 0;
+    // In paper (and live-ro while paper engine still runs) show paper analytics
     const liveSection  = document.getElementById('rep_liveSection');
     const paperSection = document.getElementById('rep_paperSection');
-    if (liveSection)  liveSection.style.display  = isLive ? '' : 'none';
-    if (paperSection) paperSection.style.display = isLive ? 'none' : '';
+    // Always keep BOTH visible: live block = real open hedges + balances; paper = paper stats
+    if (liveSection)  liveSection.style.display  = '';
+    if (paperSection) paperSection.style.display = '';
 
-    if (isLive) {
-      this._renderLive(data);
-      this.renderFunding(data.fundingRates);
-      this.renderHoldDecisions(data.livePositions);
-    } else {
-      this._renderPaper(data);
-      // Also render funding in paper mode (bottom of page for analysis)
-      this.renderFunding(data.fundingRates);
+    this._renderOpenHedges(data);   // real open rows → r_posBody
+    this._renderLive(data);
+    this._renderPaper(data);
+    this.renderFunding(data.fundingRates || data.FundingRates);
+    this.renderHoldDecisions(data.livePositions);
+  },
+
+  /** Unified open hedges: paper positions + live ledger + exchange legs (no mock). */
+  _renderOpenHedges(data) {
+    const el = (id) => AB.$(id);
+    const fp = data.futuresPaper || data.paper || {};
+    const paper = Array.isArray(fp.positions) ? fp.positions : [];
+    const lp = data.livePositions || {};
+    const ledger = Array.isArray(lp.ledger) ? lp.ledger
+                 : (Array.isArray(lp.open) ? lp.open : []);
+    const legs = Array.isArray(lp.exchangeLegs) ? lp.exchangeLegs : [];
+
+    const rows = [];
+    paper.forEach(p => {
+      rows.push({
+        symbol: p.symbol || p.Symbol,
+        route: (p.longExchange || p.LongExchange || '?') + ' → ' + (p.shortExchange || p.ShortExchange || '?'),
+        qty: Number(p.baseQty || p.BaseQty || 0),
+        upnl: p.unrealizedPnlUsd != null ? Number(p.unrealizedPnlUsd)
+            : (p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null),
+        opened: p.openedAt || p.OpenedAt,
+        src: 'paper'
+      });
+    });
+    ledger.forEach(p => {
+      rows.push({
+        symbol: p.symbol || p.Symbol,
+        route: (p.longExchange || p.LongExchange || '?') + ' → ' + (p.shortExchange || p.ShortExchange || '?'),
+        qty: Number(p.baseQty || p.BaseQty || 0),
+        upnl: p.unrealizedPnlUsd != null ? Number(p.unrealizedPnlUsd)
+            : (p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null),
+        opened: p.openedAt || p.OpenedAt,
+        src: 'ledger'
+      });
+    });
+    legs.forEach(p => {
+      const qty = Number(p.quantity || p.Quantity || 0);
+      if (!qty) return;
+      rows.push({
+        symbol: p.symbol || p.Symbol,
+        route: (p.exchange || p.Exchange || '?') + ' ' + (p.side || p.Side || ''),
+        qty: qty,
+        upnl: p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null,
+        opened: null,
+        src: 'exchange'
+      });
+    });
+
+    if (el('r_liveOpenCount'))
+      el('r_liveOpenCount').textContent = rows.length + ' open · paper ' + paper.length +
+        ' · ledger ' + ledger.length + ' · ex ' + legs.length;
+    if (el('r_open')) el('r_open').textContent = rows.length;
+
+    const body = el('r_posBody');
+    if (!body) return;
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">' +
+        'No open hedges (paper + live ledger + exchange legs empty)</td></tr>';
+      return;
     }
+    body.innerHTML = rows.map(p => {
+      const upnlS = p.upnl != null ? AB.fmtUsd(p.upnl) : '—';
+      const upnlC = p.upnl != null ? (p.upnl >= 0 ? 'pos' : 'neg') : '';
+      const opened = p.opened ? new Date(p.opened).toLocaleString() : '—';
+      const badge = p.src === 'paper' ? '📄' : (p.src === 'ledger' ? '🔴' : '🏦');
+      return '<tr>' +
+        '<td class="mono">' + badge + ' ' + (p.symbol || '—') + '</td>' +
+        '<td class="mono" style="font-size:11px">' + p.route + '</td>' +
+        '<td class="mono">' + AB.fmt(p.qty, 6) + '</td>' +
+        '<td class="mono ' + upnlC + '">' + upnlS + '</td>' +
+        '<td class="muted">' + opened + '</td></tr>';
+    }).join('');
   },
 
   // ── LIVE render ──────────────────────────────────────────────────────────
@@ -42,27 +112,7 @@ AB.pages.reports = {
     if (el('r_liveOpenCount'))  el('r_liveOpenCount').textContent  = ledger.length + ' open';
     if (el('r_liveLedgerCount')) el('r_liveLedgerCount').textContent = closed.length + ' closed · ' + ledger.length + ' open';
 
-    // Open hedges table
-    el('r_posBody').innerHTML = ledger.length
-      ? ledger.map(p => {
-          const sym   = p.symbol  || p.Symbol  || '—';
-          const lEx   = p.longExchange  || p.LongExchange  || '?';
-          const sEx   = p.shortExchange || p.ShortExchange || '?';
-          const qty   = p.baseQty || p.BaseQty || 0;
-          const upnl  = p.unrealizedPnlUsd ?? p.unrealizedPnl;
-          const upnlS = upnl != null ? AB.fmtUsd(upnl) : '—';
-          const upnlC = upnl != null ? (upnl >= 0 ? 'pos' : 'neg') : '';
-          const opened = (p.openedAt || p.OpenedAt)
-            ? new Date(p.openedAt || p.OpenedAt).toLocaleString() : '—';
-          return `<tr>
-            <td class="mono">${sym}</td>
-            <td class="mono" style="font-size:11px">${lEx} → ${sEx}</td>
-            <td class="mono">${AB.fmt(qty, 6)}</td>
-            <td class="mono ${upnlC}">${upnlS}</td>
-            <td class="muted">${opened}</td>
-          </tr>`;
-        }).join('')
-      : '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No open live hedges</td></tr>';
+    // Open hedges table filled by _renderOpenHedges (paper+ledger+exchange)
 
     // Live trade ledger (closed + open)
     el('r_tradeBody').innerHTML = allTrades.length
