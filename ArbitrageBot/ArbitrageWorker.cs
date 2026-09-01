@@ -273,16 +273,18 @@ public class ArbitrageWorker : BackgroundService
                 $"minOpen={_runtime.Snapshot.MinProfitPercent:F3}% requireRT={_runtime.Snapshot.FuturesRequireRoundTripEdge}");
         }
 
-        if (opps.Count > 0 && _options.PaperTrading && _options.PaperAutoExecute)
+        // Unified gates: same MinProfit/RT/full-fill for paper and live.
+        // Live orders ONLY if guard.CanPlaceOrders; otherwise DEMO paper on real books.
+        var autoExec = _options.PaperAutoExecute || _options.PaperTrading;
+        if (opps.Count > 0 && autoExec)
         {
-            // Professional paper: fill several hedges per cycle (until max positions / skips)
             var openedThisCycle = 0;
             var maxPerCycle = Math.Max(1, _options.FuturesMaxOpenPositions);
             foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.NetSpreadPercent))
             {
                 if (openedThisCycle >= maxPerCycle) break;
 
-                // Phase 3: real orders only when guard.CanPlaceOrders
+                // Real exchange orders only when Live fully enabled (not RO)
                 if (_liveGuard.CanPlaceOrders)
                 {
                     var liveReq = new LiveHedgeRequest

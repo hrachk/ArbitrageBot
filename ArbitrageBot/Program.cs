@@ -358,10 +358,46 @@ try
                   : Results.BadRequest(new { ok, message, status = guard.Status() });
     });
 
-    app.MapPost("/api/live/disable", (LiveTradingGuard guard) =>
+    app.MapPost("/api/live/disable", (LiveTradingGuard guard, IOptions<ArbitrageOptions> opt, RuntimeRiskConfig risk) =>
     {
         guard.Disable("api");
-        return Results.Ok(guard.Status());
+        // DEMO: same professional gates, paper wallet, real WS books
+        var o = opt.Value;
+        o.PaperTrading = true;
+        o.PaperAutoExecute = true;
+        o.LiveTradingEnabled = false;
+        risk.ApplyTrading(new TradingUiSettings
+        {
+            PaperTrading = true,
+            PaperAutoExecute = true,
+            MinProfitPercent = o.MinProfitPercent > 0 ? o.MinProfitPercent : 0.10m,
+            QuoteSize = o.QuoteSize > 0 ? o.QuoteSize : 100m,
+            FuturesPaperLeverage = o.FuturesPaperLeverage > 0 ? o.FuturesPaperLeverage : 5m,
+            FuturesMaxOpenPositions = o.FuturesMaxOpenPositions > 0 ? o.FuturesMaxOpenPositions : 2,
+            FuturesStopLossUsd = o.FuturesStopLossUsd,
+            FuturesDailyLossLimitUsd = o.FuturesDailyLossLimitUsd,
+            MaxNotionalUsd = o.FuturesMaxNotionalUsd > 0 ? o.FuturesMaxNotionalUsd : 100m,
+            MaxMarginUsagePercent = o.FuturesMaxMarginUsagePercent > 0 ? o.FuturesMaxMarginUsagePercent : 0.35m,
+            MaxHoldMinutes = 0,
+            CloseBelowNetPercent = o.FuturesCloseBelowNetPercent,
+            PaperCooldownMs = o.PaperCooldownMs > 0 ? o.PaperCooldownMs : 15000,
+            PaperRequireFullFill = true,
+            RequireRoundTripEdge = true,
+            IncludeFunding = o.FuturesIncludeFunding,
+            LiveEquityPerExchangeUsd = o.LiveEquityPerExchangeUsd > 0 ? o.LiveEquityPerExchangeUsd : 2500m,
+            LiveMarginUsageFraction = 0.35m,
+            LiveMaxNotionalUsd = o.LiveMaxNotionalUsd > 0 ? o.LiveMaxNotionalUsd : 100m,
+            LiveMaxOpenPositions = o.LiveMaxOpenPositions > 0 ? o.LiveMaxOpenPositions : 2,
+            LiveStopLossUsd = o.LiveStopLossUsd,
+            LiveDailyLossLimitUsd = o.LiveDailyLossLimitUsd
+        });
+        return Results.Ok(new
+        {
+            ok = true,
+            message = "Live disabled → DEMO paper auto-exec on real order books (same professional thresholds).",
+            status = guard.Status(),
+            mode = "PAPER"
+        });
     });
 
     app.MapPost("/api/live/kill", async (HttpRequest req, LiveTradingGuard guard) =>

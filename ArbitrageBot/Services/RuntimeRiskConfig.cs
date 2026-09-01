@@ -49,19 +49,37 @@ public sealed class RuntimeRiskConfig
             _opts.FuturesRequireRoundTripEdge = t.RequireRoundTripEdge;
             _opts.FuturesIncludeFunding = t.IncludeFunding;
 
-            // Live micro-account — NEVER overwrite LiveMaxNotional with QuoteSize
+            // Unified profile: Live uses the same size/risk as Paper unless explicitly overridden.
             if (t.LiveEquityPerExchangeUsd > 0)
                 _opts.LiveEquityPerExchangeUsd = t.LiveEquityPerExchangeUsd;
             if (t.LiveMarginUsageFraction > 0)
-                _opts.LiveMarginUsageFraction = Math.Clamp(t.LiveMarginUsageFraction, 0.2m, 0.85m);
-            if (t.LiveMaxNotionalUsd > 0)
-                _opts.LiveMaxNotionalUsd = t.LiveMaxNotionalUsd;
-            if (t.LiveMaxOpenPositions > 0)
-                _opts.LiveMaxOpenPositions = t.LiveMaxOpenPositions;
-            if (t.LiveStopLossUsd != 0)
-                _opts.LiveStopLossUsd = t.LiveStopLossUsd;
-            if (t.LiveDailyLossLimitUsd != 0)
-                _opts.LiveDailyLossLimitUsd = t.LiveDailyLossLimitUsd;
+                _opts.LiveMarginUsageFraction = Math.Clamp(t.LiveMarginUsageFraction, 0.15m, 0.85m);
+            else if (t.MaxMarginUsagePercent > 0)
+                _opts.LiveMarginUsageFraction = Math.Clamp(t.MaxMarginUsagePercent, 0.15m, 0.85m);
+
+            // One notional: QuoteSize / MaxNotional drives LiveMaxNotional
+            var unifiedNotional = t.LiveMaxNotionalUsd > 0 ? t.LiveMaxNotionalUsd
+                : (t.MaxNotionalUsd > 0 ? t.MaxNotionalUsd : t.QuoteSize);
+            if (unifiedNotional > 0)
+                _opts.LiveMaxNotionalUsd = unifiedNotional;
+            if (t.QuoteSize > 0 && _opts.FuturesMaxNotionalUsd <= 0)
+                _opts.FuturesMaxNotionalUsd = t.QuoteSize;
+            if (t.QuoteSize > 0)
+                _opts.FuturesMaxNotionalUsd = t.MaxNotionalUsd > 0 ? t.MaxNotionalUsd : t.QuoteSize;
+
+            var unifiedOpen = t.LiveMaxOpenPositions > 0 ? t.LiveMaxOpenPositions
+                : (t.FuturesMaxOpenPositions > 0 ? t.FuturesMaxOpenPositions : 2);
+            _opts.LiveMaxOpenPositions = unifiedOpen;
+
+            _opts.LiveStopLossUsd = t.LiveStopLossUsd != 0 ? t.LiveStopLossUsd : t.FuturesStopLossUsd;
+            _opts.LiveDailyLossLimitUsd = t.LiveDailyLossLimitUsd != 0 ? t.LiveDailyLossLimitUsd : t.FuturesDailyLossLimitUsd;
+
+            // Professional exits: MaxHoldMinutes 0 → no soft timer
+            if (t.MaxHoldMinutes == 0)
+            {
+                _opts.FuturesMaxHoldMinutes = 0;
+                _opts.FuturesMaxHoldSeconds = 0;
+            }
         }
     }
 

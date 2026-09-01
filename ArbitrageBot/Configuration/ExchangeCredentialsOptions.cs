@@ -33,30 +33,29 @@ public class TradingUiSettings
     public string StrategyMode { get; set; } = "FuturesCross";
     public bool PaperTrading { get; set; } = true;
     public bool PaperAutoExecute { get; set; } = true;
-    public decimal MinProfitPercent { get; set; } = 0.08m;
-    /// <summary>Scan / paper quote size (USDT). Live size uses equity formula, not this.</summary>
-    public decimal QuoteSize { get; set; } = 15m;
+    /// <summary>Min net open edge % after fees — same for PAPER and LIVE.</summary>
+    public decimal MinProfitPercent { get; set; } = 0.10m;
+    /// <summary>Notional per leg (USDT). Paper + Live share this (LiveMaxNotional synced).</summary>
+    public decimal QuoteSize { get; set; } = 100m;
     public decimal FuturesPaperLeverage { get; set; } = 5m;
     public int FuturesMaxOpenPositions { get; set; } = 2;
-    public decimal FuturesStopLossUsd { get; set; } = -2.5m;
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -8m;
-    public int MaxHoldMinutes { get; set; } = 12;
+    public decimal FuturesStopLossUsd { get; set; } = -12m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -40m;
+    /// <summary>0 = no soft hold timer (professional: exit on converge/TP/SL only).</summary>
+    public int MaxHoldMinutes { get; set; } = 0;
     public decimal CloseBelowNetPercent { get; set; } = 0.02m;
-    public decimal MaxMarginUsagePercent { get; set; } = 0.6m;
-    public decimal MaxNotionalUsd { get; set; } = 15m;
-    public int PaperCooldownMs { get; set; } = 12000;
+    public decimal MaxMarginUsagePercent { get; set; } = 0.35m;
+    public decimal MaxNotionalUsd { get; set; } = 100m;
+    public int PaperCooldownMs { get; set; } = 15000;
     public bool PaperRequireFullFill { get; set; } = true;
     public bool RequireRoundTripEdge { get; set; } = true;
     public bool IncludeFunding { get; set; } = true;
 
-    // ——— Live micro-account (default: ~$5 per exchange) ———
-    /// <summary>Free USDT assumed on EACH exchange for margin.</summary>
-    public decimal LiveEquityPerExchangeUsd { get; set; } = 5m;
-    /// <summary>Share of equity used as margin (0.6 → $3 of $5).</summary>
-    public decimal LiveMarginUsageFraction { get; set; } = 0.6m;
-    /// <summary>Hard cap on live leg notional USDT.</summary>
-    public decimal LiveMaxNotionalUsd { get; set; } = 15m;
-    public int LiveMaxOpenPositions { get; set; } = 1;
-    public decimal LiveStopLossUsd { get; set; } = -2.5m;
-    public decimal LiveDailyLossLimitUsd { get; set; } = -8m;
+    // ——— Live mirrors paper (one professional profile) ———
+    public decimal LiveEquityPerExchangeUsd { get; set; } = 2500m;
+    public decimal LiveMarginUsageFraction { get; set; } = 0.35m;
+    public decimal LiveMaxNotionalUsd { get; set; } = 100m;
+    public int LiveMaxOpenPositions { get; set; } = 2;
+    public decimal LiveStopLossUsd { get; set; } = -12m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -40m;
 }
