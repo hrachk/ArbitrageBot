@@ -302,9 +302,38 @@ public class FuturesPaperService : IFuturesPaperService
             foreach (var pos in _positions.ToList())
             {
                 var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
-                if (marks == null) continue;
+                if (marks == null || marks.Value.longBid <= 0 || marks.Value.shortAsk <= 0)
+                {
+                    // No live book → cannot manage risk. After 8 minutes orphan the row
+                    // (return locked margin, no fictional fill PnL) so UI stops lying "4 open".
+                    if ((DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= 8)
+                    {
+                        var marginEachOrphan = pos.LockedMarginUsd > 0
+                            ? pos.LockedMarginUsd
+                            : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
+                        _margin.AddOrUpdate(pos.LongExchange, marginEachOrphan, (_, v) => v + marginEachOrphan);
+                        _margin.AddOrUpdate(pos.ShortExchange, marginEachOrphan, (_, v) => v + marginEachOrphan);
+                        var tr = _trades.FirstOrDefault(x => x.Id == pos.TradeId);
+                        if (tr != null)
+                        {
+                            var idx = _trades.IndexOf(tr);
+                            _trades[idx] = tr with
+                            {
+                                ClosedAt = DateTime.UtcNow,
+                                IsOpen = false,
+                                Status = "Closed(stale-no-book)",
+                                Message = "Orphaned: no marks on both legs for 8m — margin returned, no exit fill",
+                                RealizedPnlUsd = 0
+                            };
+                        }
+                        _positions.Remove(pos);
+                        closed++;
+                        _logger.LogWarning("Paper orphan close {Sym} {L}/{S} — no book marks",
+                            pos.Symbol, pos.LongExchange, pos.ShortExchange);
+                    }
+                    continue;
+                }
                 var (longBid, shortAsk) = marks.Value;
-                if (longBid <= 0 || shortAsk <= 0) continue;
 
                 // Close: sell long at bid, buy back short at ask
                 var exitSpreadPct = (longBid - shortAsk) / shortAsk * 100m; // usually negative when converged
@@ -330,50 +359,55 @@ public class FuturesPaperService : IFuturesPaperService
                     ? (shortAsk - longBid) / longBid * 100m
                     : 0m;
 
-                var timedOut = false;
-                if (R.SpatialScalpMode && R.FuturesMaxHoldSeconds > 0)
-                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds >= R.FuturesMaxHoldSeconds;
-                else
-                {
-                    var holdMin = R.FuturesMaxHoldMinutes > 0 ? R.FuturesMaxHoldMinutes : 30;
-                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= holdMin;
-                }
-                var hardMin = R.FuturesHardMaxHoldMinutes > 0 ? R.FuturesHardMaxHoldMinutes : 20;
-                var hardTimedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= hardMin;
-
                 // Economic projected PnL (already includes open+close fees)
                 pos.UnrealizedPnlUsd = pnl;
+                pos.CurrentWidthPercent = currentWidth;
+
                 var stop = R.FuturesStopLossUsd;
                 var stopHit = stop < 0 && pnl <= stop;
 
-                // Converge signal: width collapsed
+                // ── PROFESSIONAL EXIT (spatial arb) ─────────────────────────
+                // NEVER close on a pure timer into red — that is forced -EV.
+                // Exit only when: (1) stop-loss, (2) take-profit / width converged in profit.
+                // Optional soft timer: ONLY if PnL >= scaled min TP (harvest green, not bleed).
+                // Hard max-hold: DISABLED unless FuturesHardMaxHoldMinutes > 0 explicitly.
+
                 var threshold = closeWhenNetBelowPercent;
                 var shrunkALot = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.35m;
                 var belowAbs = currentWidth <= threshold;
                 var widthConverged = belowAbs || shrunkALot;
 
-                // PROFESSIONAL EXIT: only take "converge" closes when PnL is actually green
-                // Min TP scales with size: at least config OR 0.12% of notional
                 var notional = pos.LongEntry * pos.BaseQty;
-                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.25m;
-                var minTpScaled = Math.Max(minTp, notional * 0.0012m);
+                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.30m;
+                // Need at least ~0.15% of notional after fees to cover noise
+                var minTpScaled = Math.Max(minTp, notional * 0.0015m);
                 var takeProfit = pnl >= minTpScaled;
-                // Converge only if clearly green (not kopeck noise)
-                var convergeProfit = widthConverged && pnl >= minTpScaled * 0.8m;
-                var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.65m;
+                var convergeProfit = widthConverged && pnl >= minTpScaled * 0.85m;
+                var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.55m;
 
-                // Soft timeout NEVER flattens a loser — that was the -EV factory.
-                // Green/flat after the clock → exit. Red → wait for TP or $ stop.
-                var timeoutGreen = timedOut && pnl >= 0m;
-                var timeoutHard = hardTimedOut; // inventory recycle after N minutes even if red
+                var timedOut = false;
+                if (R.FuturesMaxHoldSeconds > 0)
+                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds >= R.FuturesMaxHoldSeconds;
+                else if (R.FuturesMaxHoldMinutes > 0)
+                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesMaxHoldMinutes;
 
-                if (!stopHit && !timeoutGreen && !timeoutHard && !convergeProfit && !earlyTp)
+                // Soft clock: only exit if already at real TP — never "timeout at 0"
+                var timeoutHarvest = timedOut && pnl >= minTpScaled;
+
+                // Hard clock: off by default (0). If set, still require not worse than -tiny fee dust
+                // unless stop already hit. We do NOT force red exits.
+                var hardTimedOut = R.FuturesHardMaxHoldMinutes > 0
+                    && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesHardMaxHoldMinutes;
+                // Even hard hold only flattens if flat-or-green OR stop — never forced red dump
+                var hardExit = hardTimedOut && pnl >= 0m;
+
+                if (!stopHit && !convergeProfit && !earlyTp && !timeoutHarvest && !hardExit)
                     continue;
 
                 var reason = stopHit ? "stop-loss"
-                    : earlyTp || takeProfit && !timeoutHard ? "take-profit"
-                    : timeoutHard && pnl < 0 ? "timeout-hard"
-                    : timeoutGreen || timedOut ? "timeout"
+                    : earlyTp || (takeProfit && widthConverged) ? "take-profit"
+                    : convergeProfit ? "converge"
+                    : timeoutHarvest || hardExit ? "timeout-harvest"
                     : "converge";
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd
@@ -414,6 +448,7 @@ public class FuturesPaperService : IFuturesPaperService
                             "take-profit" => "Closed(tp)",
                             "timeout-hard" => "Closed(timeout-hard)",
                             "timeout" => "Closed(timeout)",
+                            "timeout-harvest" => "Closed(timeout-harvest)",
                             _ => "Closed(converge)"
                         },
                         Message = $"PnL {pnl:F4} (legs-fees) openFee={openFees:F2} closeFee={closeFees:F2} | {reason}"

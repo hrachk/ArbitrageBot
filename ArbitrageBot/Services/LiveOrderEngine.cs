@@ -323,18 +323,22 @@ public sealed class LiveOrderEngine
 
             var width = (shortAsk - longBid) / longBid * 100m;
             var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
-            var timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
             var stop = stopLossUsd < 0 && legsPnl <= stopLossUsd;
             var converged = width <= closeBelow;
-            // Do not flatten a live loser on the clock — only SL or green timeout
-            var timeoutGreen = timedOut && legsPnl >= 0m;
+            // Live professional: close on converge only if green enough, or SL.
+            // maxHoldMinutes only harvests green (never forced red dump).
+            var notional = pos.LongEntry * pos.BaseQty;
+            var minTp = Math.Max(0.30m, notional * 0.0015m);
+            var convergeProfit = converged && legsPnl >= minTp * 0.85m;
+            var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
+            var timeoutHarvest = timedOut && legsPnl >= minTp;
 
-            if (!converged && !timeoutGreen && !stop) continue;
+            if (!stop && !convergeProfit && !timeoutHarvest) continue;
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;
-            _logger.LogWarning("LIVE auto-close {Sym} width={W:F3} pnl~{P:F2} stop={S} timeout={T}",
-                pos.Symbol, width, legsPnl, stop, timedOut);
+            _logger.LogWarning("LIVE auto-close {Sym} width={W:F3} pnl~{P:F2} stop={S} harvest={T} converge={C}",
+                pos.Symbol, width, legsPnl, stop, timeoutHarvest, convergeProfit);
         }
         return closed;
     }

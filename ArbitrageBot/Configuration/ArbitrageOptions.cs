@@ -58,18 +58,18 @@ public class ArbitrageOptions
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
     public decimal OpenEdgeBufferPercent { get; set; } = 0.01m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 0.15m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.40m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
     public decimal MinGrossSpreadPercent { get; set; } = 0.22m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
-    public bool SpatialScalpMode { get; set; } = true;
+    public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
-    public int FuturesMaxHoldSeconds { get; set; } = 90;
+    public int FuturesMaxHoldSeconds { get; set; } = 0; // 0 = no soft timer
     /// <summary>
     /// After this many minutes, flatten even if red (inventory recycle). 0 = never force-red.
     /// Soft timeout never closes a losing hedge; only SL or this hard cap does.
     /// </summary>
-    public int FuturesHardMaxHoldMinutes { get; set; } = 20;
+    public int FuturesHardMaxHoldMinutes { get; set; } = 0; // 0 = never force-flat
     /// <summary>Close leg fees as fraction of taker (0.5 ≈ limit/maker exit).</summary>
     public decimal PaperCloseFeeFactor { get; set; } = 0.55m;
     /// <summary>Open only if gross is rising vs ~1s ago (avoid dying spreads).</summary>
