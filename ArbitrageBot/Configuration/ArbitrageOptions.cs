@@ -143,6 +143,9 @@ public class ArbitrageOptions
     /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
     public bool RequireDepthFullFill { get; set; } = true;
 
+    /// <summary>Leverage used for live orders (separate from paper simulation).</summary>
+    public decimal LivePaperLeverage { get; set; } = 3m;
+
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
 

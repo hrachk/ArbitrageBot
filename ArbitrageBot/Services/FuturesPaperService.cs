@@ -183,6 +183,11 @@ public class FuturesPaperService : IFuturesPaperService
 
             _analytics.RecordOpen(trade, opp);
 
+            // Determine position type based on funding delta at entry
+            var entryDelta = frShort.HasValue && frLong.HasValue
+                ? frShort.Value - frLong.Value : 0m;
+            var posType = entryDelta > 0.0001m ? "FundingArb" : "Spatial";
+
             _positions.Add(new FuturesPaperPosition
             {
                 Symbol = opp.Symbol,
@@ -197,7 +202,9 @@ public class FuturesPaperService : IFuturesPaperService
                     ? (opp.ShortBidVwap - opp.LongAskVwap) / opp.LongAskVwap * 100m
                     : 0m,
                 LockedMarginUsd = marginEach,
-                Leverage = leverage
+                Leverage = leverage,
+                EntryFundingDeltaRate = entryDelta,
+                PositionType = posType
             });
 
             _trades.Insert(0, trade);

@@ -210,26 +210,30 @@ public class ArbitrageWorker : BackgroundService
         // Map futures opps into existing opportunity list shape for UI reuse
         var mapped = opps.Select(o => new Models.ArbitrageOpportunity
         {
-            Symbol = o.Symbol,
-            BuyExchange = o.LongExchange,
-            SellExchange = o.ShortExchange,
-            BuyPriceTop = o.LongAskTop,
-            SellPriceTop = o.ShortBidTop,
-            BuyPriceVwap = o.LongAskVwap,
-            SellPriceVwap = o.ShortBidVwap,
-            QuoteSize = o.NotionalUsd,
-            FillBaseQty = o.BaseQty,
-            FullyFilled = o.FullyFilled,
-            IsExecutable = o.IsExecutable,
-            GrossSpreadTopPercent = o.GrossSpreadPercent,
+            Symbol                 = o.Symbol,
+            BuyExchange            = o.LongExchange,
+            SellExchange           = o.ShortExchange,
+            BuyPriceTop            = o.LongAskTop,
+            SellPriceTop           = o.ShortBidTop,
+            BuyPriceVwap           = o.LongAskVwap,
+            SellPriceVwap          = o.ShortBidVwap,
+            QuoteSize              = o.NotionalUsd,
+            FillBaseQty            = o.BaseQty,
+            FullyFilled            = o.FullyFilled,
+            IsExecutable           = o.IsExecutable,
+            GrossSpreadTopPercent  = o.GrossSpreadPercent,
             GrossSpreadVwapPercent = o.GrossSpreadPercent,
-            BuyFeePercent = o.LongFeePercent,
-            SellFeePercent = o.ShortFeePercent,
-            // UI/threshold display: open edge is primary; RT kept via Gross for now
-            NetProfitPercent = o.NetSpreadPercent,
-            NetProfitQuote = o.EstNetPnlUsd,
-            BuySlippagePercent = o.SlippagePercent / 2,
-            SellSlippagePercent = o.SlippagePercent / 2
+            BuyFeePercent          = o.LongFeePercent,
+            SellFeePercent         = o.ShortFeePercent,
+            NetProfitPercent       = o.NetSpreadPercent,
+            NetRoundTripPercent    = o.NetRoundTripPercent,
+            NetAfterFundingPercent = o.NetAfterFundingPercent,
+            NetProfitQuote         = o.EstNetPnlUsd,
+            BuySlippagePercent     = o.SlippagePercent / 2,
+            SellSlippagePercent    = o.SlippagePercent / 2,
+            LongFundingRate        = o.LongFundingRate,
+            ShortFundingRate       = o.ShortFundingRate,
+            ExpectedFundingPercent = o.ExpectedFundingPercent
         }).ToList();
 
         _state.UpdateScan(mapped, tickersBySymbol);
@@ -250,6 +254,29 @@ public class ArbitrageWorker : BackgroundService
         }
 
         _futPaper.TryCloseConverged(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent);
+
+        // ── HoldDecisionEngine: evaluate all open paper positions each cycle ──
+        foreach (var pos in _futPaper.GetOpenPositions())
+        {
+            var spreadPct = Marks(pos.Symbol, pos.LongExchange, pos.ShortExchange) is { } m && m.longBid > 0
+                ? (decimal?)((m.longBid - m.shortAsk) / m.shortAsk * 100m) : null;
+
+            var livePos = new ArbitrageBot.Models.LiveHedgePosition
+            {
+                Symbol         = pos.Symbol,
+                LongExchange   = pos.LongExchange,
+                ShortExchange  = pos.ShortExchange,
+                NotionalUsd    = pos.LongEntry * pos.BaseQty,
+                BaseQty        = pos.BaseQty,
+                OpenedAt       = pos.OpenedAt,
+                AccumulatedFundingPnlUsd = 0m,     // paper: funding credited separately
+                UnrealizedPricePnlUsd    = pos.UnrealizedPnlUsd
+            };
+            var decision = _holdEngine.Evaluate(livePos, spreadPct);
+            pos.LastHoldDecision = decision.ShouldHold ? "HOLD" : "CLOSE";
+            pos.LastHoldDecisionReason = decision.Reason;
+        }
+
         if (_liveGuard.CanPlaceOrders)
             await _liveExec.TryCloseConvergedAsync(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent, ct);
 
@@ -433,14 +460,20 @@ public class ArbitrageWorker : BackgroundService
                 p.BaseQty,
                 p.LongEntry,
                 p.ShortEntry,
-                unrealizedPnl = p.UnrealizedPnlUsd,
+                unrealizedPnl    = p.UnrealizedPnlUsd,
                 unrealizedPnlUsd = p.UnrealizedPnlUsd,
                 currentWidthPercent = p.CurrentWidthPercent,
-                entryWidthPercent = p.EntryWidthPercent,
-                openedAt = p.OpenedAt,
+                entryWidthPercent   = p.EntryWidthPercent,
+                openedAt   = p.OpenedAt,
                 holdSeconds = (int)(DateTime.UtcNow - p.OpenedAt).TotalSeconds,
-                leverage = p.Leverage,
-                lockedMarginUsd = p.LockedMarginUsd
+                leverage   = p.Leverage,
+                lockedMarginUsd = p.LockedMarginUsd,
+                // Funding & hold decision fields
+                positionType             = p.PositionType,
+                entryFundingDeltaRate    = p.EntryFundingDeltaRate,
+                accumulatedFundingPnlUsd = p.AccumulatedFundingPnlUsd,
+                lastHoldDecision         = p.LastHoldDecision,
+                lastHoldDecisionReason   = p.LastHoldDecisionReason
             }).ToList(),
             trades = trades.Select(t => new
             {
@@ -488,8 +521,14 @@ public class ArbitrageWorker : BackgroundService
         try { PushFundingRatesSnapshot(); } catch { /* ignore */ }
     }
 
+    private DateTime _lastFundingSnapshotUtc = DateTime.MinValue;
+
     private void PushFundingRatesSnapshot()
     {
+        // Funding data updates every 5 min — no need to rebuild snapshot every 900ms
+        if ((DateTime.UtcNow - _lastFundingSnapshotUtc).TotalSeconds < 60) return;
+        _lastFundingSnapshotUtc = DateTime.UtcNow;
+
         var exchanges = _state.Exchanges;
         var symbols   = _state.Symbols;
         if (symbols.Count == 0 || exchanges.Count == 0) return;

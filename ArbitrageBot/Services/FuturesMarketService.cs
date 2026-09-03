@@ -44,6 +44,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public IReadOnlyDictionary<string, string> ConnectionStatus => _status;
     public bool IsReady => _started && _tickers.Count > 0;
 
+    private readonly FundingRateService? _fundingSvc;
+
     public FuturesMarketService(
         IExchangeOrderBookFactory factory,
         IExchangeSocketClient socket,
@@ -51,7 +53,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         ActiveMarketContext markets,
         IOptions<ArbitrageOptions> options,
         ILogger<FuturesMarketService> logger,
-        RuntimeRiskConfig runtime)
+        RuntimeRiskConfig runtime,
+        FundingRateService? fundingSvc = null)
     {
         _factory = factory;
         _socket = socket;
@@ -60,6 +63,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         _options = options.Value;
         _logger = logger;
         _runtime = runtime;
+        _fundingSvc = fundingSvc;
 
         // Exchange-specific Shared API parameters for USDT-M perps
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
@@ -617,6 +621,13 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     private decimal? GetCachedFunding(string exchange, string symbol)
     {
+        // Prefer FundingRateService (5-min fresh, all exchanges)
+        if (_fundingSvc != null)
+        {
+            var snap = _fundingSvc.GetLatest(symbol, exchange);
+            if (snap != null) return snap.Rate;
+        }
+        // Fallback: own shared-API cache (45-min TTL)
         var key = $"{exchange}:{symbol}";
         if (_fundingCache.TryGetValue(key, out var e) && DateTime.UtcNow - e.at < FundingCacheTtl)
             return e.rate;

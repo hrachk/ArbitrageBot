@@ -72,5 +72,11 @@ public class FuturesPaperPosition
     public decimal CurrentWidthPercent { get; set; }
     public decimal LockedMarginUsd { get; set; }
     public decimal Leverage { get; set; }
+    // HoldDecisionEngine output — updated each scan cycle
+    public string? LastHoldDecision { get; set; }         // "HOLD" | "CLOSE"
+    public string? LastHoldDecisionReason { get; set; }
+    public decimal AccumulatedFundingPnlUsd { get; set; } // paper: simulated funding credits
+    public decimal EntryFundingDeltaRate { get; set; }    // delta at open
+    public string PositionType { get; set; } = "Spatial"; // "Spatial" | "FundingArb"
 }
 

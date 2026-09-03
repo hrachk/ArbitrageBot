@@ -261,20 +261,22 @@ public sealed class FundingRateService : BackgroundService
         IReadOnlyList<string> symbols, CancellationToken ct)
     {
         var client = _http.CreateClient("discovery");
-        // OKX requires per-instrument calls — batch by symbol
         var result = new List<FundingRateSnapshot>();
 
-        foreach (var sym in symbols.Take(20))  // limit to avoid hammering
+        foreach (var sym in symbols.Take(20))
         {
+            if (ct.IsCancellationRequested) break;
             try
             {
                 var instId = sym.Replace("USDT", "-USDT-SWAP", StringComparison.OrdinalIgnoreCase);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(5000); // 5s per symbol timeout (OKX slow from CIS)
                 var r = await client.GetAsync(
-                    $"https://www.okx.com/api/v5/public/funding-rate?instId={instId}", ct)
+                    $"https://www.okx.com/api/v5/public/funding-rate?instId={instId}", cts.Token)
                     .ConfigureAwait(false);
                 if (!r.IsSuccessStatusCode) continue;
 
-                var json = await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var json = await r.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
                 using var doc = JsonDocument.Parse(json);
                 if (!doc.RootElement.TryGetProperty("data", out var data)) continue;
 
@@ -297,9 +299,13 @@ public sealed class FundingRateService : BackgroundService
                         FetchedUtc:     DateTime.UtcNow
                     ));
                 }
-                await Task.Delay(50, ct).ConfigureAwait(false);  // 50ms between OKX calls
+                await Task.Delay(80, ct).ConfigureAwait(false); // 80ms between calls
             }
-            catch { /* skip this symbol */ }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("OKX funding skip {Sym}: {Err}", sym, ex.Message);
+            }
         }
         return result;
     }

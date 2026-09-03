@@ -100,16 +100,18 @@ public sealed class LiveOrderEngine
             ? req.Symbol[..^4] : req.Symbol;
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
 
-        var refPrice = req.LongAsk ?? req.ShortBid ?? 0m;
+        var refPrice  = req.LongAsk ?? req.ShortBid ?? 0m;
         var roundedQty = RoundBaseQty(req.BaseQty, refPrice);
-        var lev = req.Leverage > 0 ? req.Leverage : 3m;
+        // Use live-specific leverage (separate from paper leverage)
+        var lev = req.Leverage > 0 ? req.Leverage
+                : (Opt.LivePaperLeverage > 0 ? Opt.LivePaperLeverage : 3m);
 
         // Size for ~$5 free equity per exchange:
         // marginUsed = equity * usageFraction  →  notional = marginUsed * leverage
         // e.g. $5 * 0.6 * 5x = $15 notional per leg (~$3 margin on EACH venue)
         var opt = Opt;
-        var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 5m;
-        var usage = opt.LiveMarginUsageFraction > 0 ? opt.LiveMarginUsageFraction : 0.6m;
+        var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 500m;
+        var usage  = opt.LiveMarginUsageFraction  > 0 ? opt.LiveMarginUsageFraction  : 0.6m;
         usage = Math.Clamp(usage, 0.2m, 0.85m);
         var maxNotional = equity * lev * usage;
         if (opt.LiveMaxNotionalUsd > 0 && maxNotional > opt.LiveMaxNotionalUsd)
@@ -118,6 +120,8 @@ public sealed class LiveOrderEngine
             maxNotional = req.NotionalUsd;
         var absCap = equity * lev;
         if (maxNotional > absCap) maxNotional = absCap;
+        // Production floor: below $50 notional the economics don't work (fees eat all profit)
+        if (maxNotional < 50m) maxNotional = 50m;
 
         if (refPrice > 0)
         {
