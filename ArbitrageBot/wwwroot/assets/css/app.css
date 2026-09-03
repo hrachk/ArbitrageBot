@@ -99,6 +99,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .exec-btn.long:hover{background:rgba(38,212,138,.35)}
 .exec-btn.short{background:rgba(240,92,92,.2);color:var(--red);border:1px solid rgba(240,92,92,.4)}
 .exec-btn.short:hover{background:rgba(240,92,92,.35)}
+.exec-btn.live-order{background:rgba(248,113,113,.2);color:var(--red);border:1px solid rgba(248,113,113,.5)}
+.exec-btn.live-order:hover{background:rgba(248,113,113,.35)}
+.exec-btn.flash{animation:flashExec .5s ease}
+@keyframes flashExec{0%,100%{opacity:1}50%{background:rgba(38,212,138,.35)}}
 
 .pos-row{display:grid;grid-template-columns:70px 44px 60px 50px 56px;padding:4px 8px;border-bottom:1px solid rgba(28,42,58,.5);align-items:center;font-size:10px}
 .pos-sym{font-family:var(--mono);font-weight:700;color:var(--blue)}

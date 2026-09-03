@@ -187,6 +187,16 @@
                 </div>
                 <div class="ob-bids" id="ob-bids"></div>
               </div>
+              <!-- Bid/Ask depth imbalance bar -->
+              <div style="padding:6px 10px;border-top:1px solid var(--b)">
+                <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-bottom:3px">
+                  <span>Bid depth</span><span>Ask depth</span>
+                </div>
+                <div style="background:rgba(240,92,92,.2);border-radius:3px;height:5px;overflow:hidden">
+                  <div id="m_depthBar" style="height:100%;background:var(--green);border-radius:3px;width:50%;transition:width .4s"></div>
+                </div>
+                <div style="font-size:9px;color:var(--t3);margin-top:2px;text-align:center" id="m_depthLbl">—</div>
+              </div>
               <div style="padding:8px 10px;border-top:1px solid var(--b)">
                 <div style="font-size:9px;color:var(--t3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Arb opportunity</div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
@@ -258,13 +268,17 @@
 
             <div class="right-col">
               <div class="trade-tabs">
-                <button type="button" class="t-tab long active" id="longTab">Long</button>
-                <button type="button" class="t-tab short" id="shortTab">Short</button>
+                <button type="button" class="t-tab long active" id="longTab">▲ Long</button>
+                <button type="button" class="t-tab short" id="shortTab">▼ Short</button>
               </div>
               <div class="trade-form" id="tradeForm">
                 <div class="tf-row">
-                  <span class="tf-label">Exchange</span>
+                  <span class="tf-label">Long exchange</span>
                   <select id="m_tradeEx" style="background:var(--s2);border:1px solid var(--b);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px"></select>
+                </div>
+                <div class="tf-row">
+                  <span class="tf-label">Short exchange</span>
+                  <select id="m_tradeExShort" style="background:var(--s2);border:1px solid rgba(248,113,113,.3);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px"></select>
                 </div>
                 <div class="tf-row">
                   <span class="tf-label">Order type</span>
@@ -273,33 +287,51 @@
                   </select>
                 </div>
                 <div>
-                  <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span class="tf-label">Price (USDT)</span><span style="font-size:9px;color:var(--t3)" id="m_markLbl">Mark: —</span></div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                    <span class="tf-label">Price (USDT)</span>
+                    <span style="font-size:9px;color:var(--t3)" id="m_markLbl">Mark: —</span>
+                  </div>
                   <input class="tf-input" type="text" id="priceIn" readonly/>
                 </div>
                 <div>
-                  <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span class="tf-label">Size (USDT)</span><span style="font-size:9px;color:var(--t3);font-family:var(--mono)" id="sizeEst">—</span></div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                    <span class="tf-label">Size (USDT)</span>
+                    <span style="font-size:9px;color:var(--t3);font-family:var(--mono)" id="sizeEst">—</span>
+                  </div>
                   <input class="tf-input" type="text" id="sizeIn" value="100"/>
+                  <div style="display:flex;gap:3px;margin-top:4px" id="m_sizeBtns">
+                    <button type="button" class="pct-btn" data-size="50">$50</button>
+                    <button type="button" class="pct-btn" data-size="100">$100</button>
+                    <button type="button" class="pct-btn" data-size="250">$250</button>
+                    <button type="button" class="pct-btn" data-size="500">$500</button>
+                  </div>
                 </div>
                 <div>
                   <div style="margin-bottom:3px"><span class="tf-label">Leverage</span></div>
                   <div class="lev-btns" id="m_levBtns">
                     <button type="button" class="lev-btn" data-lev="1">1x</button>
-                    <button type="button" class="lev-btn" data-lev="3">3x</button>
-                    <button type="button" class="lev-btn active" data-lev="5">5x</button>
+                    <button type="button" class="lev-btn active" data-lev="3">3x</button>
+                    <button type="button" class="lev-btn" data-lev="5">5x</button>
                     <button type="button" class="lev-btn" data-lev="10">10x</button>
                   </div>
                 </div>
                 <div style="background:var(--s2);border:1px solid var(--b);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:3px">
-                  <div style="display:flex;justify-content:space-between"><span style="font-size:9px;color:var(--t3)">Margin</span><span style="font-family:var(--mono);font-size:10px" id="marginOut">—</span></div>
-                  <div style="display:flex;justify-content:space-between"><span style="font-size:9px;color:var(--t3)">Mode</span><span style="font-family:var(--mono);font-size:10px;color:var(--amber)">PAPER / RO</span></div>
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="font-size:9px;color:var(--t3)">Margin</span>
+                    <span style="font-family:var(--mono);font-size:10px" id="marginOut">—</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="font-size:9px;color:var(--t3)">Mode</span>
+                    <span style="font-family:var(--mono);font-size:10px" id="m_tradeMode">—</span>
+                  </div>
                 </div>
-                <button type="button" class="exec-btn long" id="execBtn" disabled title="Manual single-leg disabled — bot opens hedges">Hedge via bot only</button>
+                <button type="button" class="exec-btn long" id="execBtn">📄 Paper Hedge</button>
               </div>
               <div style="border-top:1px solid var(--b);padding:8px 10px">
-                <div style="font-size:9px;color:var(--t3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Hedge leg (auto)</div>
+                <div style="font-size:9px;color:var(--t3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Hedge preview</div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-                  <span style="font-size:10px;color:var(--t2)" id="m_hedgeHint">Select arb route</span>
-                  <span style="font-family:var(--mono);font-size:10px;color:var(--red)" id="m_hedgePx">—</span>
+                  <span style="font-size:10px;color:var(--t2)" id="m_hedgeHint">Select exchanges above</span>
+                  <span style="font-family:var(--mono);font-size:11px;font-weight:700" id="m_hedgePx">—</span>
                 </div>
               </div>
             </div>

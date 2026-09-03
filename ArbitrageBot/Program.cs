@@ -431,6 +431,86 @@ try
     app.MapGet("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
         Results.Ok(await live.VerifyCredentialsAsync(ct)));
 
+    // ── Manual hedge open (terminal UI) ─────────────────────────────────────
+    // Paper: open a manual hedge from the terminal UI
+    app.MapPost("/api/paper/hedge", async (HttpRequest req,
+        IFuturesPaperService paper, IFuturesMarketService futMarket,
+        RuntimeRiskConfig runtime) =>
+    {
+        var body = await req.ReadFromJsonAsync<ManualHedgeRequest>();
+        if (body == null) return Results.BadRequest(new { ok = false, error = "invalid body" });
+        var snap = runtime.Snapshot;
+        var books = futMarket.GetBookTickers(body.Symbol);
+        if (!books.TryGetValue(body.LongExchange, out var longBook) ||
+            !books.TryGetValue(body.ShortExchange, out var shortBook))
+            return Results.Ok(new { ok = false, error = "no live books for this route" });
+        var notional = body.NotionalUsd > 0 ? body.NotionalUsd : snap.QuoteSize;
+        var longAsk  = (decimal)(longBook.BestAsk > 0 ? longBook.BestAsk : 0);
+        var shortBid = (decimal)(shortBook.BestBid > 0 ? shortBook.BestBid : 0);
+        if (longAsk <= 0 || shortBid <= 0)
+            return Results.Ok(new { ok = false, error = "stale book prices" });
+        var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
+        var gross = (shortBid - longAsk) / longAsk * 100m;
+        var longFee  = snap.EstimatedTakerFees.GetValueOrDefault(body.LongExchange, 0.06m);
+        var shortFee = snap.EstimatedTakerFees.GetValueOrDefault(body.ShortExchange, 0.06m);
+        var opp = new ArbitrageBot.Models.FuturesOpportunity
+        {
+            Symbol       = body.Symbol,
+            LongExchange = body.LongExchange,
+            ShortExchange= body.ShortExchange,
+            LongAskVwap  = longAsk,
+            ShortBidVwap = shortBid,
+            LongAskTop   = longAsk,
+            ShortBidTop  = shortBid,
+            NotionalUsd  = notional,
+            BaseQty      = qty,
+            FullyFilled  = true,
+            IsExecutable = true,
+            GrossSpreadPercent   = gross,
+            NetSpreadPercent     = gross - longFee - shortFee,
+            NetRoundTripPercent  = gross - 2 * (longFee + shortFee),
+            LongFeePercent       = longFee,
+            ShortFeePercent      = shortFee,
+            EstNetPnlUsd         = (shortBid - longAsk) * qty - notional * (longFee + shortFee) / 100m
+        };
+        var trade = paper.TryOpen(opp);
+        return Results.Ok(new { ok = trade?.Status == "Open", status = trade?.Status, message = trade?.Message });
+    });
+
+    // Live: open a manual hedge (requires CanPlaceOrders)
+    app.MapPost("/api/live/hedge", async (HttpRequest req,
+        LiveTradingGuard guard, ILiveExecutionService live,
+        IFuturesMarketService futMarket, RuntimeRiskConfig runtime, CancellationToken ct) =>
+    {
+        if (!guard.CanPlaceOrders)
+            return Results.Ok(new { ok = false, error = "live orders not enabled" });
+        var body = await req.ReadFromJsonAsync<ManualHedgeRequest>();
+        if (body == null) return Results.BadRequest(new { ok = false, error = "invalid body" });
+        var snap = runtime.Snapshot;
+        var books = futMarket.GetBookTickers(body.Symbol);
+        if (!books.TryGetValue(body.LongExchange, out var longBook) ||
+            !books.TryGetValue(body.ShortExchange, out var shortBook))
+            return Results.Ok(new { ok = false, error = "no live books for this route" });
+        var notional = body.NotionalUsd > 0 ? body.NotionalUsd : snap.QuoteSize;
+        var longAsk  = (decimal)(longBook.BestAsk > 0 ? longBook.BestAsk : 0);
+        var shortBid = (decimal)(shortBook.BestBid > 0 ? shortBook.BestBid : 0);
+        if (longAsk <= 0) return Results.Ok(new { ok = false, error = "stale ask price" });
+        var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
+        var req2 = new ArbitrageBot.Models.LiveHedgeRequest
+        {
+            Symbol        = body.Symbol,
+            LongExchange  = body.LongExchange,
+            ShortExchange = body.ShortExchange,
+            BaseQty       = qty,
+            NotionalUsd   = notional,
+            LongAsk       = longAsk,
+            ShortBid      = shortBid,
+            Leverage      = body.Leverage > 0 ? body.Leverage : 3m
+        };
+        var result = await live.TryOpenHedgeAsync(req2, ct);
+        return Results.Ok(result);
+    });
+
     // Blazor terminal UI — root "/" = Dashboard
     //app.MapRazorComponents<ArbitrageBot.Components.App>()
     //    .AddInteractiveServerRenderMode();

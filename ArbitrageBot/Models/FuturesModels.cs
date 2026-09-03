@@ -80,3 +80,13 @@ public class FuturesPaperPosition
     public string PositionType { get; set; } = "Spatial"; // "Spatial" | "FundingArb"
 }
 
+
+// ── Manual hedge request from terminal UI ────────────────────────────────────
+public record ManualHedgeRequest
+{
+    public string Symbol { get; init; } = "";
+    public string LongExchange { get; init; } = "";
+    public string ShortExchange { get; init; } = "";
+    public decimal NotionalUsd { get; init; }
+    public decimal Leverage { get; init; }
+}
