@@ -544,7 +544,7 @@ public sealed class LiveOrderEngine
     /// when fill-estimate produces long fractional tails (e.g. ZKPUSDT).
     /// Uses refPrice when available for tiered precision; floors (never rounds up).
     /// </summary>
-    internal static decimal RoundBaseQty(decimal qty, decimal refPrice = 0)
+    public static decimal RoundBaseQty(decimal qty, decimal refPrice = 0)
     {
         if (qty <= 0) return 0;
 

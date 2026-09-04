@@ -1,6 +1,7 @@
 using ArbitrageBot;
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
+using ArbitrageBot.Models;
 using ArbitrageBot.Services;
 using CryptoClients.Net;
 using CryptoClients.Net.Interfaces;
@@ -445,8 +446,8 @@ try
             !books.TryGetValue(body.ShortExchange, out var shortBook))
             return Results.Ok(new { ok = false, error = "no live books for this route" });
         var notional = body.NotionalUsd > 0 ? body.NotionalUsd : snap.QuoteSize;
-        var longAsk  = (decimal)(longBook.BestAsk > 0 ? longBook.BestAsk : 0);
-        var shortBid = (decimal)(shortBook.BestBid > 0 ? shortBook.BestBid : 0);
+        var longAsk  = longBook.BestAsk;
+        var shortBid = shortBook.BestBid;
         if (longAsk <= 0 || shortBid <= 0)
             return Results.Ok(new { ok = false, error = "stale book prices" });
         var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
@@ -492,11 +493,11 @@ try
             !books.TryGetValue(body.ShortExchange, out var shortBook))
             return Results.Ok(new { ok = false, error = "no live books for this route" });
         var notional = body.NotionalUsd > 0 ? body.NotionalUsd : snap.QuoteSize;
-        var longAsk  = (decimal)(longBook.BestAsk > 0 ? longBook.BestAsk : 0);
-        var shortBid = (decimal)(shortBook.BestBid > 0 ? shortBook.BestBid : 0);
+        var longAsk  = longBook.BestAsk;
+        var shortBid = shortBook.BestBid;
         if (longAsk <= 0) return Results.Ok(new { ok = false, error = "stale ask price" });
         var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
-        var req2 = new ArbitrageBot.Models.LiveHedgeRequest
+        var req2 = new LiveHedgeRequest
         {
             Symbol        = body.Symbol,
             LongExchange  = body.LongExchange,
