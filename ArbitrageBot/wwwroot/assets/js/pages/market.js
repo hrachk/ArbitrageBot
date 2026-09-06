@@ -331,22 +331,29 @@ AB.pages.market = {
       const shortEx = o.shortExchange || o.sellExchange || '?';
       const sym  = (o.symbol || '').replace(/USDT$/i, '');
       const col  = net >= 0.3 ? 'var(--green)' : net >= 0.1 ? 'var(--amber)' : 'var(--t3)';
-      return `<div class="arb-row${hot ? ' hot' : ''}" data-sym="${o.symbol || ''}">
+      const bg   = hot ? 'rgba(38,212,138,.04)' : 'transparent';
+      return `<div class="arb-row" style="background:${bg}" data-sym="${o.symbol || ''}">
         <div>
-          <div class="arb-sym">${sym}</div>
-          <div class="arb-route">${longEx} → ${shortEx}</div>
+          <div class="arb-sym" style="font-size:13px">${sym}</div>
+          <div class="arb-route" style="font-size:10px;margin-top:2px">
+            🟢 ${longEx} → 🔴 ${shortEx}
+          </div>
         </div>
         <div style="text-align:right">
-          <div class="arb-edge" style="color:${col}">${net >= 0 ? '+' : ''}${net.toFixed(3)}%</div>
-          <div style="font-size:8px;color:var(--t3);font-family:var(--mono)">
+          <div class="arb-edge" style="color:${col};font-size:14px">
+            ${net >= 0 ? '+' : ''}${net.toFixed(3)}%
+          </div>
+          <div style="font-size:9px;color:var(--t3);font-family:var(--mono)">
             RT ${rt >= 0 ? '+' : ''}${rt.toFixed(3)}%${fund ? ' · F+' + fund.toFixed(3) + '%' : ''}
           </div>
         </div>
         <div style="text-align:center">
           ${hot
-            ? `<button type="button" class="arb-exec" data-pick="${o.symbol || ''}"
-                data-long="${longEx}" data-short="${shortEx}">Exec</button>`
-            : '<span style="color:var(--t3);font-size:9px">below</span>'}
+            ? `<button type="button" class="arb-exec" style="padding:5px 10px;font-size:11px"
+                data-pick="${o.symbol || ''}" data-long="${longEx}" data-short="${shortEx}">
+                Exec
+              </button>`
+            : `<span style="color:var(--t3);font-size:9px">ниже<br/>порога</span>`}
         </div>
         <div></div>
       </div>`;
@@ -433,27 +440,44 @@ AB.pages.market = {
     }
 
     if (!rows.length) {
-      el.innerHTML = '<div class="empty" style="padding:10px;color:var(--t3)">No open hedges</div>';
+      el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--t3)">
+        <div style="font-size:20px;margin-bottom:6px">📭</div>
+        <div style="font-size:11px">Нет открытых позиций</div>
+        <div style="font-size:10px;margin-top:4px">Открой хедж через панель справа или нажми Exec в сканере</div>
+      </div>`;
       return;
     }
     el.innerHTML = rows.map(p => {
-      const holdBg = p.hold === 'HOLD'
-        ? 'rgba(45,212,191,.15);color:var(--accent)'
-        : p.hold === 'CLOSE'
-          ? 'rgba(248,113,113,.15);color:var(--red)'
-          : 'transparent';
-      const typeBadge = p.source === 'live'
-        ? '<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:rgba(248,113,113,.15);color:var(--red)">LIVE</span>'
-        : '<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:rgba(56,189,248,.1);color:var(--t2)">PAPER</span>';
-      return `<div class="pos-row" style="grid-template-columns:60px 36px 52px 48px 28px 40px">
-        <span class="pos-sym">${String(p.sym || '').replace(/USDT$/i, '')}</span>
-        ${typeBadge}
-        <span class="mono" style="color:var(--t2);font-size:10px">${p.entry ? this.fmtP(p.entry) : '—'}</span>
-        <span class="mono" style="color:${p.upnl >= 0 ? 'var(--green)' : 'var(--red)'};font-size:10px">
-          ${p.upnl >= 0 ? '+' : ''}${p.upnl.toFixed(2)}
-        </span>
-        ${p.hold ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:${holdBg}">${p.hold.slice(0,1)}</span>` : '<span></span>'}
-        <button type="button" class="close-btn" data-close="${p.id || ''}" data-src="${p.source}">✕</button>
+      const holdCol = p.hold === 'HOLD'
+        ? 'rgba(45,212,191,.15)' : p.hold === 'CLOSE'
+        ? 'rgba(248,113,113,.15)' : 'transparent';
+      const srcBadge = p.source === 'live'
+        ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(248,113,113,.15);color:var(--red);font-weight:700">LIVE</span>'
+        : '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(56,189,248,.1);color:var(--t2)">PAPER</span>';
+      const typeLabel = p.type === 'FundingArb'
+        ? '<span style="font-size:9px;color:var(--accent)">💸 Funding</span>'
+        : '<span style="font-size:9px;color:var(--t3)">⚡ Spatial</span>';
+      return `<div style="padding:8px 10px;border-bottom:1px solid rgba(28,42,58,.6);background:${holdCol}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--blue)">${String(p.sym || '').replace(/USDT$/i, '')}</span>
+            ${srcBadge}
+            ${typeLabel}
+          </div>
+          <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:${p.upnl >= 0 ? 'var(--green)' : 'var(--red)'}">
+            ${p.upnl >= 0 ? '+' : ''}$${Math.abs(p.upnl).toFixed(2)}
+          </span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:10px;color:var(--t3)">
+            🟢 ${p.long || '?'} → 🔴 ${p.short || '?'}
+            ${p.entry ? ' · вход ' + this.fmtP(p.entry) : ''}
+          </div>
+          <div style="display:flex;gap:4px;align-items:center">
+            ${p.hold ? `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:${p.hold==='HOLD'?'rgba(45,212,191,.2)':'rgba(248,113,113,.2)'};color:${p.hold==='HOLD'?'var(--accent)':'var(--red)'}">${p.hold}</span>` : ''}
+            <button type="button" class="close-btn" style="padding:3px 8px;font-size:11px" data-close="${p.id || ''}" data-src="${p.source}">✕ Закрыть</button>
+          </div>
+        </div>
       </div>`;
     }).join('');
 
@@ -528,96 +552,145 @@ AB.pages.market = {
     const size   = parseFloat(sizeEl?.value) || 100;
     const books  = this.booksFor(data, this.selected);
     const longEx = document.getElementById('m_tradeEx')?.value || this.selectedEx;
+    const shortEx= document.getElementById('m_tradeExShort')?.value;
     const top    = books[longEx] || Object.values(books)[0];
     let mid = 0;
     if (top) mid = (Number(top.bestBid ?? 0) + Number(top.bestAsk ?? 0)) / 2;
 
     const symLabel = String(this.selected || '').replace(/USDT$/i, '');
+
+    // Update symbol display
+    const symEl = document.getElementById('m_tradeSym');
+    if (symEl) symEl.textContent = this.selected || '—';
+
     const est = document.getElementById('sizeEst');
     if (est && mid > 0) est.textContent = '≈ ' + (size / mid).toFixed(4) + ' ' + symLabel;
     const marg = document.getElementById('marginOut');
-    if (marg) marg.textContent = '$' + (size / (this.lev || 3)).toFixed(2);
+    if (marg) marg.textContent = '$' + (size / (this.lev || 3)).toFixed(2) + ' USDT';
 
-    // Exec button state
+    // Mode display
     const mode = (data.mode || 'PAPER').toUpperCase();
     const canLive  = mode === 'LIVE';
     const isLiveRo = mode.includes('LIVE');
-    const execBtn  = document.getElementById('execBtn');
-    const hedgeBtn = document.getElementById('hedgeBtn');
-    if (execBtn) {
-      const label = canLive
-        ? `⚡ Live Hedge — ${symLabel}`
-        : `📄 Paper Hedge — ${symLabel}`;
-      execBtn.textContent = label;
-      execBtn.disabled = false;
-      execBtn.className = 'exec-btn ' + (canLive ? 'live-order' : 'long');
-    }
-    if (hedgeBtn) {
-      hedgeBtn.style.display = isLiveRo && !canLive ? '' : 'none';
-    }
-
-    // Mode display in panel
     const modeEl = document.getElementById('m_tradeMode');
     if (modeEl) {
-      modeEl.textContent = canLive ? '🔴 LIVE ORDERS' : isLiveRo ? '🟡 Read-only' : '📄 PAPER';
-      modeEl.style.color = canLive ? 'var(--red)' : isLiveRo ? 'var(--amber)' : 'var(--t2)';
+      if (canLive)
+        modeEl.innerHTML = 'Режим: <b style="color:var(--red)">🔴 LIVE — РЕАЛЬНЫЕ ДЕНЬГИ</b>';
+      else if (isLiveRo)
+        modeEl.innerHTML = 'Режим: <b style="color:var(--amber)">🟡 LIVE Read-Only</b> — ордера выключены';
+      else
+        modeEl.innerHTML = 'Режим: <b style="color:var(--accent)">📄 PAPER</b> — симуляция без реальных ордеров';
     }
 
-    // Hedge leg preview
-    const shortBooks = books;
-    const shortEx = document.getElementById('m_tradeExShort')?.value;
-    if (shortEx && books[shortEx]) {
-      const sb = Number(books[shortEx].bestBid ?? 0);
-      const lb = mid;
-      const hintEl = document.getElementById('m_hedgeHint');
-      const hintPx = document.getElementById('m_hedgePx');
-      if (hintEl) hintEl.textContent = (shortEx || '?') + ' SHORT @ ≈ ' + (sb ? this.fmtP(sb) : '—');
-      if (hintPx && lb > 0 && sb > 0) {
-        const gross = (sb - lb) / lb * 100;
+    // Exec button label
+    const execBtn = document.getElementById('execBtn');
+    const hintEl  = document.getElementById('m_execHint');
+    if (execBtn) {
+      if (canLive) {
+        execBtn.textContent = '🔴 Открыть LIVE Hedge — РЕАЛЬНЫЕ ДЕНЬГИ';
+        execBtn.className = 'exec-btn live-order';
+        if (hintEl) hintEl.innerHTML = '⚠️ Это реальная сделка с реальными деньгами на биржах!';
+      } else {
+        execBtn.textContent = '📄 Открыть Paper Hedge';
+        execBtn.className = 'exec-btn long';
+        if (hintEl) hintEl.innerHTML = 'В PAPER режиме сделки симулируются без реальных ордеров.<br/>Переключись в LIVE в Settings для реальных операций.';
+      }
+      execBtn.disabled = false;
+    }
+
+    // Hedge preview — спред между выбранными биржами
+    if (shortEx && books[shortEx] && mid > 0) {
+      const sb    = Number(books[shortEx].bestBid ?? 0);
+      const lb    = mid;
+      const gross = lb > 0 && sb > 0 ? ((sb - lb) / lb * 100) : null;
+      const hintEl2 = document.getElementById('m_hedgeHint');
+      const hintPx  = document.getElementById('m_hedgePx');
+      if (hintEl2) hintEl2.textContent = longEx + ' ask ' + (lb ? this.fmtP(lb) : '—') + '  /  ' + shortEx + ' bid ' + (sb ? this.fmtP(sb) : '—');
+      if (hintPx && gross != null) {
         hintPx.textContent = (gross >= 0 ? '+' : '') + gross.toFixed(3) + '%';
-        hintPx.style.color = gross >= 0.1 ? 'var(--green)' : 'var(--t3)';
+        hintPx.style.color = gross >= 0.1 ? 'var(--green)' : gross >= 0 ? 'var(--amber)' : 'var(--red)';
+      } else if (hintPx) {
+        hintPx.textContent = '—';
+        hintPx.style.color = 'var(--t3)';
       }
     }
   },
 
   // ── Execute hedge (paper or live) ─────────────────────────────────────────
   async executeHedge(data) {
-    const mode   = (data?.mode || (AB.state.snapshot || {}).mode || 'PAPER').toUpperCase();
+    const mode    = ((data?.mode || (AB.state.snapshot || {}).mode) || 'PAPER').toUpperCase();
     const canLive = mode === 'LIVE';
-    const sym    = this.selected;
-    const longEx = document.getElementById('m_tradeEx')?.value || this.selectedEx;
-    const shortEx= document.getElementById('m_tradeExShort')?.value;
-    const sizeRaw= parseFloat(document.getElementById('sizeIn')?.value) || 0;
+    const sym     = this.selected;
+    const longEx  = document.getElementById('m_tradeEx')?.value;
+    const shortEx = document.getElementById('m_tradeExShort')?.value;
+    const sizeRaw = parseFloat(document.getElementById('sizeIn')?.value) || 0;
 
-    if (!sym)    { this.showToast('✗ No symbol selected'); return; }
-    if (!shortEx){ this.showToast('✗ Select short exchange'); return; }
-    if (longEx === shortEx) { this.showToast('✗ Long and short exchanges must differ'); return; }
-    if (sizeRaw < 5) { this.showToast('✗ Size too small (min $5)'); return; }
+    // Clear validation
+    if (!sym) {
+      this.showToast('✗ Выбери символ (например XRPUSDT) в верхней панели');
+      return;
+    }
+    if (!longEx) {
+      this.showToast('✗ Выбери биржу для LONG (покупка)');
+      return;
+    }
+    if (!shortEx) {
+      this.showToast('✗ Выбери биржу для SHORT (продажа)');
+      return;
+    }
+    if (longEx === shortEx) {
+      this.showToast('✗ LONG и SHORT биржи должны быть разными');
+      return;
+    }
+    if (sizeRaw < 5) {
+      this.showToast('✗ Минимальный размер $5 USDT');
+      return;
+    }
 
     const btn = document.getElementById('execBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+    const orig = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Отправляем…'; }
 
     try {
       const body = {
-        symbol:       sym,
-        longExchange: longEx,
-        shortExchange:shortEx,
-        notionalUsd:  sizeRaw,
-        leverage:     this.lev
+        symbol:        sym,
+        longExchange:  longEx,
+        shortExchange: shortEx,
+        notionalUsd:   sizeRaw,
+        leverage:      this.lev
       };
       const url = canLive ? '/api/live/hedge' : '/api/paper/hedge';
       const r   = await AB.api.post(url, body);
+
       if (r.ok !== false) {
-        this.showToast(`✓ Hedge opened: ${longEx} LONG / ${shortEx} SHORT — $${sizeRaw}`);
+        const modeLabel = canLive ? 'LIVE' : 'Paper';
+        this.showToast(`✓ ${modeLabel} хедж открыт: ${longEx} LONG / ${shortEx} SHORT · $${sizeRaw}`);
         if (AB.refreshSnapshot) AB.refreshSnapshot();
       } else {
-        this.showToast('✗ ' + (r.error || r.message || 'open failed'));
+        // User-friendly error messages
+        const err = r.error || r.message || 'неизвестная ошибка';
+        let friendly = err;
+        if (err.includes('stale book'))
+          friendly = 'Данные стакана устарели — подожди 1-2 секунды и попробуй снова';
+        else if (err.includes('no live books'))
+          friendly = `Нет данных по ${sym} на ${longEx} или ${shortEx} — выбери другую биржу`;
+        else if (err.includes('not enabled'))
+          friendly = 'Live ордера выключены — включи в Settings → ШАГ 1';
+        else if (err.includes('maxOpen') || err.includes('MaxOpen'))
+          friendly = 'Достигнут лимит открытых позиций — закрой существующие';
+        this.showToast('✗ ' + friendly);
       }
     } catch (err) {
-      this.showToast('✗ ' + (err.message || 'request failed'));
+      const msg = err.message || String(err);
+      let friendly = msg;
+      if (msg.includes('NetworkError') || msg.includes('fetch'))
+        friendly = 'Нет связи с сервером — проверь что бот запущен';
+      this.showToast('✗ ' + friendly);
     } finally {
-      if (btn) { btn.disabled = false; }
-      this.updateTradePanel(AB.state.snapshot || {});
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = orig || '📄 Открыть Paper Hedge';
+      }
     }
   },
 
@@ -741,14 +814,19 @@ AB.pages.market = {
   // ── Toast notification ────────────────────────────────────────────────────
   showToast(msg) {
     const t = document.getElementById('toast');
-    if (!t) return;
-    const isOk = msg.startsWith('✓');
+    if (!t) { console.log('[Toast]', msg); return; }
+    const isOk  = msg.startsWith('✓');
+    const isWarn= msg.startsWith('⚠');
     t.textContent = msg;
-    t.style.borderColor = isOk ? 'var(--green)' : 'var(--red)';
-    t.style.color       = isOk ? 'var(--green)' : 'var(--red)';
+    t.style.borderColor   = isOk ? 'var(--green)' : isWarn ? 'var(--amber)' : 'var(--red)';
+    t.style.color         = isOk ? 'var(--green)' : isWarn ? 'var(--amber)' : 'var(--red)';
+    t.style.background    = isOk ? 'rgba(38,212,138,.08)' : isWarn ? 'rgba(251,191,36,.08)' : 'rgba(240,92,92,.08)';
+    t.style.fontSize      = '13px';
+    t.style.maxWidth      = '340px';
+    t.style.padding       = '10px 16px';
     t.classList.add('show');
     clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+    this._toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
   },
 
   // ── Bind events once ──────────────────────────────────────────────────────

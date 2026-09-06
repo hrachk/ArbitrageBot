@@ -135,7 +135,7 @@ public class ArbitrageOptions
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
     public int MinSpreadPersistMs { get; set; } = 250;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
-    public int MaxBookAgeMs { get; set; } = 400;
+    public int MaxBookAgeMs { get; set; } = 3000;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
     public int MaxLegsPerVenue { get; set; } = 3;
     /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>

@@ -159,6 +159,7 @@
       </section>
       <!-- MARKET: multi-exchange terminal 1:1 -->
       <section class="page" data-page="market">
+        <!-- ══ TERMINAL TOP BAR ══ -->
         <div class="terminal">
           <div class="topbar">
             <div class="tb-left">
@@ -172,44 +173,54 @@
               <span class="mode-pill ro" id="m_modePill">PAPER</span>
             </div>
           </div>
+
+          <!-- ══ MAIN LAYOUT ══ -->
           <div class="layout">
+
+            <!-- LEFT: Order book -->
             <div class="left-col">
               <div class="panel-hd">
-                <span class="ph-title">Order book</span>
+                <span class="ph-title">📖 Стакан заявок</span>
                 <span class="ph-sub" id="obSym">—</span>
               </div>
+              <!-- Exchange tabs -->
               <div class="ex-tabs" id="m_exTabs"></div>
+              <!-- Asks -->
               <div class="ob-wrap">
                 <div class="ob-asks" id="ob-asks"></div>
+                <!-- Mid price -->
                 <div class="ob-mid">
                   <span class="ob-price" id="ob-mid-price">—</span>
-                  <span class="ob-spread" id="ob-spread">spd —</span>
+                  <span class="ob-spread" id="ob-spread">спред —</span>
                 </div>
+                <!-- Bids -->
                 <div class="ob-bids" id="ob-bids"></div>
               </div>
-              <!-- Bid/Ask depth imbalance bar -->
+              <!-- Bid/Ask imbalance bar -->
               <div style="padding:6px 10px;border-top:1px solid var(--b)">
                 <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-bottom:3px">
-                  <span>Bid depth</span><span>Ask depth</span>
+                  <span>🟢 Покупатели</span><span>Продавцы 🔴</span>
                 </div>
-                <div style="background:rgba(240,92,92,.2);border-radius:3px;height:5px;overflow:hidden">
-                  <div id="m_depthBar" style="height:100%;background:var(--green);border-radius:3px;width:50%;transition:width .4s"></div>
+                <div style="background:rgba(240,92,92,.25);border-radius:3px;height:6px;overflow:hidden">
+                  <div id="m_depthBar" style="height:100%;background:var(--green);border-radius:3px;width:50%;transition:width .5s"></div>
                 </div>
                 <div style="font-size:9px;color:var(--t3);margin-top:2px;text-align:center" id="m_depthLbl">—</div>
               </div>
-              <div style="padding:8px 10px;border-top:1px solid var(--b)">
-                <div style="font-size:9px;color:var(--t3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Arb opportunity</div>
-                <div style="display:flex;justify-content:space-between;align-items:center">
-                  <div>
-                    <div style="font-size:10px;color:var(--t2)" id="m_liveRoute">—</div>
-                    <div style="font-family:var(--mono);font-size:13px;font-weight:800;color:var(--green)" id="liveEdge">—</div>
-                  </div>
-                  <button type="button" class="arb-exec" id="m_oneClick" disabled>1-click</button>
-                </div>
+              <!-- Best arb for this symbol -->
+              <div style="padding:10px;border-top:1px solid var(--b)">
+                <div style="font-size:10px;font-weight:700;color:var(--t2);margin-bottom:6px">⚡ Лучший арбитраж</div>
+                <div style="font-size:11px;color:var(--t2);margin-bottom:2px" id="m_liveRoute">Нет данных</div>
+                <div style="font-family:var(--mono);font-size:18px;font-weight:800;color:var(--green);margin-bottom:8px" id="liveEdge">—</div>
+                <button type="button" class="arb-exec" id="m_oneClick" disabled
+                  style="width:100%;padding:7px;font-size:12px;font-weight:700">
+                  ⚡ Открыть хедж одним кликом
+                </button>
               </div>
             </div>
 
+            <!-- CENTER: Chart + panels -->
             <div class="center-col">
+              <!-- Chart area -->
               <div class="chart-area" style="position:relative;overflow:hidden">
                 <div class="chart-hd">
                   <div>
@@ -217,121 +228,141 @@
                     <div style="display:flex;align-items:baseline;gap:8px">
                       <span class="price-big" id="chartPrice">—</span>
                       <span class="price-chg" id="chartChg" style="color:var(--t3)">—</span>
-                      <span style="font-size:10px;color:var(--t3);font-family:var(--mono)" id="m_chartSrc"></span>
                     </div>
                   </div>
-                  <div class="tf-btns" id="m_tfBtns">
-                    <button type="button" class="tf-btn" data-tf="1">1m</button>
-                    <button type="button" class="tf-btn" data-tf="5">5m</button>
-                    <button type="button" class="tf-btn active" data-tf="15">15m</button>
-                    <button type="button" class="tf-btn" data-tf="60">1h</button>
-                    <button type="button" class="tf-btn" data-tf="240">4h</button>
-                  </div>
+                  <div style="font-size:10px;color:var(--t3)">Сравнение цен по биржам в реальном времени</div>
                 </div>
-                <div class="ex-compare" id="exCompare"></div>
+                <div class="ex-compare" id="exCompare" style="position:absolute;top:52px;left:10px;z-index:2"></div>
                 <div style="position:absolute;inset:56px 0 0 0">
                   <canvas id="mainChart" style="width:100%;height:100%;display:block"></canvas>
                 </div>
               </div>
+
+              <!-- Bottom 3 panels -->
               <div class="bottom-area">
+
+                <!-- Arb scanner -->
                 <div class="bottom-panel">
-                  <div class="panel-hd"><span class="ph-title">Arb scanner — live</span><span class="ph-sub" id="arbCount">—</span></div>
+                  <div class="panel-hd">
+                    <span class="ph-title">🔍 Арбитражные возможности</span>
+                    <span class="ph-sub" id="arbCount">—</span>
+                  </div>
+                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
+                    Net% = прибыль после комиссий открытия · RT% = после всех комиссий · Нажми <b>Exec</b> чтобы открыть
+                  </div>
                   <div id="arbList" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
                 </div>
+
+                <!-- Open positions -->
                 <div class="bottom-panel">
-                  <div class="panel-hd"><span class="ph-title">Open positions</span><span class="ph-sub" id="m_posSub">hedges</span></div>
-                  <div style="display:grid;grid-template-columns:70px 44px 60px 50px 56px;padding:3px 8px;border-bottom:1px solid var(--b)">
-                    <span style="font-size:9px;color:var(--t3)">Symbol</span>
-                    <span style="font-size:9px;color:var(--t3)">Side</span>
-                    <span style="font-size:9px;color:var(--t3)">Entry</span>
-                    <span style="font-size:9px;color:var(--t3)">uPnL</span>
-                    <span></span>
+                  <div class="panel-hd">
+                    <span class="ph-title">📊 Открытые позиции</span>
+                    <span class="ph-sub" id="m_posSub">—</span>
+                  </div>
+                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
+                    Реализованный PnL: <b id="m_posRealized" style="color:var(--t2)">—</b>
+                    &nbsp;·&nbsp; нажми ✕ чтобы закрыть позицию
                   </div>
                   <div id="posTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
-                  <div style="padding:6px 10px;border-top:1px solid var(--b);display:flex;justify-content:space-between;align-items:center">
-                    <span style="font-size:9px;color:var(--t3)">Realized</span>
-                    <span style="font-family:var(--mono);font-size:11px;font-weight:700" id="m_posRealized">—</span>
-                  </div>
                 </div>
+
+                <!-- Funding rates -->
                 <div class="bottom-panel">
-                  <div class="panel-hd"><span class="ph-title">Funding rates</span><span class="ph-sub">5 min poll</span></div>
-                  <div style="display:grid;grid-template-columns:70px 50px 50px 1fr;padding:3px 10px;border-bottom:1px solid var(--b)">
-                    <span style="font-size:9px;color:var(--t3)">Pair</span>
-                    <span style="font-size:9px;color:var(--t3)">Delta</span>
-                    <span style="font-size:9px;color:var(--t3)">APR</span>
-                    <span style="font-size:9px;color:var(--t3)">Intensity</span>
+                  <div class="panel-hd">
+                    <span class="ph-title">💸 Funding rates</span>
+                    <span class="ph-sub">каждые 5 мин · APR = годовая доходность</span>
+                  </div>
+                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
+                    Delta = получаем(шорт) − платим(лонг) · нажми на строку чтобы выбрать пару
                   </div>
                   <div id="fundTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
                 </div>
+
               </div>
             </div>
 
+            <!-- RIGHT: Trade panel -->
             <div class="right-col">
-              <div class="trade-tabs">
-                <button type="button" class="t-tab long active" id="longTab">▲ Long</button>
-                <button type="button" class="t-tab short" id="shortTab">▼ Short</button>
+              <div style="padding:10px 12px;border-bottom:1px solid var(--b)">
+                <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px">📋 Открыть хедж вручную</div>
+                <div style="font-size:10px;color:var(--t3)">Хедж = LONG на одной бирже + SHORT на другой одновременно</div>
+                <div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(0,0,0,.25);font-size:11px" id="m_tradeMode">
+                  Режим: <b>📄 PAPER</b>
+                </div>
               </div>
+
               <div class="trade-form" id="tradeForm">
-                <div class="tf-row">
-                  <span class="tf-label">Long exchange</span>
-                  <select id="m_tradeEx" style="background:var(--s2);border:1px solid var(--b);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px"></select>
+                <!-- Symbol display -->
+                <div style="padding:4px 0">
+                  <div class="tf-label" style="margin-bottom:3px">Символ (пара)</div>
+                  <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--blue)" id="m_tradeSym">—</div>
                 </div>
-                <div class="tf-row">
-                  <span class="tf-label">Short exchange</span>
-                  <select id="m_tradeExShort" style="background:var(--s2);border:1px solid rgba(248,113,113,.3);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px"></select>
+
+                <!-- Long exchange -->
+                <div>
+                  <div class="tf-label" style="margin-bottom:3px">🟢 LONG биржа (покупаем)</div>
+                  <select id="m_tradeEx" style="width:100%;background:rgba(38,212,138,.08);border:1px solid rgba(38,212,138,.3);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px;font-weight:600"></select>
                 </div>
-                <div class="tf-row">
-                  <span class="tf-label">Order type</span>
-                  <select id="m_ordType" style="background:var(--s2);border:1px solid var(--b);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px">
-                    <option>Market</option><option>Limit</option>
-                  </select>
+
+                <!-- Short exchange -->
+                <div>
+                  <div class="tf-label" style="margin-bottom:3px">🔴 SHORT биржа (продаём)</div>
+                  <select id="m_tradeExShort" style="width:100%;background:rgba(240,92,92,.08);border:1px solid rgba(240,92,92,.3);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px;font-weight:600"></select>
                 </div>
+
+                <!-- Size -->
                 <div>
                   <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                    <span class="tf-label">Price (USDT)</span>
-                    <span style="font-size:9px;color:var(--t3)" id="m_markLbl">Mark: —</span>
+                    <span class="tf-label">💵 Размер позиции (USDT)</span>
+                    <span style="font-size:10px;color:var(--accent);font-family:var(--mono)" id="sizeEst">—</span>
                   </div>
-                  <input class="tf-input" type="text" id="priceIn" readonly/>
+                  <input class="tf-input" type="number" id="sizeIn" value="100" min="5"
+                    style="font-size:14px;font-weight:700;text-align:left;padding:8px"/>
+                  <div style="display:flex;gap:4px;margin-top:5px" id="m_sizeBtns">
+                    <button type="button" class="pct-btn" data-size="50" style="font-size:11px">$50</button>
+                    <button type="button" class="pct-btn" data-size="100" style="font-size:11px">$100</button>
+                    <button type="button" class="pct-btn" data-size="250" style="font-size:11px">$250</button>
+                    <button type="button" class="pct-btn" data-size="500" style="font-size:11px">$500</button>
+                  </div>
                 </div>
+
+                <!-- Leverage -->
                 <div>
-                  <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                    <span class="tf-label">Size (USDT)</span>
-                    <span style="font-size:9px;color:var(--t3);font-family:var(--mono)" id="sizeEst">—</span>
-                  </div>
-                  <input class="tf-input" type="text" id="sizeIn" value="100"/>
-                  <div style="display:flex;gap:3px;margin-top:4px" id="m_sizeBtns">
-                    <button type="button" class="pct-btn" data-size="50">$50</button>
-                    <button type="button" class="pct-btn" data-size="100">$100</button>
-                    <button type="button" class="pct-btn" data-size="250">$250</button>
-                    <button type="button" class="pct-btn" data-size="500">$500</button>
+                  <div class="tf-label" style="margin-bottom:3px">⚙️ Плечо (множитель)</div>
+                  <div class="lev-btns" id="m_levBtns" style="gap:5px">
+                    <button type="button" class="lev-btn" data-lev="1" style="flex:1;padding:6px;font-size:12px">1×</button>
+                    <button type="button" class="lev-btn active" data-lev="3" style="flex:1;padding:6px;font-size:12px">3×</button>
+                    <button type="button" class="lev-btn" data-lev="5" style="flex:1;padding:6px;font-size:12px">5×</button>
+                    <button type="button" class="lev-btn" data-lev="10" style="flex:1;padding:6px;font-size:12px">10×</button>
                   </div>
                 </div>
-                <div>
-                  <div style="margin-bottom:3px"><span class="tf-label">Leverage</span></div>
-                  <div class="lev-btns" id="m_levBtns">
-                    <button type="button" class="lev-btn" data-lev="1">1x</button>
-                    <button type="button" class="lev-btn active" data-lev="3">3x</button>
-                    <button type="button" class="lev-btn" data-lev="5">5x</button>
-                    <button type="button" class="lev-btn" data-lev="10">10x</button>
+
+                <!-- Summary box -->
+                <div style="background:rgba(0,0,0,.25);border:1px solid var(--b);border-radius:7px;padding:10px">
+                  <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                    <span style="font-size:11px;color:var(--t3)">Маржа на биржу</span>
+                    <span style="font-family:var(--mono);font-size:12px;font-weight:700" id="marginOut">—</span>
                   </div>
-                </div>
-                <div style="background:var(--s2);border:1px solid var(--b);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:3px">
-                  <div style="display:flex;justify-content:space-between">
-                    <span style="font-size:9px;color:var(--t3)">Margin</span>
-                    <span style="font-family:var(--mono);font-size:10px" id="marginOut">—</span>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                    <span style="font-size:11px;color:var(--t3)">Текущий спред</span>
+                    <span style="font-family:var(--mono);font-size:13px;font-weight:800" id="m_hedgePx">—</span>
                   </div>
                   <div style="display:flex;justify-content:space-between">
-                    <span style="font-size:9px;color:var(--t3)">Mode</span>
-                    <span style="font-family:var(--mono);font-size:10px" id="m_tradeMode">—</span>
+                    <span style="font-size:11px;color:var(--t3)">Long / Short</span>
+                    <span style="font-size:11px;color:var(--t2)" id="m_hedgeHint">выбери биржи выше</span>
                   </div>
                 </div>
-                <button type="button" class="exec-btn long" id="execBtn">📄 Paper Hedge</button>
-              </div>
-              <div style="border-top:1px solid var(--b);padding:8px 10px">
-                <div style="font-size:9px;color:var(--t3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">Hedge preview</div>
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-                  <span style="font-size:10px;color:var(--t2)" id="m_hedgeHint">Select exchanges above</span>
-                  <span style="font-family:var(--mono);font-size:11px;font-weight:700" id="m_hedgePx">—</span>
+
+                <!-- EXECUTE BUTTON -->
+                <button type="button" class="exec-btn long" id="execBtn"
+                  style="font-size:14px;padding:12px;margin-top:2px">
+                  📄 Открыть Paper Hedge
+                </button>
+
+                <!-- Hint text -->
+                <div id="m_execHint" style="font-size:10px;color:var(--t3);text-align:center;line-height:1.5">
+                  В PAPER режиме сделки симулируются без реальных ордеров.<br/>
+                  Переключись в LIVE в Settings для реальных операций.
                 </div>
               </div>
             </div>
