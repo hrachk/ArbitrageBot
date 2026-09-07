@@ -1,0 +1,34 @@
+{
+  "dayUtc": "2026-09-02",
+  "scans": 198080,
+  "avgCandidates": 0.52,
+  "opens": 36,
+  "closes": 28,
+  "skips": 1417,
+  "realizedPnlUsd": 7.9444,
+  "bestOpenPctSeen": 1.6149,
+  "bestRtPctSeen": 1.5349,
+  "skipReasons": [
+    {
+      "reason": "no-candidates-above-min",
+      "count": 1030
+    },
+    {
+      "reason": "Cooldown open 15000ms",
+      "count": 216
+    },
+    {
+      "reason": "Notional 180 \u003E max 100",
+      "count": 86
+    },
+    {
+      "reason": "Already open on symbol",
+      "count": 51
+    },
+    {
+      "reason": "Cooldown close 15000ms",
+      "count": 34
+    }
+  ],
+  "updatedUtc": "2026-09-03T00:00:01.8427135Z"
+}

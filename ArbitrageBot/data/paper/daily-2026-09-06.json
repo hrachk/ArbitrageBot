@@ -1,0 +1,118 @@
+{
+  "dayUtc": "2026-09-06",
+  "scans": 199472,
+  "avgCandidates": 0.33,
+  "opens": 111,
+  "closes": 62,
+  "skips": 5537,
+  "realizedPnlUsd": 21.2282,
+  "bestOpenPctSeen": 2.5556,
+  "bestRtPctSeen": 2.4656,
+  "skipReasons": [
+    {
+      "reason": "Max open positions 2",
+      "count": 3265
+    },
+    {
+      "reason": "Already open on symbol",
+      "count": 883
+    },
+    {
+      "reason": "Cooldown open 15000ms",
+      "count": 841
+    },
+    {
+      "reason": "no-candidates-above-min",
+      "count": 357
+    },
+    {
+      "reason": "Cooldown close 15000ms",
+      "count": 136
+    },
+    {
+      "reason": "Notional 180 \u003E max 100",
+      "count": 31
+    },
+    {
+      "reason": "RT -0.083% \u003C min 0.120%",
+      "count": 3
+    },
+    {
+      "reason": "RT 0.116% \u003C min 0.120%",
+      "count": 2
+    },
+    {
+      "reason": "RT 0.112% \u003C min 0.120%",
+      "count": 2
+    },
+    {
+      "reason": "RT 0.110% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.126% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.113% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.111% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.118% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "Paper disabled",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.171% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.163% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.091% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.112% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.164% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.084% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.120% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.079% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.105% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.093% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.099% \u003C min 0.120%",
+      "count": 1
+    }
+  ],
+  "updatedUtc": "2026-09-07T00:00:00.2699836Z"
+}

@@ -1,0 +1,30 @@
+{
+  "dayUtc": "2026-09-04",
+  "scans": 50342,
+  "avgCandidates": 3.15,
+  "opens": 0,
+  "closes": 0,
+  "skips": 552,
+  "realizedPnlUsd": 0,
+  "bestOpenPctSeen": 0.9473,
+  "bestRtPctSeen": 0.8623,
+  "skipReasons": [
+    {
+      "reason": "Notional 180 \u003E max 100",
+      "count": 317
+    },
+    {
+      "reason": "no-candidates-above-min",
+      "count": 233
+    },
+    {
+      "reason": "RT -0.123% \u003C min 0.100%",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.130% \u003C min 0.100%",
+      "count": 1
+    }
+  ],
+  "updatedUtc": "2026-09-05T00:00:00.303913Z"
+}
