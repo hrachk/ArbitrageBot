@@ -337,6 +337,15 @@ public sealed class CoinglassClient
         return null;
     }
 
+    private static bool IsPlanLock(string? msg)
+    {
+        if (string.IsNullOrEmpty(msg)) return false;
+        return msg.Contains("Upgrade plan", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("upgrade", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("permission", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("not available", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string Trunc(string? s, int n) =>
         string.IsNullOrEmpty(s) ? "" : s.Length <= n ? s : s[..n] + "…";
 }
