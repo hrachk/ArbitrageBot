@@ -20,7 +20,9 @@ public class ArbitrageOptions
         ["Bybit"] = 0.055m,
         ["OKX"] = 0.05m,
         ["Bitget"] = 0.06m,
-        ["GateIo"] = 0.05m
+        ["GateIo"] = 0.05m,
+        ["Coinbase"] = 0.05m,
+        ["Kucoin"] = 0.06m
     };
 
     public decimal QuoteSize { get; set; } = 500m;
@@ -130,7 +132,7 @@ public class ArbitrageOptions
     /// <summary>Optional webhook (Telegram bot or Discord) on kill/enable/errors.</summary>
     public string? LiveAlertWebhookUrl { get; set; }
     /// <summary>Exchanges allowed for live orders (empty = all configured).</summary>
-    public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget"];
+    public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "Coinbase", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
     public int MinSpreadPersistMs { get; set; } = 250;

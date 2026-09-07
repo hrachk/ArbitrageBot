@@ -628,7 +628,11 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         var core = exchanges.Where(e =>
             e.Equals("Binance", StringComparison.OrdinalIgnoreCase) ||
             e.Equals("Bybit", StringComparison.OrdinalIgnoreCase) ||
-            e.Equals("OKX", StringComparison.OrdinalIgnoreCase)).ToList();
+            e.Equals("OKX", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("KuCoin", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("Coinbase", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("Bitget", StringComparison.OrdinalIgnoreCase)).ToList();
         if (core.Count == 0) return;
 
         var fut = await _rest.GetFuturesTickersAsync(

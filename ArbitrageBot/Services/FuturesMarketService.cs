@@ -219,6 +219,19 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             yield return "Bitget";
             yield return "BitGet";
         }
+        if (exchange.Equals("Coinbase", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Coinbase";
+            yield return "CoinbaseInternational";
+            yield return "CoinbaseAdv";
+        }
+        if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Kucoin";
+            yield return "KuCoin";
+            yield return "KucoinFutures";
+        }
     }
 
     private async Task SubscribeBookTickerAsync(string exchange, SharedSymbol symbol, string symbolStr, CancellationToken ct)

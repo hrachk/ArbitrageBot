@@ -7,6 +7,8 @@ using OKX.Net.Clients;
 using Bitget.Net;
 using OKX.Net;
 using GateIo.Net;
+using Coinbase.Net;
+using Kucoin.Net;
 using Bitget.Net.Enums;
 using Bitget.Net.Enums.Uta;
 using Bybit.Net.Enums;
@@ -211,7 +213,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
             guard = _guard.Status(),
             totalUsdtApprox = totalUsdt,
             anyOk,
-            tip = "Binance/Bybit/Bitget use native USDT-M APIs. Keys need Futures read (+ passphrase for Bitget).",
+            tip = "Binance/Bybit/OKX/Bitget/Coinbase/Kucoin via Shared+native. Kucoin needs passphrase; Coinbase Advanced Trade key.",
             exchanges
         };
     }
@@ -236,7 +238,9 @@ public sealed class LiveExecutionService : ILiveExecutionService
         }
 
         var needsPass = exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase)
-                        || exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase);
+                        || exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase)
+                        || exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+                        || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase);
         if (needsPass && string.IsNullOrWhiteSpace(cred.Passphrase))
         {
             return (false, 0, new
@@ -334,9 +338,13 @@ public sealed class LiveExecutionService : ILiveExecutionService
             bag.OKX = new OKXCredentials(key, secret, pass);
         else if (name.Equals("GateIo", StringComparison.OrdinalIgnoreCase) || name.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
             bag.GateIo = new GateIoCredentials(key, secret);
+        else if (name.Equals("Coinbase", StringComparison.OrdinalIgnoreCase))
+            bag.Coinbase = new CoinbaseCredentials(key, secret);
+        else if (name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+            bag.Kucoin = new KucoinCredentials(key, secret, pass ?? "");
         else
         {
-            // generic fallback
+            // generic fallback (Shared API)
             rest.SetApiCredentials(name, new DynamicCredentials(
                 TradingMode.PerpetualLinear, key, secret, pass, ""));
             return rest;
@@ -355,6 +363,10 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass));
             else if (name.Equals("OKX", StringComparison.OrdinalIgnoreCase))
                 rest.OKX.SetApiCredentials(new OKXCredentials(key, secret, pass));
+            else if (name.Equals("Coinbase", StringComparison.OrdinalIgnoreCase))
+                rest.Coinbase.SetApiCredentials(new CoinbaseCredentials(key, secret));
+            else if (name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+                rest.Kucoin.SetApiCredentials(new KucoinCredentials(key, secret, pass ?? ""));
         }
         catch
         {
