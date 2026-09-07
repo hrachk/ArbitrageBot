@@ -141,12 +141,22 @@ public class FuturesPaperService : IFuturesPaperService
             var leverage = R.FuturesPaperLeverage > 0 ? R.FuturesPaperLeverage : 5m;
             if (leverage > 10m) leverage = 10m; // hard cap for paper safety
 
-            var notionalCap = R.FuturesMaxNotionalUsd > 0 ? R.FuturesMaxNotionalUsd : 2500m;
-            if (opp.NotionalUsd > notionalCap)
-                return Fail(opp, $"Notional {opp.NotionalUsd:F0} > max {notionalCap:F0}");
+            // Clamp size to max notional — never skip a good edge only because scan quote > cap
+            var notionalCap = R.FuturesMaxNotionalUsd > 0 ? R.FuturesMaxNotionalUsd
+                            : (R.QuoteSize > 0 ? R.QuoteSize : 100m);
+            var baseQty = opp.BaseQty;
+            var notional = opp.NotionalUsd;
+            if (notional > notionalCap && notional > 0 && baseQty > 0)
+            {
+                var scale = notionalCap / notional;
+                baseQty *= scale;
+                notional = notionalCap;
+            }
+            if (baseQty <= 0 || notional <= 0)
+                return Fail(opp, "Invalid size after clamp");
 
-            var marginEach = opp.NotionalUsd / leverage;
-            if (marginEach <= 0) marginEach = opp.NotionalUsd;
+            var marginEach = notional / leverage;
+            if (marginEach <= 0) marginEach = notional;
 
             if (!_margin.TryGetValue(opp.LongExchange, out var longBal) || longBal < marginEach)
                 return Fail(opp, $"Low margin on {opp.LongExchange}");
@@ -154,15 +164,22 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Low margin on {opp.ShortExchange}");
 
             // Per-venue usage cap: do not lock more than X% of current free margin in one hedge leg
-            var usage = R.FuturesMaxMarginUsagePercent > 0 ? R.FuturesMaxMarginUsagePercent : 0.25m;
+            var usage = R.FuturesMaxMarginUsagePercent > 0 ? R.FuturesMaxMarginUsagePercent : 0.35m;
             if (usage > 1m) usage = 1m;
-            if (marginEach > longBal * usage)
-                return Fail(opp, $"Margin leg > {usage:P0} free on {opp.LongExchange}");
-            if (marginEach > shortBal * usage)
-                return Fail(opp, $"Margin leg > {usage:P0} free on {opp.ShortExchange}");
+            // If margin leg too large for usage, clamp again to fit free*usage
+            var maxMarginByUsage = Math.Min(longBal, shortBal) * usage;
+            if (marginEach > maxMarginByUsage && maxMarginByUsage > 0)
+            {
+                var scale2 = maxMarginByUsage / marginEach;
+                baseQty *= scale2;
+                notional *= scale2;
+                marginEach = maxMarginByUsage;
+            }
+            if (baseQty <= 0)
+                return Fail(opp, $"Margin leg > {usage:P0} free (cannot clamp)");
 
-            var openFees = opp.LongAskVwap * opp.BaseQty * (opp.LongFeePercent / 100m)
-                           + opp.ShortBidVwap * opp.BaseQty * (opp.ShortFeePercent / 100m);
+            var openFees = opp.LongAskVwap * baseQty * (opp.LongFeePercent / 100m)
+                           + opp.ShortBidVwap * baseQty * (opp.ShortFeePercent / 100m);
 
             _margin[opp.LongExchange] = longBal - marginEach - openFees / 2;
             _margin[opp.ShortExchange] = shortBal - marginEach - openFees / 2;
@@ -172,13 +189,13 @@ public class FuturesPaperService : IFuturesPaperService
                 Symbol = opp.Symbol,
                 LongExchange = opp.LongExchange,
                 ShortExchange = opp.ShortExchange,
-                BaseQty = opp.BaseQty,
+                BaseQty = baseQty,
                 LongEntry = opp.LongAskVwap,
                 ShortEntry = opp.ShortBidVwap,
                 OpenFeesUsd = openFees,
                 IsOpen = true,
                 Status = "Open",
-                Message = $"Hedge opened | open {opp.NetSpreadPercent:F3}% RT {opp.NetRoundTripPercent:F3}%"
+                Message = $"Hedge opened | size {notional:F0}$ open {opp.NetSpreadPercent:F3}% RT {opp.NetRoundTripPercent:F3}%"
             };
 
             _analytics.RecordOpen(trade, opp);
@@ -193,7 +210,7 @@ public class FuturesPaperService : IFuturesPaperService
                 Symbol = opp.Symbol,
                 LongExchange = opp.LongExchange,
                 ShortExchange = opp.ShortExchange,
-                BaseQty = opp.BaseQty,
+                BaseQty = baseQty,
                 LongEntry = opp.LongAskVwap,
                 ShortEntry = opp.ShortBidVwap,
                 OpenedAt = trade.OpenedAt,

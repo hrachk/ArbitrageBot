@@ -420,7 +420,12 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             await RefreshFundingCacheAsync(ct);
 
         var list = new List<FuturesOpportunity>();
-        var notional = _runtime.Snapshot.QuoteSize > 0 ? _runtime.Snapshot.QuoteSize : 500m;
+        // Professional: one size for scan/paper/live. Cap by max notional so we never skip "180 > 100".
+        var snapN = _runtime.Snapshot;
+        var quote = snapN.QuoteSize > 0 ? snapN.QuoteSize : 100m;
+        var maxN = snapN.FuturesMaxNotionalUsd > 0 ? snapN.FuturesMaxNotionalUsd : quote;
+        var notional = Math.Min(quote, maxN);
+        if (notional < 10m) notional = 10m;
         decimal? bestGross = null, bestNet = null;
         var booksReady = 0;
         var pairsCompared = 0;

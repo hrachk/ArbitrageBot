@@ -632,8 +632,8 @@
             <div class="panel-hd"><h2 class="panel-title">Trading parameters</h2></div>
             <div class="section-label">Preset</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-              <button type="button" class="btn sm" id="presetConservative">Conservative ($5)</button>
-              <button type="button" class="btn sm primary" id="presetBalanced">Micro $5 / exchange</button>
+              <button type="button" class="btn sm primary" id="presetBalanced">Professional</button>
+              <button type="button" class="btn sm" id="presetConservative">Conservative</button>
               <button type="button" class="btn sm" id="presetAggressive">Balanced</button>
             </div>
             <div class="section-label">Mode</div>
@@ -652,19 +652,19 @@
             <div class="section-label">Entry · size (scan / paper)</div>
             <div class="form-row">
               <div class="field"><label>Min open edge %</label><input id="s_minProfit" type="number" step="0.005"/><div class="hint">After open fees</div></div>
-              <div class="field"><label>Quote size USDT</label><input id="s_size" type="number" step="1"/><div class="hint">Scan depth; live size uses Live block</div></div>
+              <div class="field"><label>Size USDT / leg</label><input id="s_size" type="number" step="1"/><div class="hint">Один размер для scan + paper + live (clamp к max notional)</div></div>
             </div>
             <div class="form-row">
               <div class="field"><label>Leverage</label><input id="s_lev" type="number" min="1" max="10"/></div>
               <div class="field"><label>Max open hedges</label><input id="s_maxPos" type="number"/></div>
             </div>
             <div class="form-row">
-              <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number"/></div>
+              <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number"/><div class="hint">Потолок размера; если size больше — уменьшаем qty, не skip</div></div>
               <div class="field"><label>Cooldown ms</label><input id="s_cooldown" type="number"/></div>
             </div>
-            <div class="section-label">Live micro ($5 / exchange)</div>
+            <div class="section-label">Live · same profile as paper</div>
             <div class="banner info" style="margin-bottom:10px;font-size:12px">
-              notional ≈ <b>equity × leverage × usage</b>. Default: $5 × 5x × 0.6 → <b>~$15 notional / ~$3 margin</b> on each leg.
+              Size / max notional / opens / leverage — общие. Equity/exchange только справочно для Live (paper demo ≈ 2500 USDT × 4).
             </div>
             <div class="form-row">
               <div class="field"><label>Equity / exchange USDT</label><input id="s_liveEquity" type="number" step="0.5"/><div class="hint">Free USDT on EACH venue</div></div>

@@ -137,7 +137,7 @@ AB.pages.settings = {
     set('s_cooldown', r.paperCooldownMs);
     set('s_liveEquity', r.liveEquityPerExchangeUsd ?? 5);
     set('s_liveUsage', r.liveMarginUsageFraction ?? 0.6);
-    set('s_liveMaxN', r.liveMaxNotionalUsd ?? 15);
+    set('s_liveMaxN', r.liveMaxNotionalUsd ?? 100);
     set('s_liveMaxOpen', r.liveMaxOpenPositions ?? 1);
     set('s_liveStop', r.liveStopLossUsd ?? -2.5);
     if (AB.$('s_fullFill')) AB.$('s_fullFill').checked = !!r.paperRequireFullFill;
@@ -146,10 +146,20 @@ AB.pages.settings = {
   },
 
   applyPreset(name) {
-    const p = this.presets[name] || this.presets.micro5;
+    const p = this.presets[name] || this.presets.professional || this.presets.micro5;
     this.fillRisk(p);
+    if (AB.$('s_paper')) AB.$('s_paper').checked = true;
+    if (AB.$('s_auto')) AB.$('s_auto').checked = true;
+    // Keep size and max notional aligned
+    if (AB.$('s_size') && AB.$('s_maxNotional')) {
+      const sz = Number(AB.$('s_size').value) || 100;
+      const mx = Number(AB.$('s_maxNotional').value) || sz;
+      if (sz > mx) AB.$('s_size').value = mx;
+      if (AB.$('s_liveMaxN')) AB.$('s_liveMaxN').value = AB.$('s_maxNotional').value;
+      if (AB.$('s_liveMaxOpen') && AB.$('s_maxPos')) AB.$('s_liveMaxOpen').value = AB.$('s_maxPos').value;
+    }
     AB.$('s_msg').className = 'alert info';
-    AB.$('s_msg').textContent = 'Preset «' + name + '» — нажми Save all (persist + apply).';
+    AB.$('s_msg').textContent = 'Preset «' + name + '» (paper=live gates) — Save all.';
     AB.$('s_msg').classList.remove('hidden');
   },
 
@@ -254,7 +264,7 @@ AB.pages.settings = {
 };
 
 document.getElementById('presetConservative')?.addEventListener('click', () => AB.pages.settings.applyPreset('conservative'));
-document.getElementById('presetBalanced')?.addEventListener('click', () => AB.pages.settings.applyPreset('micro5'));
+document.getElementById('presetBalanced')?.addEventListener('click', () => AB.pages.settings.applyPreset('professional'));
 document.getElementById('presetAggressive')?.addEventListener('click', () => AB.pages.settings.applyPreset('balanced'));
 
 document.getElementById('btnSaveTrading')?.addEventListener('click', async () => {
@@ -267,30 +277,36 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     return Number.isFinite(v) ? v : fallback;
   };
 
+  // Unified professional profile: size ≤ max notional; live mirrors paper
+  let size = num('s_size', 100);
+  let maxN = num('s_maxNotional', 100);
+  if (size > maxN) size = maxN;
+  if (maxN < size) maxN = size;
+  const maxOpen = int('s_maxPos', 2);
   const trading = {
     strategyMode: AB.$('s_strategy')?.value || 'FuturesCross',
     paperTrading: !!AB.$('s_paper')?.checked,
     paperAutoExecute: !!AB.$('s_auto')?.checked,
-    minProfitPercent: num('s_minProfit', 0.08),
-    quoteSize: num('s_size', 15),
+    minProfitPercent: num('s_minProfit', 0.10),
+    quoteSize: size,
     futuresPaperLeverage: Math.min(10, Math.max(1, num('s_lev', 5))),
-    futuresMaxOpenPositions: int('s_maxPos', 2),
-    futuresStopLossUsd: num('s_stop', -2.5),
-    futuresDailyLossLimitUsd: num('s_dayLimit', -8),
-    maxHoldMinutes: int('s_hold', 12),
+    futuresMaxOpenPositions: maxOpen,
+    futuresStopLossUsd: num('s_stop', -12),
+    futuresDailyLossLimitUsd: num('s_dayLimit', -40),
+    maxHoldMinutes: int('s_hold', 0),
     closeBelowNetPercent: num('s_closeWidth', 0.02),
-    maxMarginUsagePercent: Math.min(0.9, Math.max(0.05, num('s_marginUse', 0.6))),
-    maxNotionalUsd: num('s_maxNotional', 15),
-    paperCooldownMs: int('s_cooldown', 12000),
+    maxMarginUsagePercent: Math.min(0.9, Math.max(0.05, num('s_marginUse', 0.35))),
+    maxNotionalUsd: maxN,
+    paperCooldownMs: int('s_cooldown', 15000),
     paperRequireFullFill: !!AB.$('s_fullFill')?.checked,
     requireRoundTripEdge: !!AB.$('s_reqRt')?.checked,
     includeFunding: !!AB.$('s_funding')?.checked,
-    liveEquityPerExchangeUsd: num('s_liveEquity', 5),
-    liveMarginUsageFraction: Math.min(0.85, Math.max(0.2, num('s_liveUsage', 0.6))),
-    liveMaxNotionalUsd: num('s_liveMaxN', 15),
-    liveMaxOpenPositions: int('s_liveMaxOpen', 1),
-    liveStopLossUsd: num('s_liveStop', -2.5),
-    liveDailyLossLimitUsd: num('s_dayLimit', -8)
+    liveEquityPerExchangeUsd: num('s_liveEquity', 2500),
+    liveMarginUsageFraction: Math.min(0.85, Math.max(0.2, num('s_liveUsage', 0.35))),
+    liveMaxNotionalUsd: maxN,
+    liveMaxOpenPositions: int('s_liveMaxOpen', maxOpen) || maxOpen,
+    liveStopLossUsd: num('s_liveStop', -12),
+    liveDailyLossLimitUsd: num('s_dayLimit', -40)
   };
   const risk = {
     minProfitPercent: trading.minProfitPercent,
