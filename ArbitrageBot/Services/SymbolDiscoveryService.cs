@@ -84,7 +84,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         var excluded = ExcludedBases;
 
         _logger.LogInformation(
-            "Discovery: public tickers Binance/Bybit/OKX (arb band {Min:0}–{Max:0} USDT vol, top {N})",
+            "Discovery: public tickers Binance/Bybit/OKX/Bitget/Gate/Kucoin (arb band {Min:0}–{Max:0} USDT vol, top {N})",
             minVol, maxVol, topN);
 
         // symbol -> exchange -> quote volume
@@ -95,6 +95,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         await MergeHttpOkxAsync(volumes, excluded, ct);
         await MergeHttpBitgetAsync(volumes, excluded, ct);
         await MergeHttpGateAsync(volumes, excluded, ct);
+        await MergeHttpKucoinAsync(volumes, excluded, ct);
 
         // Optional supplemental via library for Bitget/Gate if configured
         try
@@ -616,6 +617,73 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "GateIo public ticker fetch failed");
+        }
+    }
+
+
+    private async Task MergeHttpKucoinAsync(
+        Dictionary<string, Dictionary<string, decimal>> volumes,
+        HashSet<string> excluded,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Active USDT-margined contracts (public)
+            using var resp = await _http.GetAsync("https://api-futures.kucoin.com/api/v1/contracts/active", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Kucoin contracts HTTP {Code}", (int)resp.StatusCode);
+                return;
+            }
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return;
+            var n = 0;
+            foreach (var el in data.EnumerateArray())
+            {
+                var quote = el.TryGetProperty("quoteCurrency", out var qc) ? qc.GetString() ?? "" : "";
+                var settle = el.TryGetProperty("settleCurrency", out var sc) ? sc.GetString() ?? "" : "";
+                if (!quote.Equals("USDT", StringComparison.OrdinalIgnoreCase)
+                    && !settle.Equals("USDT", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var baseCur = el.TryGetProperty("displayBaseCurrency", out var dbc) ? dbc.GetString()
+                    : el.TryGetProperty("baseCurrency", out var bc) ? bc.GetString() : null;
+                if (string.IsNullOrWhiteSpace(baseCur)) continue;
+                // KuCoin uses XBT for BTC
+                if (baseCur.Equals("XBT", StringComparison.OrdinalIgnoreCase))
+                    baseCur = "BTC";
+                if (excluded.Contains(baseCur)) continue;
+                var sym = baseCur.ToUpperInvariant() + "USDT";
+                // turnoverOf24h is quote volume-ish
+                decimal vol = 0;
+                if (el.TryGetProperty("turnoverOf24h", out var to))
+                {
+                    if (to.ValueKind == JsonValueKind.Number && to.TryGetDecimal(out var d)) vol = d;
+                    else if (to.ValueKind == JsonValueKind.String
+                             && decimal.TryParse(to.GetString(),
+                                 System.Globalization.NumberStyles.Any,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var d2))
+                        vol = d2;
+                }
+                if (vol <= 0 && el.TryGetProperty("volumeOf24h", out var vo))
+                {
+                    if (vo.ValueKind == JsonValueKind.Number && vo.TryGetDecimal(out var d)) vol = d;
+                    else if (vo.ValueKind == JsonValueKind.String
+                             && decimal.TryParse(vo.GetString(),
+                                 System.Globalization.NumberStyles.Any,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var d2))
+                        vol = d2;
+                }
+                if (vol <= 0) continue;
+                AddVol(volumes, sym, "Kucoin", vol);
+                n++;
+            }
+            _logger.LogInformation("Kucoin USDT futures: {N} contracts with volume", n);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Kucoin public contracts fetch failed");
         }
     }
 

@@ -99,19 +99,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 continue;
             }
 
-            // Only venues where discovery saw volume (avoids OKX 60018 on missing perps)
-            var venues = _markets.ExchangesFor(symbolStr);
-            if (venues.Count == 0) venues = _markets.Exchanges.ToList();
-
+            // Try every configured venue. Missing instruments → skip-no-instrument (not discovery skip).
+            // Discovery ExchangesFor is ranking-only; KuCoin often absent from HTTP vol maps.
             foreach (var exchange in _markets.Exchanges)
             {
                 var key = $"{exchange}:{symbolStr}";
-                if (!venues.Any(v => v.Equals(exchange, StringComparison.OrdinalIgnoreCase)))
-                {
-                    _status[key] = "skip-not-listed";
-                    continue;
-                }
-
                 try
                 {
                     var depth = _options.MaxDepthLevels > 0 ? _options.MaxDepthLevels : 20;
@@ -667,11 +659,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 return;
 
             // Prefer core venues for funding; Bitget/Gate often need extra params and burn rate limits
+            // Kucoin shared funding often 404000 (contract id) — skip REST funding poll noise
             var fundingExchanges = _markets.Exchanges
                 .Where(e => e is not null &&
                     !e.Equals("Bitget", StringComparison.OrdinalIgnoreCase) &&
                     !e.Equals("GateIo", StringComparison.OrdinalIgnoreCase) &&
-                    !e.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+                    !e.Equals("GateIO", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (fundingExchanges.Count == 0)
