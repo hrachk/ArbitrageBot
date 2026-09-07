@@ -148,7 +148,7 @@ public class SettingsStore : ISettingsStore
             // Always show configured venues (incl. Coinbase / Kucoin) + any saved keys
             var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "Binance", "Bybit", "OKX", "Bitget", "GateIo", "Coinbase", "Kucoin"
+                "Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"
             };
             foreach (var e in _arb.CurrentValue.NormalizedExchanges)
                 if (!string.IsNullOrWhiteSpace(e)) known.Add(e.Trim());

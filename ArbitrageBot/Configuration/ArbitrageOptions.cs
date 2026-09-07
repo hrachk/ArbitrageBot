@@ -132,7 +132,7 @@ public class ArbitrageOptions
     /// <summary>Optional webhook (Telegram bot or Discord) on kill/enable/errors.</summary>
     public string? LiveAlertWebhookUrl { get; set; }
     /// <summary>Exchanges allowed for live orders (empty = all configured).</summary>
-    public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "Coinbase", "Kucoin"];
+    public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
     public int MinSpreadPersistMs { get; set; } = 250;

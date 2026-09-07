@@ -172,7 +172,7 @@ public sealed class CoinglassClient
     /// <summary>GET /api/futures/funding-rate/arbitrage?usd=10000&exchange_list=...</summary>
     private async Task PullFundingArbitrageAsync(List<FundingSpreadRow> sink, CancellationToken ct)
     {
-        const string exchanges = "Binance,OKX,Bybit,Bitget,Gate,KuCoin,Coinbase";
+        const string exchanges = "Binance,OKX,Bybit,Bitget,Gate,KuCoin";
         var path = $"api/futures/funding-rate/arbitrage?usd=10000&exchange_list={Uri.EscapeDataString(exchanges)}";
         var data = await GetDataAsync(path, ct);
         if (data is null || data.Value.ValueKind != JsonValueKind.Array) return;
