@@ -23,7 +23,7 @@ public class ArbitrageOptions
         ["GateIo"] = 0.05m
     };
 
-    public decimal QuoteSize { get; set; } = 100m;
+    public decimal QuoteSize { get; set; } = 500m;
     public int MaxDepthLevels { get; set; } = 20;
 
     public bool PaperAutoExecute { get; set; } = true;
@@ -58,7 +58,7 @@ public class ArbitrageOptions
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
     public decimal OpenEdgeBufferPercent { get; set; } = 0.01m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 0.40m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.80m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
     public decimal MinGrossSpreadPercent { get; set; } = 0.22m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>

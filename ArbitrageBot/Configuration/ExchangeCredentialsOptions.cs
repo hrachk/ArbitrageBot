@@ -36,16 +36,16 @@ public class TradingUiSettings
     /// <summary>Min net open edge % after fees — same for PAPER and LIVE.</summary>
     public decimal MinProfitPercent { get; set; } = 0.10m;
     /// <summary>Notional per leg (USDT). Paper + Live share this (LiveMaxNotional synced).</summary>
-    public decimal QuoteSize { get; set; } = 100m;
+    public decimal QuoteSize { get; set; } = 500m;
     public decimal FuturesPaperLeverage { get; set; } = 5m;
-    public int FuturesMaxOpenPositions { get; set; } = 2;
-    public decimal FuturesStopLossUsd { get; set; } = -12m;
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -40m;
+    public int FuturesMaxOpenPositions { get; set; } = 3;
+    public decimal FuturesStopLossUsd { get; set; } = -25m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -80m;
     /// <summary>0 = no soft hold timer (professional: exit on converge/TP/SL only).</summary>
     public int MaxHoldMinutes { get; set; } = 0;
     public decimal CloseBelowNetPercent { get; set; } = 0.02m;
     public decimal MaxMarginUsagePercent { get; set; } = 0.35m;
-    public decimal MaxNotionalUsd { get; set; } = 100m;
+    public decimal MaxNotionalUsd { get; set; } = 500m;
     public int PaperCooldownMs { get; set; } = 15000;
     public bool PaperRequireFullFill { get; set; } = true;
     public bool RequireRoundTripEdge { get; set; } = true;
@@ -54,8 +54,8 @@ public class TradingUiSettings
     // ——— Live mirrors paper (one professional profile) ———
     public decimal LiveEquityPerExchangeUsd { get; set; } = 2500m;
     public decimal LiveMarginUsageFraction { get; set; } = 0.35m;
-    public decimal LiveMaxNotionalUsd { get; set; } = 100m;
-    public int LiveMaxOpenPositions { get; set; } = 2;
-    public decimal LiveStopLossUsd { get; set; } = -12m;
-    public decimal LiveDailyLossLimitUsd { get; set; } = -40m;
+    public decimal LiveMaxNotionalUsd { get; set; } = 500m;
+    public int LiveMaxOpenPositions { get; set; } = 3;
+    public decimal LiveStopLossUsd { get; set; } = -25m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -80m;
 }

@@ -2,45 +2,45 @@ AB.pages.settings = {
   presets: {
     professional: {
       minProfitPercent: 0.10,
-      quoteSize: 100,
+      quoteSize: 500,
       leverage: 5,
-      maxOpenPositions: 2,
-      stopLossUsd: -12,
-      dailyLossLimitUsd: -40,
+      maxOpenPositions: 3,
+      stopLossUsd: -25,
+      dailyLossLimitUsd: -80,
       maxHoldMinutes: 0,
       closeBelowNetPercent: 0.02,
       maxMarginUsagePercent: 0.35,
-      maxNotionalUsd: 100,
+      maxNotionalUsd: 500,
       paperCooldownMs: 15000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
       liveEquityPerExchangeUsd: 2500,
       liveMarginUsageFraction: 0.35,
-      liveMaxNotionalUsd: 100,
-      liveMaxOpenPositions: 2,
-      liveStopLossUsd: -12
+      liveMaxNotionalUsd: 500,
+      liveMaxOpenPositions: 3,
+      liveStopLossUsd: -25
     },
     micro5: {
       minProfitPercent: 0.10,
-      quoteSize: 100,
+      quoteSize: 500,
       leverage: 5,
-      maxOpenPositions: 2,
-      stopLossUsd: -12,
-      dailyLossLimitUsd: -40,
+      maxOpenPositions: 3,
+      stopLossUsd: -25,
+      dailyLossLimitUsd: -80,
       maxHoldMinutes: 0,
       closeBelowNetPercent: 0.02,
       maxMarginUsagePercent: 0.35,
-      maxNotionalUsd: 100,
+      maxNotionalUsd: 500,
       paperCooldownMs: 15000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
       liveEquityPerExchangeUsd: 2500,
       liveMarginUsageFraction: 0.35,
-      liveMaxNotionalUsd: 100,
-      liveMaxOpenPositions: 2,
-      liveStopLossUsd: -12
+      liveMaxNotionalUsd: 500,
+      liveMaxOpenPositions: 3,
+      liveStopLossUsd: -25
     },
     conservative: {
       minProfitPercent: 0.12,
@@ -65,24 +65,24 @@ AB.pages.settings = {
     },
     balanced: {
       minProfitPercent: 0.10,
-      quoteSize: 100,
+      quoteSize: 500,
       leverage: 5,
-      maxOpenPositions: 2,
-      stopLossUsd: -12,
-      dailyLossLimitUsd: -40,
+      maxOpenPositions: 3,
+      stopLossUsd: -25,
+      dailyLossLimitUsd: -80,
       maxHoldMinutes: 0,
       closeBelowNetPercent: 0.02,
       maxMarginUsagePercent: 0.35,
-      maxNotionalUsd: 100,
+      maxNotionalUsd: 500,
       paperCooldownMs: 15000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
       liveEquityPerExchangeUsd: 2500,
       liveMarginUsageFraction: 0.35,
-      liveMaxNotionalUsd: 100,
-      liveMaxOpenPositions: 2,
-      liveStopLossUsd: -12
+      liveMaxNotionalUsd: 500,
+      liveMaxOpenPositions: 3,
+      liveStopLossUsd: -25
     }
   },
 
@@ -169,17 +169,17 @@ AB.pages.settings = {
     if (AB.$('s_paper')) AB.$('s_paper').checked = t.paperTrading !== false;
     if (AB.$('s_auto')) AB.$('s_auto').checked = !!t.paperAutoExecute;
     if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.10;
-    if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 100;
+    if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 500;
     if (AB.$('s_lev')) AB.$('s_lev').value = t.futuresPaperLeverage ?? 5;
     if (AB.$('s_maxPos')) AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 2;
     if (AB.$('s_stop')) AB.$('s_stop').value = t.futuresStopLossUsd ?? -12;
     if (AB.$('s_dayLimit')) AB.$('s_dayLimit').value = t.futuresDailyLossLimitUsd ?? -40;
     if (AB.$('s_liveEquity')) AB.$('s_liveEquity').value = t.liveEquityPerExchangeUsd ?? 2500;
     if (AB.$('s_liveUsage')) AB.$('s_liveUsage').value = t.liveMarginUsageFraction ?? 0.6;
-    if (AB.$('s_liveMaxN')) AB.$('s_liveMaxN').value = t.liveMaxNotionalUsd ?? 100;
+    if (AB.$('s_liveMaxN')) AB.$('s_liveMaxN').value = t.liveMaxNotionalUsd ?? 500;
     if (AB.$('s_liveMaxOpen')) AB.$('s_liveMaxOpen').value = t.liveMaxOpenPositions ?? 1;
     if (AB.$('s_liveStop')) AB.$('s_liveStop').value = t.liveStopLossUsd ?? -2.5;
-    if (AB.$('s_maxNotional')) AB.$('s_maxNotional').value = t.maxNotionalUsd ?? t.liveMaxNotionalUsd ?? 100;
+    if (AB.$('s_maxNotional')) AB.$('s_maxNotional').value = t.maxNotionalUsd ?? t.liveMaxNotionalUsd ?? 500;
     if (AB.$('s_marginUse')) AB.$('s_marginUse').value = t.maxMarginUsagePercent ?? 0.35;
     if (AB.$('s_hold')) AB.$('s_hold').value = t.maxHoldMinutes ?? 0;
     if (AB.$('s_closeWidth')) AB.$('s_closeWidth').value = t.closeBelowNetPercent ?? 0.02;
@@ -278,11 +278,11 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
   };
 
   // Unified professional profile: size ≤ max notional; live mirrors paper
-  let size = num('s_size', 100);
-  let maxN = num('s_maxNotional', 100);
+  let size = num('s_size', 500);
+  let maxN = num('s_maxNotional', 500);
   if (size > maxN) size = maxN;
   if (maxN < size) maxN = size;
-  const maxOpen = int('s_maxPos', 2);
+  const maxOpen = int('s_maxPos', 3);
   const trading = {
     strategyMode: AB.$('s_strategy')?.value || 'FuturesCross',
     paperTrading: !!AB.$('s_paper')?.checked,
@@ -291,8 +291,8 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     quoteSize: size,
     futuresPaperLeverage: Math.min(10, Math.max(1, num('s_lev', 5))),
     futuresMaxOpenPositions: maxOpen,
-    futuresStopLossUsd: num('s_stop', -12),
-    futuresDailyLossLimitUsd: num('s_dayLimit', -40),
+    futuresStopLossUsd: num('s_stop', -25),
+    futuresDailyLossLimitUsd: num('s_dayLimit', -80),
     maxHoldMinutes: int('s_hold', 0),
     closeBelowNetPercent: num('s_closeWidth', 0.02),
     maxMarginUsagePercent: Math.min(0.9, Math.max(0.05, num('s_marginUse', 0.35))),
@@ -305,8 +305,8 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     liveMarginUsageFraction: Math.min(0.85, Math.max(0.2, num('s_liveUsage', 0.35))),
     liveMaxNotionalUsd: maxN,
     liveMaxOpenPositions: int('s_liveMaxOpen', maxOpen) || maxOpen,
-    liveStopLossUsd: num('s_liveStop', -12),
-    liveDailyLossLimitUsd: num('s_dayLimit', -40)
+    liveStopLossUsd: num('s_liveStop', -25),
+    liveDailyLossLimitUsd: num('s_dayLimit', -80)
   };
   const risk = {
     minProfitPercent: trading.minProfitPercent,
