@@ -203,7 +203,7 @@ AB.pages.settings = {
           <div class="field"><label>API Secret</label><input class="ex-secret" type="password" placeholder="${c.hasApiSecret?'•••• leave blank to keep':''}" autocomplete="new-password"/></div>
         </div>
         <div class="form-row">
-          <div class="field"><label>Passphrase (OKX / Bitget)</label><input class="ex-pass" type="password" placeholder="${c.hasPassphrase?'•••• keep':''}" autocomplete="new-password"/></div>
+          <div class="field"><label>Passphrase (OKX / Bitget / KuCoin)</label><input class="ex-pass" type="password" placeholder="${c.hasPassphrase?'•••• keep':''}" autocomplete="new-password"/></div>
           <div class="field"><label>Permission</label>
             <select class="ex-perm">
               <option value="read-only" ${c.permission!=='trade'?'selected':''}>read-only</option>
