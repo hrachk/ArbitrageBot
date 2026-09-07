@@ -16,6 +16,8 @@ public sealed class CoinglassClient
     private readonly HttpClient _http;
     private readonly CoinglassOptions _opt;
     private readonly ILogger<CoinglassClient> _log;
+    private bool _planLocked;
+    private string? _planLockMsg;
 
     public CoinglassClient(HttpClient http, IOptions<ExternalMetricsOptions> opt, ILogger<CoinglassClient> log)
     {
@@ -53,6 +55,8 @@ public sealed class CoinglassClient
             return (funding, oi, liq, ls, arb, "coinglass disabled");
         if (!HasKey)
             return (funding, oi, liq, ls, arb, "Coinglass ApiKey empty — set ExternalMetrics:Coinglass:ApiKey");
+        if (_planLocked)
+            return (funding, oi, liq, ls, arb, "Coinglass plan locked: " + (_planLockMsg ?? "Upgrade plan"));
 
         string? lastErr = null;
 
@@ -124,7 +128,16 @@ public sealed class CoinglassClient
         if (code is not null && code != "0" && code != "200")
         {
             var msg = root.TryGetProperty("msg", out var m) ? m.ToString() : body;
-            _log.LogWarning("Coinglass code={Code} path={Path}: {Msg}", code, pathAndQuery, Trunc(msg, 200));
+            if (IsPlanLock(msg) || code is "401" or "403")
+            {
+                _planLocked = true;
+                _planLockMsg = Trunc(msg, 120);
+                _log.LogWarning(
+                    "Coinglass plan/access blocked ({Code}: {Msg}). Pausing Coinglass pulls until restart/upgrade. Core arb continues without external metrics.",
+                    code, _planLockMsg);
+            }
+            else
+                _log.LogWarning("Coinglass code={Code} path={Path}: {Msg}", code, pathAndQuery, Trunc(msg, 200));
             return null;
         }
 
