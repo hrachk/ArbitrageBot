@@ -1,4 +1,5 @@
 using ArbitrageBot.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace ArbitrageBot.Services;
 
@@ -22,12 +23,18 @@ public class SettingsStore : ISettingsStore
     private readonly object _lock = new();
     private readonly string _path;
     private readonly ILogger<SettingsStore> _logger;
+    private readonly IOptionsMonitor<ArbitrageOptions> _arb;
     private Dictionary<string, ExchangeCredential> _creds = new(StringComparer.OrdinalIgnoreCase);
     private TradingUiSettings _trading = new();
 
-    public SettingsStore(IWebHostEnvironment env, IConfiguration config, ILogger<SettingsStore> logger)
+    public SettingsStore(
+        IWebHostEnvironment env,
+        IConfiguration config,
+        IOptionsMonitor<ArbitrageOptions> arb,
+        ILogger<SettingsStore> logger)
     {
         _logger = logger;
+        _arb = arb;
         _path = Path.Combine(env.ContentRootPath, "data", "local-settings.json");
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
 
@@ -138,17 +145,31 @@ public class SettingsStore : ISettingsStore
     {
         lock (_lock)
         {
-            var known = new[] { "Binance", "Bybit", "OKX", "Bitget", "GateIo" };
+            // Always show configured venues (incl. Coinbase / Kucoin) + any saved keys
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Binance", "Bybit", "OKX", "Bitget", "GateIo", "Coinbase", "Kucoin"
+            };
+            foreach (var e in _arb.CurrentValue.NormalizedExchanges)
+                if (!string.IsNullOrWhiteSpace(e)) known.Add(e.Trim());
+            foreach (var k in _creds.Keys)
+                known.Add(k);
+
             var result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-            foreach (var name in known)
+            foreach (var name in known.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             {
                 _creds.TryGetValue(name, out var c);
+                var needsPass = name.Equals("OKX", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("Bitget", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase);
                 result[name] = new
                 {
                     enabled = c?.Enabled ?? false,
                     hasApiKey = !string.IsNullOrWhiteSpace(c?.ApiKey),
                     hasApiSecret = !string.IsNullOrWhiteSpace(c?.ApiSecret),
                     hasPassphrase = !string.IsNullOrWhiteSpace(c?.Passphrase),
+                    needsPassphrase = needsPass,
                     apiKeyMasked = Mask(c?.ApiKey),
                     permission = c?.Permission ?? "read-only"
                 };

@@ -3,6 +3,7 @@ using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
 using ArbitrageBot.Models;
 using ArbitrageBot.Services;
+using ArbitrageBot.Services.Metrics;
 using CryptoClients.Net;
 using CryptoClients.Net.Interfaces;
 using CryptoExchange.Net.SharedApis;
@@ -32,11 +33,19 @@ try
 
     builder.Services.Configure<ArbitrageOptions>(
         builder.Configuration.GetSection(ArbitrageOptions.SectionName));
+    builder.Services.Configure<ExternalMetricsOptions>(
+        builder.Configuration.GetSection(ExternalMetricsOptions.SectionName));
 
     builder.Services.AddCryptoClients(options =>
     {
         options.OutputOriginalData = false;
     });
+    builder.Services.AddHttpClient<CoinglassClient>();
+    builder.Services.AddHttpClient<OnChainMetricsClient>();
+    builder.Services.AddSingleton<ExternalMetricsHub>();
+    builder.Services.AddSingleton<IExternalMetricsHub>(sp => sp.GetRequiredService<ExternalMetricsHub>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ExternalMetricsHub>());
+
 
     // Shared API exchange parameters (USDT-M) — required before discovery/WS/orders
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
@@ -510,6 +519,13 @@ try
         };
         var result = await live.TryOpenHedgeAsync(req2, ct);
         return Results.Ok(result);
+    });
+
+    app.MapGet("/api/metrics", (IExternalMetricsHub hub) => Results.Ok(hub.GetSnapshot()));
+    app.MapPost("/api/metrics/refresh", async (IExternalMetricsHub hub, CancellationToken ct) =>
+    {
+        await hub.RefreshAsync(ct);
+        return Results.Ok(hub.GetSnapshot());
     });
 
     // Blazor terminal UI — root "/" = Dashboard
