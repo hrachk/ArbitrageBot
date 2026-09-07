@@ -20,8 +20,7 @@ public class ArbitrageOptions
         ["Bybit"] = 0.055m,
         ["OKX"] = 0.05m,
         ["Bitget"] = 0.06m,
-        ["GateIo"] = 0.05m,
-        ["Coinbase"] = 0.05m,
+        ["GateIo"] = 0.05m, 
         ["Kucoin"] = 0.06m
     };
 

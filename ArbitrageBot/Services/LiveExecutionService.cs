@@ -213,7 +213,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
             guard = _guard.Status(),
             totalUsdtApprox = totalUsdt,
             anyOk,
-            tip = "Binance/Bybit/OKX/Bitget/Coinbase/Kucoin via Shared+native. Kucoin needs passphrase; Coinbase Advanced Trade key.",
+            tip = "Binance/Bybit/OKX/Bitget/GateIo/Kucoin via Shared+native. Kucoin needs passphrase; Coinbase Advanced Trade key.",
             exchanges
         };
     }
@@ -337,9 +337,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
         else if (name.Equals("OKX", StringComparison.OrdinalIgnoreCase))
             bag.OKX = new OKXCredentials(key, secret, pass);
         else if (name.Equals("GateIo", StringComparison.OrdinalIgnoreCase) || name.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
-            bag.GateIo = new GateIoCredentials(key, secret);
-        else if (name.Equals("Coinbase", StringComparison.OrdinalIgnoreCase))
-            bag.Coinbase = new CoinbaseCredentials(key, secret);
+            bag.GateIo = new GateIoCredentials(key, secret);       
         else if (name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
             bag.Kucoin = new KucoinCredentials(key, secret, pass ?? "");
         else
@@ -360,11 +358,11 @@ public sealed class LiveExecutionService : ILiveExecutionService
             else if (name.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
                 rest.Bybit.SetApiCredentials(new BybitCredentials(key, secret));
             else if (name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
-                rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass));
+                rest.Bitget.SetApiCredentials(new BitgetCredentials(key, secret, pass ?? ""));
             else if (name.Equals("OKX", StringComparison.OrdinalIgnoreCase))
-                rest.OKX.SetApiCredentials(new OKXCredentials(key, secret, pass));
-            else if (name.Equals("Coinbase", StringComparison.OrdinalIgnoreCase))
-                rest.Coinbase.SetApiCredentials(new CoinbaseCredentials(key, secret));
+                rest.OKX.SetApiCredentials(new OKXCredentials(key, secret, pass ?? ""));
+            else if (name.Equals("GateIo", StringComparison.OrdinalIgnoreCase) || name.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+                rest.GateIo.SetApiCredentials(new GateIoCredentials(key, secret));
             else if (name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
                 rest.Kucoin.SetApiCredentials(new KucoinCredentials(key, secret, pass ?? ""));
         }
