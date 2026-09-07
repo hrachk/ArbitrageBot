@@ -72,9 +72,22 @@ public sealed class ExternalMetricsHub : BackgroundService, IExternalMetricsHub
 
     public async Task RefreshAsync(CancellationToken ct = default)
     {
-        var (funding, oi, liq, ls, err) = await _coinglass.FetchBundleAsync(ct).ConfigureAwait(false);
+        var (funding, oi, liq, ls, cgArb, err) = await _coinglass.FetchBundleAsync(ct).ConfigureAwait(false);
         var flows = await _onchain.FetchFlowsAsync(ct).ConfigureAwait(false);
-        var spreads = BuildFundingSpreads(funding);
+        // Prefer Coinglass ready-made arb rows; merge with local cross from exchange-list
+        var spreads = cgArb.Count > 0 ? cgArb : BuildFundingSpreads(funding);
+        if (cgArb.Count > 0 && funding.Count >= 2)
+        {
+            var local = BuildFundingSpreads(funding);
+            var keys = new HashSet<string>(spreads.Select(s => s.Symbol + "|" + s.LongExchange + "|" + s.ShortExchange),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var s in local)
+            {
+                var k = s.Symbol + "|" + s.LongExchange + "|" + s.ShortExchange;
+                if (keys.Add(k)) spreads.Add(s);
+            }
+            spreads = spreads.OrderByDescending(r => r.DeltaRate).Take(40).ToList();
+        }
         var alerts = DetectAnomalies(oi, liq, spreads);
 
         foreach (var a in alerts)
