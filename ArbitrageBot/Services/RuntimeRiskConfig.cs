@@ -49,6 +49,27 @@ public sealed class RuntimeRiskConfig
             _opts.FuturesRequireRoundTripEdge = t.RequireRoundTripEdge;
             _opts.FuturesIncludeFunding = t.IncludeFunding;
 
+            if (t.MinGrossSpreadPercent > 0) _opts.MinGrossSpreadPercent = t.MinGrossSpreadPercent;
+            if (t.MinTakeProfitUsd > 0) _opts.MinTakeProfitUsd = t.MinTakeProfitUsd;
+            if (t.MinSpreadPersistMs > 0) _opts.MinSpreadPersistMs = t.MinSpreadPersistMs;
+            if (t.MaxBookAgeMs > 0) _opts.MaxBookAgeMs = t.MaxBookAgeMs;
+            if (t.ScanIntervalMs >= 100) _opts.ScanIntervalMs = t.ScanIntervalMs;
+            if (t.FuturesMaxHoldSeconds >= 0) _opts.FuturesMaxHoldSeconds = t.FuturesMaxHoldSeconds;
+            _opts.SpatialScalpMode = t.SpatialScalpMode;
+            _opts.RequireSpreadingEdge = t.RequireSpreadingEdge;
+            if (t.PaperCloseFeeFactor > 0) _opts.PaperCloseFeeFactor = Math.Clamp(t.PaperCloseFeeFactor, 0.1m, 1m);
+            if (t.OpenEdgeBufferPercent >= 0) _opts.OpenEdgeBufferPercent = t.OpenEdgeBufferPercent;
+            _opts.RequireDepthFullFill = t.RequireDepthFullFill;
+            if (t.MinDepthScoreForUniverse > 0) _opts.MinDepthScoreForUniverse = t.MinDepthScoreForUniverse;
+            if (t.MaxLegsPerVenue > 0) _opts.MaxLegsPerVenue = t.MaxLegsPerVenue;
+            if (t.MaxWidthExpansionPercent > 0) _opts.MaxWidthExpansionPercent = t.MaxWidthExpansionPercent;
+            _opts.DynamicSymbols = t.DynamicSymbols;
+            if (t.DynamicTopN > 0) _opts.DynamicTopN = t.DynamicTopN;
+            if (t.DynamicMinQuoteVolumeUsd > 0) _opts.DynamicMinQuoteVolumeUsd = t.DynamicMinQuoteVolumeUsd;
+            if (t.DynamicMaxQuoteVolumeUsd > 0) _opts.DynamicMaxQuoteVolumeUsd = t.DynamicMaxQuoteVolumeUsd;
+            if (t.DynamicRefreshMinutes > 0) _opts.DynamicRefreshMinutes = t.DynamicRefreshMinutes;
+            if (t.PaperStartingQuote > 0) _opts.PaperStartingQuote = t.PaperStartingQuote;
+
             // Unified profile: Live uses the same size/risk as Paper unless explicitly overridden.
             if (t.LiveEquityPerExchangeUsd > 0)
                 _opts.LiveEquityPerExchangeUsd = t.LiveEquityPerExchangeUsd;
@@ -96,6 +117,26 @@ public sealed class RuntimeRiskConfig
             _opts.PaperRequireFullFill = r.PaperRequireFullFill;
             _opts.FuturesRequireRoundTripEdge = r.RequireRoundTripEdge;
             _opts.FuturesIncludeFunding = r.IncludeFunding;
+            if (r.MinGrossSpreadPercent > 0) _opts.MinGrossSpreadPercent = r.MinGrossSpreadPercent;
+            if (r.MinTakeProfitUsd > 0) _opts.MinTakeProfitUsd = r.MinTakeProfitUsd;
+            if (r.MinSpreadPersistMs > 0) _opts.MinSpreadPersistMs = r.MinSpreadPersistMs;
+            if (r.MaxBookAgeMs > 0) _opts.MaxBookAgeMs = r.MaxBookAgeMs;
+            if (r.ScanIntervalMs >= 100) _opts.ScanIntervalMs = r.ScanIntervalMs;
+            if (r.FuturesMaxHoldSeconds >= 0) _opts.FuturesMaxHoldSeconds = r.FuturesMaxHoldSeconds;
+            _opts.SpatialScalpMode = r.SpatialScalpMode;
+            _opts.RequireSpreadingEdge = r.RequireSpreadingEdge;
+            if (r.PaperCloseFeeFactor > 0) _opts.PaperCloseFeeFactor = Math.Clamp(r.PaperCloseFeeFactor, 0.1m, 1m);
+            if (r.OpenEdgeBufferPercent >= 0) _opts.OpenEdgeBufferPercent = r.OpenEdgeBufferPercent;
+            _opts.RequireDepthFullFill = r.RequireDepthFullFill;
+            if (r.MinDepthScoreForUniverse > 0) _opts.MinDepthScoreForUniverse = r.MinDepthScoreForUniverse;
+            if (r.MaxLegsPerVenue > 0) _opts.MaxLegsPerVenue = r.MaxLegsPerVenue;
+            if (r.MaxWidthExpansionPercent > 0) _opts.MaxWidthExpansionPercent = r.MaxWidthExpansionPercent;
+            _opts.DynamicSymbols = r.DynamicSymbols;
+            if (r.DynamicTopN > 0) _opts.DynamicTopN = r.DynamicTopN;
+            if (r.DynamicMinQuoteVolumeUsd > 0) _opts.DynamicMinQuoteVolumeUsd = r.DynamicMinQuoteVolumeUsd;
+            if (r.DynamicMaxQuoteVolumeUsd > 0) _opts.DynamicMaxQuoteVolumeUsd = r.DynamicMaxQuoteVolumeUsd;
+            if (r.DynamicRefreshMinutes > 0) _opts.DynamicRefreshMinutes = r.DynamicRefreshMinutes;
+            if (r.PaperStartingQuote > 0) _opts.PaperStartingQuote = r.PaperStartingQuote;
             if (r.StopLossUsd != 0) _opts.FuturesStopLossUsd = r.StopLossUsd;
             if (r.DailyLossLimitUsd != 0) _opts.FuturesDailyLossLimitUsd = r.DailyLossLimitUsd;
             if (r.MinProfitPercent > 0) _opts.MinProfitPercent = r.MinProfitPercent;
@@ -196,4 +237,24 @@ public class RiskUiSettings
     public decimal LiveMaxNotionalUsd { get; set; }
     public int LiveMaxOpenPositions { get; set; }
     public decimal LiveStopLossUsd { get; set; }
+    public decimal MinGrossSpreadPercent { get; set; }
+    public decimal MinTakeProfitUsd { get; set; }
+    public int MinSpreadPersistMs { get; set; }
+    public int MaxBookAgeMs { get; set; }
+    public int ScanIntervalMs { get; set; }
+    public int FuturesMaxHoldSeconds { get; set; }
+    public bool SpatialScalpMode { get; set; }
+    public bool RequireSpreadingEdge { get; set; }
+    public decimal PaperCloseFeeFactor { get; set; }
+    public decimal OpenEdgeBufferPercent { get; set; }
+    public bool RequireDepthFullFill { get; set; } = true;
+    public decimal MinDepthScoreForUniverse { get; set; }
+    public int MaxLegsPerVenue { get; set; }
+    public decimal MaxWidthExpansionPercent { get; set; }
+    public bool DynamicSymbols { get; set; } = true;
+    public int DynamicTopN { get; set; }
+    public decimal DynamicMinQuoteVolumeUsd { get; set; }
+    public decimal DynamicMaxQuoteVolumeUsd { get; set; }
+    public int DynamicRefreshMinutes { get; set; }
+    public decimal PaperStartingQuote { get; set; }
 }

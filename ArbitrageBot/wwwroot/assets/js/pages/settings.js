@@ -113,11 +113,10 @@ AB.pages.settings = {
   _updateModeHint(s) {
     const t = (s && s.trading) || {};
     const isPaper = t.paperTrading !== false;
-    const modeEl = document.querySelector('#s_tradingPanel .panel-hd h2');
-    if (modeEl) {
-      modeEl.innerHTML = isPaper
-        ? 'Trading parameters <span class="muted" style="font-size:12px;font-weight:400">· 📄 PAPER mode</span>'
-        : 'Trading parameters <span class="pos" style="font-size:12px;font-weight:400">· 🔴 LIVE mode</span>';
+    const pill = document.getElementById('s_modePill');
+    if (pill) {
+      pill.textContent = isPaper ? 'PAPER' : 'LIVE';
+      pill.className = 'mode-pill ' + (isPaper ? 'paper' : 'live');
     }
   },
 
@@ -143,6 +142,27 @@ AB.pages.settings = {
     if (AB.$('s_fullFill')) AB.$('s_fullFill').checked = !!r.paperRequireFullFill;
     if (AB.$('s_reqRt')) AB.$('s_reqRt').checked = !!r.requireRoundTripEdge;
     if (AB.$('s_funding')) AB.$('s_funding').checked = r.includeFunding !== false;
+
+    set('s_minGross', r.minGrossSpreadPercent);
+    set('s_minTp', r.minTakeProfitUsd);
+    set('s_persistMs', r.minSpreadPersistMs);
+    set('s_bookAge', r.maxBookAgeMs);
+    set('s_scanMs', r.scanIntervalMs);
+    set('s_holdSec', r.futuresMaxHoldSeconds);
+    set('s_closeFee', r.paperCloseFeeFactor);
+    set('s_edgeBuffer', r.openEdgeBufferPercent);
+    set('s_depthScore', r.minDepthScoreForUniverse);
+    set('s_maxLegs', r.maxLegsPerVenue);
+    set('s_maxWidthExp', r.maxWidthExpansionPercent);
+    set('s_dynTopN', r.dynamicTopN);
+    set('s_dynMinVol', r.dynamicMinQuoteVolumeUsd);
+    set('s_dynMaxVol', r.dynamicMaxQuoteVolumeUsd);
+    set('s_dynRefresh', r.dynamicRefreshMinutes);
+    set('s_paperStart', r.paperStartingQuote);
+    if (AB.$('s_scalp') && r.spatialScalpMode != null) AB.$('s_scalp').checked = !!r.spatialScalpMode;
+    if (AB.$('s_spreadEdge') && r.requireSpreadingEdge != null) AB.$('s_spreadEdge').checked = !!r.requireSpreadingEdge;
+    if (AB.$('s_depthFill') && r.requireDepthFullFill != null) AB.$('s_depthFill').checked = r.requireDepthFullFill !== false;
+    if (AB.$('s_dynOn') && r.dynamicSymbols != null) AB.$('s_dynOn').checked = r.dynamicSymbols !== false;
   },
 
   applyPreset(name) {
@@ -301,6 +321,26 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     paperRequireFullFill: !!AB.$('s_fullFill')?.checked,
     requireRoundTripEdge: !!AB.$('s_reqRt')?.checked,
     includeFunding: !!AB.$('s_funding')?.checked,
+    minGrossSpreadPercent: num('s_minGross', 0.28),
+    minTakeProfitUsd: num('s_minTp', 0.8),
+    minSpreadPersistMs: int('s_persistMs', 500),
+    maxBookAgeMs: int('s_bookAge', 400),
+    scanIntervalMs: int('s_scanMs', 250),
+    futuresMaxHoldSeconds: int('s_holdSec', 0),
+    spatialScalpMode: !!AB.$('s_scalp')?.checked,
+    requireSpreadingEdge: !!AB.$('s_spreadEdge')?.checked,
+    paperCloseFeeFactor: num('s_closeFee', 0.85),
+    openEdgeBufferPercent: num('s_edgeBuffer', 0.02),
+    requireDepthFullFill: AB.$('s_depthFill') ? !!AB.$('s_depthFill').checked : true,
+    minDepthScoreForUniverse: num('s_depthScore', 0.85),
+    maxLegsPerVenue: int('s_maxLegs', 2),
+    maxWidthExpansionPercent: num('s_maxWidthExp', 0.12),
+    dynamicSymbols: AB.$('s_dynOn') ? !!AB.$('s_dynOn').checked : true,
+    dynamicTopN: int('s_dynTopN', 12),
+    dynamicMinQuoteVolumeUsd: num('s_dynMinVol', 8000000),
+    dynamicMaxQuoteVolumeUsd: num('s_dynMaxVol', 500000000),
+    dynamicRefreshMinutes: int('s_dynRefresh', 5),
+    paperStartingQuote: num('s_paperStart', 2500),
     liveEquityPerExchangeUsd: num('s_liveEquity', 2500),
     liveMarginUsageFraction: Math.min(0.85, Math.max(0.2, num('s_liveUsage', 0.35))),
     liveMaxNotionalUsd: maxN,
@@ -489,4 +529,16 @@ document.getElementById('btnLiveKill')?.addEventListener('click', async () => {
   } catch (e) {
     if (AB.$('live_status')) AB.$('live_status').textContent = String(e.message || e);
   }
+});
+
+
+// Settings tabs (RU)
+document.querySelectorAll('.settings-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.getAttribute('data-stab');
+    document.querySelectorAll('.settings-tab').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.settings-pane').forEach(p => {
+      p.classList.toggle('active', p.getAttribute('data-spane') === id);
+    });
+  });
 });

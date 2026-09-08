@@ -241,7 +241,27 @@ try
         liveMarginUsageFraction = risk.Snapshot.LiveMarginUsageFraction,
         liveMaxNotionalUsd = risk.Snapshot.LiveMaxNotionalUsd,
         liveMaxOpenPositions = risk.Snapshot.LiveMaxOpenPositions,
-        liveStopLossUsd = risk.Snapshot.LiveStopLossUsd
+        liveStopLossUsd = risk.Snapshot.LiveStopLossUsd,
+        minGrossSpreadPercent = risk.Snapshot.MinGrossSpreadPercent,
+        minTakeProfitUsd = risk.Snapshot.MinTakeProfitUsd,
+        minSpreadPersistMs = risk.Snapshot.MinSpreadPersistMs,
+        maxBookAgeMs = risk.Snapshot.MaxBookAgeMs,
+        scanIntervalMs = risk.Snapshot.ScanIntervalMs,
+        futuresMaxHoldSeconds = risk.Snapshot.FuturesMaxHoldSeconds,
+        spatialScalpMode = risk.Snapshot.SpatialScalpMode,
+        requireSpreadingEdge = risk.Snapshot.RequireSpreadingEdge,
+        paperCloseFeeFactor = risk.Snapshot.PaperCloseFeeFactor,
+        openEdgeBufferPercent = risk.Snapshot.OpenEdgeBufferPercent,
+        requireDepthFullFill = risk.Snapshot.RequireDepthFullFill,
+        minDepthScoreForUniverse = risk.Snapshot.MinDepthScoreForUniverse,
+        maxLegsPerVenue = risk.Snapshot.MaxLegsPerVenue,
+        maxWidthExpansionPercent = risk.Snapshot.MaxWidthExpansionPercent,
+        dynamicSymbols = risk.Snapshot.DynamicSymbols,
+        dynamicTopN = risk.Snapshot.DynamicTopN,
+        dynamicMinQuoteVolumeUsd = risk.Snapshot.DynamicMinQuoteVolumeUsd,
+        dynamicMaxQuoteVolumeUsd = risk.Snapshot.DynamicMaxQuoteVolumeUsd,
+        dynamicRefreshMinutes = risk.Snapshot.DynamicRefreshMinutes,
+        paperStartingQuote = risk.Snapshot.PaperStartingQuote
     }));
 
     app.MapPost("/api/paper/close/{tradeId:guid}", (

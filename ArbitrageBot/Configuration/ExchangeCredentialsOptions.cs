@@ -58,4 +58,25 @@ public class TradingUiSettings
     public int LiveMaxOpenPositions { get; set; } = 3;
     public decimal LiveStopLossUsd { get; set; } = -25m;
     public decimal LiveDailyLossLimitUsd { get; set; } = -80m;
+
+    public decimal MinGrossSpreadPercent { get; set; }
+    public decimal MinTakeProfitUsd { get; set; }
+    public int MinSpreadPersistMs { get; set; }
+    public int MaxBookAgeMs { get; set; }
+    public int ScanIntervalMs { get; set; }
+    public int FuturesMaxHoldSeconds { get; set; }
+    public bool SpatialScalpMode { get; set; }
+    public bool RequireSpreadingEdge { get; set; }
+    public decimal PaperCloseFeeFactor { get; set; }
+    public decimal OpenEdgeBufferPercent { get; set; }
+    public bool RequireDepthFullFill { get; set; } = true;
+    public decimal MinDepthScoreForUniverse { get; set; }
+    public int MaxLegsPerVenue { get; set; }
+    public decimal MaxWidthExpansionPercent { get; set; }
+    public bool DynamicSymbols { get; set; } = true;
+    public int DynamicTopN { get; set; }
+    public decimal DynamicMinQuoteVolumeUsd { get; set; }
+    public decimal DynamicMaxQuoteVolumeUsd { get; set; }
+    public int DynamicRefreshMinutes { get; set; }
+    public decimal PaperStartingQuote { get; set; }
 }
