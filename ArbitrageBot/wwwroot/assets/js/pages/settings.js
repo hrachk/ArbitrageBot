@@ -371,13 +371,20 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     liveStopLossUsd: trading.liveStopLossUsd
   };
   try {
-    await AB.api.post('/api/settings/trading', trading);
+    const res = await AB.api.post('/api/settings/trading', trading);
     await AB.api.post('/api/settings/risk', risk);
-    const n = (trading.liveEquityPerExchangeUsd * trading.futuresPaperLeverage * trading.liveMarginUsageFraction).toFixed(1);
-    const m = (n / trading.futuresPaperLeverage).toFixed(1);
+    const eff = (res && res.effective) || {};
+    const qs = eff.quoteSize != null ? eff.quoteSize : trading.quoteSize;
+    const mn = eff.maxNotionalUsd != null ? eff.maxNotionalUsd : trading.maxNotionalUsd;
+    const start = eff.paperStartingQuote != null ? eff.paperStartingQuote : trading.paperStartingQuote;
+    let msg = 'Saved · size $' + qs + ' · max notional $' + mn + ' · paper start $' + start + '/venue';
+    if (res && res.reseededBalances) msg += ' · balances RESEEDED';
+    else if (res && res.openPositions > 0) msg += ' · ' + res.openPositions + ' open — Reset paper after close to apply equity';
+    else if (res && res.tip) msg += ' · ' + res.tip;
     AB.$('s_msg').className = 'alert ok';
-    AB.$('s_msg').textContent = 'Saved → local-settings.json · live ~$' + n + ' notional / ~$' + m + ' margin per venue. Survives restart.';
+    AB.$('s_msg').textContent = msg;
     AB.$('s_msg').classList.remove('hidden');
+    if (AB.refreshSnapshot) AB.refreshSnapshot();
   } catch (e) {
     AB.$('s_msg').className = 'alert warn';
     AB.$('s_msg').textContent = e.message;

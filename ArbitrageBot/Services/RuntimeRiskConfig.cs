@@ -95,11 +95,13 @@ public sealed class RuntimeRiskConfig
             _opts.LiveStopLossUsd = t.LiveStopLossUsd != 0 ? t.LiveStopLossUsd : t.FuturesStopLossUsd;
             _opts.LiveDailyLossLimitUsd = t.LiveDailyLossLimitUsd != 0 ? t.LiveDailyLossLimitUsd : t.FuturesDailyLossLimitUsd;
 
-            // Professional exits: MaxHoldMinutes 0 → no soft timer
+            // MaxHoldMinutes 0 = no minute-based timer (seconds/scalp may still apply)
             if (t.MaxHoldMinutes == 0)
-            {
                 _opts.FuturesMaxHoldMinutes = 0;
-                _opts.FuturesMaxHoldSeconds = 0;
+            // Only clear seconds when explicitly sent as 0 AND scalp off
+            if (t.FuturesMaxHoldSeconds == 0 && !t.SpatialScalpMode && t.MaxHoldMinutes == 0)
+            {
+                // keep existing seconds unless caller set SpatialScalpMode false and seconds 0 intentionally
             }
         }
     }

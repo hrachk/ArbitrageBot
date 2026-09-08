@@ -180,11 +180,55 @@ try
     app.MapGet("/api/settings", (ISettingsStore store, RuntimeRiskConfig risk) =>
         Results.Json(store.GetPublicSettings(risk.Snapshot)));
 
-    app.MapPost("/api/settings/trading", async (TradingUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
+    app.MapPost("/api/settings/trading", async (
+        TradingUiSettings body,
+        ISettingsStore store,
+        RuntimeRiskConfig risk,
+        IFuturesPaperService paper,
+        ActiveMarketContext markets) =>
     {
+        // Unify equity: if paper start empty but equity set, use equity as paper start
+        if (body.PaperStartingQuote <= 0 && body.LiveEquityPerExchangeUsd > 0)
+            body.PaperStartingQuote = body.LiveEquityPerExchangeUsd;
+        if (body.LiveEquityPerExchangeUsd <= 0 && body.PaperStartingQuote > 0)
+            body.LiveEquityPerExchangeUsd = body.PaperStartingQuote;
+        // Size consistency
+        if (body.QuoteSize > 0 && body.MaxNotionalUsd > 0 && body.QuoteSize > body.MaxNotionalUsd)
+            body.QuoteSize = body.MaxNotionalUsd;
+
         await store.SaveTradingAsync(body);
         risk.ApplyTrading(body);
-        return Results.Ok(new { saved = true, appliedRuntime = true });
+
+        var snap = risk.Snapshot;
+        var reseeded = false;
+        var openN = paper.OpenCount;
+        if (openN == 0)
+        {
+            var exs = markets.Exchanges?.ToList() ?? snap.Exchanges?.ToList() ?? new List<string>();
+            reseeded = paper.ReseedBalancesIfIdle(exs);
+        }
+
+        return Results.Ok(new
+        {
+            saved = true,
+            appliedRuntime = true,
+            reseededBalances = reseeded,
+            openPositions = openN,
+            tip = openN > 0
+                ? "Size/edge applied now. Equity/balances apply after close all + Reset paper (or Save again with 0 open)."
+                : (reseeded ? "Paper balances reseeded from Equity / Paper starting quote." : "Runtime applied."),
+            effective = new
+            {
+                quoteSize = snap.QuoteSize,
+                maxNotionalUsd = snap.FuturesMaxNotionalUsd,
+                leverage = snap.FuturesPaperLeverage,
+                maxOpen = snap.FuturesMaxOpenPositions,
+                paperStartingQuote = snap.PaperStartingQuote,
+                liveEquity = snap.LiveEquityPerExchangeUsd,
+                minProfitPercent = snap.MinProfitPercent,
+                minGross = snap.MinGrossSpreadPercent
+            }
+        });
     });
 
     app.MapPost("/api/settings/risk", async (RiskUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
@@ -192,13 +236,14 @@ try
         risk.ApplyRisk(body);
         var s = risk.Snapshot;
         var prev = store.GetTrading();
+        // Merge: never drop fields that risk UI does not send (paper start, gross, scalp, …)
         await store.SaveTradingAsync(new TradingUiSettings
         {
             StrategyMode = s.StrategyMode,
             PaperTrading = s.PaperTrading,
             PaperAutoExecute = s.PaperAutoExecute,
             MinProfitPercent = s.MinProfitPercent,
-            QuoteSize = s.QuoteSize,
+            QuoteSize = s.QuoteSize > 0 ? s.QuoteSize : prev.QuoteSize,
             FuturesPaperLeverage = s.FuturesPaperLeverage,
             FuturesMaxOpenPositions = s.FuturesMaxOpenPositions,
             FuturesStopLossUsd = s.FuturesStopLossUsd,
@@ -206,7 +251,7 @@ try
             MaxHoldMinutes = s.FuturesMaxHoldMinutes,
             CloseBelowNetPercent = s.FuturesCloseBelowNetPercent,
             MaxMarginUsagePercent = s.FuturesMaxMarginUsagePercent,
-            MaxNotionalUsd = s.FuturesMaxNotionalUsd,
+            MaxNotionalUsd = s.FuturesMaxNotionalUsd > 0 ? s.FuturesMaxNotionalUsd : prev.MaxNotionalUsd,
             PaperCooldownMs = s.PaperCooldownMs,
             PaperRequireFullFill = s.PaperRequireFullFill,
             RequireRoundTripEdge = s.FuturesRequireRoundTripEdge,
@@ -216,7 +261,27 @@ try
             LiveMaxNotionalUsd = body.LiveMaxNotionalUsd > 0 ? body.LiveMaxNotionalUsd : prev.LiveMaxNotionalUsd,
             LiveMaxOpenPositions = body.LiveMaxOpenPositions > 0 ? body.LiveMaxOpenPositions : prev.LiveMaxOpenPositions,
             LiveStopLossUsd = body.LiveStopLossUsd != 0 ? body.LiveStopLossUsd : prev.LiveStopLossUsd,
-            LiveDailyLossLimitUsd = prev.LiveDailyLossLimitUsd
+            LiveDailyLossLimitUsd = prev.LiveDailyLossLimitUsd,
+            PaperStartingQuote = s.PaperStartingQuote > 0 ? s.PaperStartingQuote : prev.PaperStartingQuote,
+            MinGrossSpreadPercent = s.MinGrossSpreadPercent > 0 ? s.MinGrossSpreadPercent : prev.MinGrossSpreadPercent,
+            MinTakeProfitUsd = s.MinTakeProfitUsd > 0 ? s.MinTakeProfitUsd : prev.MinTakeProfitUsd,
+            MinSpreadPersistMs = s.MinSpreadPersistMs > 0 ? s.MinSpreadPersistMs : prev.MinSpreadPersistMs,
+            MaxBookAgeMs = s.MaxBookAgeMs > 0 ? s.MaxBookAgeMs : prev.MaxBookAgeMs,
+            ScanIntervalMs = s.ScanIntervalMs >= 100 ? s.ScanIntervalMs : prev.ScanIntervalMs,
+            FuturesMaxHoldSeconds = s.FuturesMaxHoldSeconds,
+            SpatialScalpMode = s.SpatialScalpMode,
+            RequireSpreadingEdge = s.RequireSpreadingEdge,
+            PaperCloseFeeFactor = s.PaperCloseFeeFactor > 0 ? s.PaperCloseFeeFactor : prev.PaperCloseFeeFactor,
+            OpenEdgeBufferPercent = s.OpenEdgeBufferPercent,
+            RequireDepthFullFill = s.RequireDepthFullFill,
+            MinDepthScoreForUniverse = s.MinDepthScoreForUniverse > 0 ? s.MinDepthScoreForUniverse : prev.MinDepthScoreForUniverse,
+            MaxLegsPerVenue = s.MaxLegsPerVenue > 0 ? s.MaxLegsPerVenue : prev.MaxLegsPerVenue,
+            MaxWidthExpansionPercent = s.MaxWidthExpansionPercent > 0 ? s.MaxWidthExpansionPercent : prev.MaxWidthExpansionPercent,
+            DynamicSymbols = s.DynamicSymbols,
+            DynamicTopN = s.DynamicTopN > 0 ? s.DynamicTopN : prev.DynamicTopN,
+            DynamicMinQuoteVolumeUsd = s.DynamicMinQuoteVolumeUsd > 0 ? s.DynamicMinQuoteVolumeUsd : prev.DynamicMinQuoteVolumeUsd,
+            DynamicMaxQuoteVolumeUsd = s.DynamicMaxQuoteVolumeUsd > 0 ? s.DynamicMaxQuoteVolumeUsd : prev.DynamicMaxQuoteVolumeUsd,
+            DynamicRefreshMinutes = s.DynamicRefreshMinutes > 0 ? s.DynamicRefreshMinutes : prev.DynamicRefreshMinutes
         });
         return Results.Ok(new { saved = true, appliedRuntime = true, risk = risk.Snapshot });
     });

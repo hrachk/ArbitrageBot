@@ -61,12 +61,39 @@ public class FuturesPaperService : IFuturesPaperService
         Reset(list);
     }
 
+    
+    public bool ReseedBalancesIfIdle(IEnumerable<string>? exchanges = null)
+    {
+        lock (_lock)
+        {
+            if (_positions.Count > 0)
+            {
+                _logger.LogInformation("Paper reseed skipped: {N} open positions — use Reset paper after close", _positions.Count);
+                return false;
+            }
+            var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
+                : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 0m);
+            if (start <= 0) start = 10_000m;
+            var keys = (exchanges ?? _margin.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (keys.Count == 0) keys = _margin.Keys.ToList();
+            foreach (var ex in keys)
+                _margin[ex] = start;
+            // also ensure any known keys updated
+            foreach (var k in _margin.Keys.ToList())
+                _margin[k] = start;
+            SaveOpenState();
+            _logger.LogInformation("Paper balances reseeded to {Start} USDT x {N} venues (from Settings)", start, _margin.Count);
+            return true;
+        }
+    }
+
     public void Reset(IEnumerable<string> exchanges)
     {
         lock (_lock)
         {
             _margin.Clear();
-            var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
+            var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
+                : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 10_000m);
             foreach (var ex in exchanges)
                 _margin[ex] = start;
             _positions.Clear();
@@ -141,16 +168,22 @@ public class FuturesPaperService : IFuturesPaperService
             var leverage = R.FuturesPaperLeverage > 0 ? R.FuturesPaperLeverage : 5m;
             if (leverage > 10m) leverage = 10m; // hard cap for paper safety
 
-            // Clamp size to max notional — never skip a good edge only because scan quote > cap
-            var notionalCap = R.FuturesMaxNotionalUsd > 0 ? R.FuturesMaxNotionalUsd
-                            : (R.QuoteSize > 0 ? R.QuoteSize : 100m);
+            // Settings-driven size: QuoteSize is the target; MaxNotional is the hard cap
+            var targetSize = R.QuoteSize > 0 ? R.QuoteSize : (opp.NotionalUsd > 0 ? opp.NotionalUsd : 100m);
+            var notionalCap = R.FuturesMaxNotionalUsd > 0 ? R.FuturesMaxNotionalUsd : targetSize;
+            var desired = Math.Min(targetSize, notionalCap);
+            if (desired < 5m) desired = 5m;
             var baseQty = opp.BaseQty;
-            var notional = opp.NotionalUsd;
-            if (notional > notionalCap && notional > 0 && baseQty > 0)
+            var notional = opp.NotionalUsd > 0 ? opp.NotionalUsd : desired;
+            if (notional > 0 && baseQty > 0 && Math.Abs(notional - desired) > 0.01m)
             {
-                var scale = notionalCap / notional;
+                var scale = desired / notional;
                 baseQty *= scale;
-                notional = notionalCap;
+                notional = desired;
+            }
+            else
+            {
+                notional = desired;
             }
             if (baseQty <= 0 || notional <= 0)
                 return Fail(opp, "Invalid size after clamp");
@@ -614,7 +647,8 @@ public class FuturesPaperService : IFuturesPaperService
             lock (_lock)
             {
                 _margin.Clear();
-                var startBal = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
+                var startBal = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
+                    : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 10_000m);
                 foreach (var ex in exchanges)
                     _margin[ex] = startBal;
                 if (snap.Margin != null)
@@ -701,7 +735,8 @@ public class FuturesPaperService : IFuturesPaperService
             {
                 // fresh margin but keep history visible
                 _margin.Clear();
-                var startBal = R.PaperStartingQuote > 0 ? R.PaperStartingQuote : 10_000m;
+                var startBal = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
+                    : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 10_000m);
                 foreach (var ex in exchanges)
                     _margin[ex] = startBal;
                 _positions.Clear();

@@ -29,6 +29,8 @@ public interface IFuturesPaperService
     int OpenCount { get; }
     int TradeAttempts { get; }
     void Reset(IEnumerable<string> exchanges);
+    /// <summary>If no open positions, set each venue margin to current PaperStartingQuote (from Settings).</summary>
+    bool ReseedBalancesIfIdle(IEnumerable<string>? exchanges = null);
     FuturesPaperTrade? ForceClose(Guid tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks);
     int PruneOrphanPositions(IReadOnlyCollection<string> activeSymbols);
     int ForceCloseAll();
