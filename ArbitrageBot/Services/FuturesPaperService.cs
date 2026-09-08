@@ -270,7 +270,8 @@ public class FuturesPaperService : IFuturesPaperService
 
     public FuturesPaperTrade? ForceClose(
         Guid tradeId,
-        Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks)
+        Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks,
+        string reason = "manual")
     {
         lock (_lock)
         {
@@ -327,8 +328,20 @@ public class FuturesPaperService : IFuturesPaperService
                     CloseFeesUsd = closeFees,
                     RealizedPnlUsd = pnl,
                     IsOpen = false,
-                    Status = "Closed(manual)",
-                    Message = $"Manual close | PnL {pnl:F4} USD"
+                    Status = reason switch
+                    {
+                        "orphan" or "pruned" => "Closed(orphan)",
+                        "reset" or "close-all" => "Closed(reset)",
+                        "stale" => "Closed(stale-no-book)",
+                        _ => "Closed(manual)"
+                    },
+                    Message = reason switch
+                    {
+                        "orphan" or "pruned" => $"Orphan prune (left universe) | PnL {pnl:F4} USD",
+                        "reset" or "close-all" => $"Reset / close-all | PnL {pnl:F4} USD",
+                        "stale" => $"Stale books | PnL {pnl:F4} USD",
+                        _ => $"Manual close (UI/API) | PnL {pnl:F4} USD"
+                    }
                 };
                 _trades[idx] = closedTrade;
                 _analytics.RecordClose(closedTrade);
@@ -543,7 +556,7 @@ public class FuturesPaperService : IFuturesPaperService
         var n = 0;
         foreach (var id in ids)
         {
-            if (ForceClose(id, (_, __, ___) => null) != null)
+            if (ForceClose(id, (_, __, ___) => null, "orphan") != null)
                 n++;
         }
         if (n > 0)
@@ -558,7 +571,7 @@ public class FuturesPaperService : IFuturesPaperService
         var n = 0;
         foreach (var id in ids)
         {
-            if (ForceClose(id, (_, __, ___) => null) != null)
+            if (ForceClose(id, (_, __, ___) => null, "close-all") != null)
                 n++;
         }
         return n;

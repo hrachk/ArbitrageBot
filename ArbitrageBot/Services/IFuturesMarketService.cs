@@ -31,7 +31,7 @@ public interface IFuturesPaperService
     void Reset(IEnumerable<string> exchanges);
     /// <summary>If no open positions, set each venue margin to current PaperStartingQuote (from Settings).</summary>
     bool ReseedBalancesIfIdle(IEnumerable<string>? exchanges = null);
-    FuturesPaperTrade? ForceClose(Guid tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks);
+    FuturesPaperTrade? ForceClose(Guid tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks, string reason = "manual");
     int PruneOrphanPositions(IReadOnlyCollection<string> activeSymbols);
     int ForceCloseAll();
     void PersistNow();
