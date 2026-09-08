@@ -644,7 +644,7 @@
                 <div class="settings-card" id="s_tradingPanel">
                   <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px">
                     <h3 style="margin:0">Профиль торговли <span id="s_modePill" class="mode-pill paper">PAPER</span></h3>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    <div class="preset-row">
                       <button type="button" class="btn sm primary" id="presetBalanced">Профи</button>
                       <button type="button" class="btn sm" id="presetConservative">Консерватив</button>
                       <button type="button" class="btn sm" id="presetAggressive">Сбаланс</button>
@@ -709,9 +709,9 @@
                 </div>
 
                 <div class="settings-card">
-                  <h3>Капитал (paper = live профиль)</h3>
+                  <h3>Капитал <span style="font-weight:500;color:#7c8ba1;font-size:12px">(paper = live профиль)</span></h3>
                   <div class="hint-block">Equity на биржу — стартовый paper-баланс и ориентир для live. Margin usage — доля equity под маржу.</div>
-                  <div class="settings-grid">
+                  <div class="settings-grid g2">
                     <div class="field">
                       <label>Equity / биржа USDT</label>
                       <input id="s_liveEquity" type="number" step="1" min="0"/>
@@ -892,8 +892,8 @@
                 </div>
                 <div class="muted" style="font-size:12px;margin-bottom:12px" id="live_modeLine">Режим: PAPER · ордера выключены</div>
 
-                <div style="border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px;margin-bottom:10px">
-                  <div style="font-size:12px;font-weight:700;color:#38bdf8;margin-bottom:8px">ШАГ 1 — Read-only (балансы, без ордеров)</div>
+                <div class="live-step ro">
+                  <div class="step-title">ШАГ 1 — Read-only (балансы, без ордеров)</div>
                   <div class="muted" style="font-size:12px;margin-bottom:10px">Фраза + read-only: реальные балансы/позиции. Ордера <b>не</b> отправляются.</div>
                   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
                     <div class="field" style="flex:1;min-width:160px;margin:0">
@@ -908,8 +908,8 @@
                   </div>
                 </div>
 
-                <div style="border:1px solid rgba(248,113,113,0.3);border-radius:10px;padding:12px;margin-bottom:10px">
-                  <div style="font-size:12px;font-weight:700;color:#f87171;margin-bottom:8px">ШАГ 2 — Full LIVE (реальные ордера)</div>
+                <div class="live-step full">
+                  <div class="step-title">ШАГ 2 — Full LIVE (реальные ордера)</div>
                   <div class="muted" style="font-size:12px;margin-bottom:10px">Снять Read-only и снова Enable. <b>Реальные деньги!</b></div>
                   <div style="display:flex;gap:8px;flex-wrap:wrap">
                     <button type="button" class="btn" id="btnLiveDisable">Disable Live</button>

@@ -209,33 +209,34 @@ AB.pages.settings = {
     if (AB.$('s_funding')) AB.$('s_funding').checked = t.includeFunding !== false;
 
     const conns = s.connections || {};
-    AB.$('s_exchanges').innerHTML = Object.entries(conns).map(([name, c]) => `
-      <div class="card ex-card" data-ex="${name}">
-        <div class="ex-head">
-          <strong>${name}</strong>
-          <label style="display:flex;align-items:center;gap:6px;margin:0">
-            <input type="checkbox" class="ex-enabled" ${c.enabled?'checked':''}/> Enabled
-          </label>
-        </div>
-        <div class="muted" style="font-size:11px">${c.hasApiKey ? 'Key: '+c.apiKeyMasked : 'No API key stored'} · ${c.permission||'read-only'}</div>
-        <div class="form-row">
-          <div class="field"><label>API Key</label><input class="ex-key" type="text" placeholder="${c.hasApiKey?'•••• leave blank to keep':''}" autocomplete="off"/></div>
-          <div class="field"><label>API Secret</label><input class="ex-secret" type="password" placeholder="${c.hasApiSecret?'•••• leave blank to keep':''}" autocomplete="new-password"/></div>
-        </div>
-        <div class="form-row">
-          <div class="field"><label>Passphrase ${c.needsPassphrase ? '(required)' : '(if any)'}</label><input class="ex-pass" type="password" placeholder="${c.hasPassphrase?'•••• keep':''}" autocomplete="new-password"/></div>
-          <div class="field"><label>Permission</label>
-            <select class="ex-perm">
-              <option value="read-only" ${c.permission!=='trade'?'selected':''}>read-only</option>
-              <option value="trade" ${c.permission==='trade'?'selected':''}>trade</option>
-            </select>
+    AB.$('s_exchanges').innerHTML = Object.entries(conns).map(([name, c]) => {
+        const on = !!c.enabled;
+        const has = !!(c.hasKey || c.apiKeyMasked || c.keyHint);
+        const mask = c.apiKeyMasked || c.keyHint || (has ? '••••••••' : 'нет ключа');
+        const perm = c.permission || 'read-only';
+        return `<div class="ex-card" data-ex="${name}">
+          <div class="ex-card-hd">
+            <div class="ex-name"><span class="ex-dot ${on ? '' : 'off'}"></span>${name}</div>
+            <label class="ex-enable-row"><input type="checkbox" class="ex-enabled" ${on ? 'checked' : ''}/> Включён</label>
           </div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <button type="button" class="btn primary save-ex">Save ${name}</button>
-          <button type="button" class="btn danger clear-ex">Clear ${name}</button>
-        </div>
-      </div>`).join('') || '<div class="muted">No exchanges in config</div>';
+          <div class="ex-meta">Key: ${mask} · ${perm}</div>
+          <div class="settings-grid">
+            <div class="field"><label>API Key</label><input class="ex-key" type="password" placeholder="•••• leave blank to keep" autocomplete="off"/></div>
+            <div class="field"><label>API Secret</label><input class="ex-secret" type="password" placeholder="•••• leave blank to keep" autocomplete="new-password"/></div>
+            <div class="field"><label>Passphrase</label><input class="ex-pass" type="password" placeholder="${name==='OKX'||name==='Bitget'?'required / keep':'optional / keep'}" autocomplete="new-password"/></div>
+            <div class="field"><label>Permission</label>
+              <select class="ex-perm">
+                <option value="read-only" ${perm!=='trade'?'selected':''}>read-only</option>
+                <option value="trade" ${perm==='trade'?'selected':''}>trade</option>
+              </select>
+            </div>
+          </div>
+          <div class="ex-actions">
+            <button type="button" class="btn primary save-ex">Save ${name}</button>
+            <button type="button" class="btn clear-ex">Clear</button>
+          </div>
+        </div>`;
+      }).join('') || '<div class="muted">No exchanges in config</div>';
 
     document.querySelectorAll('.save-ex').forEach(btn => {
       btn.onclick = async () => {
