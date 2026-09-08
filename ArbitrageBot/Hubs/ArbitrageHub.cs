@@ -9,7 +9,7 @@ public class ArbitrageHub : Hub
 
     public ArbitrageHub(ArbitrageState state)
     {
-        _state = state;
+        _state = state; 
     }
 
     public override async Task OnConnectedAsync()

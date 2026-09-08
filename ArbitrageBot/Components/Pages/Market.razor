@@ -1,0 +1,46 @@
+@page "/market"
+@inject ArbitrageState State
+@inject IFuturesMarketService FutMarket
+@inject ActiveMarketContext Markets
+@implements IDisposable
+
+<PageTitle>Market · ArbitrageBot</PageTitle>
+
+<div class="page-hd">
+  <h1>Market</h1>
+  <p class="muted">Live books status · symbols under watch</p>
+</div>
+
+<div class="card">
+  <div class="card-hd"><h2>Active symbols</h2></div>
+  <div class="chips">
+    @foreach (var s in Markets.Symbols)
+    {
+      <span class="chip">@s</span>
+    }
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <div class="card-hd"><h2>Connection status</h2></div>
+  <div class="status-grid">
+    @foreach (var kv in FutMarket.ConnectionStatus.OrderBy(x => x.Key))
+    {
+      var ok = kv.Value.Contains("Synced", StringComparison.OrdinalIgnoreCase)
+            || kv.Value.Contains("book-ticker", StringComparison.OrdinalIgnoreCase);
+      <div class="status-item @(ok ? "ok" : "bad")">
+        <span class="mono">@kv.Key</span>
+        <span class="muted">@kv.Value</span>
+      </div>
+    }
+  </div>
+</div>
+
+@code {
+    System.Threading.Timer? _timer;
+    protected override void OnInitialized()
+    {
+        _timer = new System.Threading.Timer(_ => InvokeAsync(StateHasChanged), null, 1500, 1500);
+    }
+    public void Dispose() => _timer?.Dispose();
+}

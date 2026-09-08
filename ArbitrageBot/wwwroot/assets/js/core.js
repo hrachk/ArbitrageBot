@@ -41,6 +41,12 @@ AB.api = {
     });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
+  },
+  async del(url) {
+    const r = await fetch(url, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    const t = await r.text();
+    return t ? JSON.parse(t) : {};
   }
 };
 
@@ -107,6 +113,16 @@ AB.closePaper = async (tradeId) => {
     await AB.refreshSnapshot();
   } catch (e) {
     alert('Close failed: ' + e.message);
+  }
+};
+
+AB.closeAllPaper = async () => {
+  if (!confirm('Close ALL open paper positions?')) return;
+  try {
+    await AB.api.post('/api/paper/close-all');
+    await AB.refreshSnapshot();
+  } catch (e) {
+    alert('Close all failed: ' + e.message);
   }
 };
 
@@ -244,3 +260,8 @@ if (document.readyState === 'loading') {
   setTimeout(AB.boot, 50);
 }
 window.addEventListener('load', () => setTimeout(AB.boot, 100));
+
+document.addEventListener('DOMContentLoaded', () => {
+  const r = document.getElementById('btnRefreshTop');
+  if (r) r.addEventListener('click', () => { if (AB.refreshSnapshot) AB.refreshSnapshot(); if (AB.pages.funding) AB.pages.funding.load(); if (AB.pages.live) AB.pages.live.load(); });
+});

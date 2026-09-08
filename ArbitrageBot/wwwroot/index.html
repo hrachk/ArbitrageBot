@@ -11,33 +11,38 @@
 <body>
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand">
+    <div class="brand-block">
       <div class="brand-mark">AB</div>
       <div class="brand-text">
         <strong>ArbitrageBot</strong>
-        <span>Futures cross · console</span>
+        <span>Futures cross</span>
       </div>
     </div>
     <nav class="nav">
       <button type="button" class="nav-item active" data-page="dashboard"><span class="nav-ico">▣</span> Dashboard</button>
-      <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◈</span> Market</button>
+      <button type="button" class="nav-item" data-page="funding"><span class="nav-ico">◈</span> Funding rates</button>
+      <button type="button" class="nav-item" data-page="market"><span class="nav-ico">◇</span> Market</button>
+      <button type="button" class="nav-item" data-page="screener"><span class="nav-ico">▦</span> Screener</button>
       <button type="button" class="nav-item" data-page="reports"><span class="nav-ico">▤</span> Reports</button>
+      <button type="button" class="nav-item" data-page="live"><span class="nav-ico">⬤</span> Live positions</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-ico">⚙</span> Settings</button>
+      <button type="button" class="nav-item" data-page="help"><span class="nav-ico">?</span> Help</button>
     </nav>
     <div class="side-meta">
-      <span class="pill paper" id="modeBadge">PAPER</span>
+      <div id="modeBadge" class="pill paper">PAPER</div>
       <div class="status-line"><span class="led" id="connDot"></span><span id="connText">Connecting…</span></div>
-      <div class="mono" id="lastScan">scan —</div>
+      <div class="mono" style="font-size:10px;color:var(--text3)" id="lastScan">scan —</div>
     </div>
   </aside>
 
   <div class="workspace">
-    <header class="topbar">
+    <header class="topbar-spa">
       <h1 id="pageTitle">Dashboard</h1>
       <div class="topbar-right">
         <span class="top-meta" id="topHint">waiting for data…</span>
-        <button type="button" class="btn sm" id="btnPause">Pause</button>
-        <button type="button" class="btn sm danger" id="btnResetPaper">Reset paper</button>
+        <button type="button" class="btn" id="btnPause">Pause</button>
+        <button type="button" class="btn danger" id="btnResetPaper">Reset paper</button>
+        <button type="button" class="btn primary" id="btnRefreshTop">↻ Refresh</button>
       </div>
     </header>
 
@@ -45,16 +50,25 @@
       <!-- DASHBOARD -->
       <section class="page active" data-page="dashboard">
         <div class="banner info" id="d_banner">
-          <b>PAPER · live-like rules</b> — same thresholds as intended real trading (RT edge, full fill, min 0.10%). Few signals is normal. No real orders.
+          <b id="d_modeBadgeInline">📄 PAPER · live-like rules</b> — same thresholds as intended real trading (RT edge, full fill, min 0.10%). Few signals is normal. No real orders.
         </div>
         <div class="kpi-row">
           <div class="kpi"><div class="kpi-l">Scans</div><div class="kpi-v" id="d_scans">0</div></div>
           <div class="kpi"><div class="kpi-l">Signals</div><div class="kpi-v pos" id="d_opps">0</div></div>
           <div class="kpi"><div class="kpi-l">Best net</div><div class="kpi-v" id="d_best">—</div></div>
           <div class="kpi"><div class="kpi-l">Realized</div><div class="kpi-v" id="d_pnl">—</div></div>
-          <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="d_open">0</div></div>
+          <div class="kpi"><div class="kpi-l">Open p/L/ex</div><div class="kpi-v" id="d_open" style="font-size:13px">0p / 0L / 0ex</div></div>
           <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="d_day">—</div></div>
         </div>
+
+        <div class="panel arb-board">
+          <div class="arb-hd">
+            <span class="panel-title">Live arbitrage board</span>
+            <span class="panel-sub" id="d_arbBoardSub">real-time · net after fees · sorted by edge</span>
+          </div>
+          <div id="d_arbBoard" class="arb-board-body"><div class="arb-empty">Waiting for scan…</div></div>
+        </div>
+
         <div class="g2" style="margin-bottom:12px">
           <div class="panel">
             <div class="panel-hd"><h2 class="panel-title">System</h2></div>
@@ -69,8 +83,8 @@
         </div>
         <div class="g2">
           <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Top signals</h2><span class="panel-sub">net after open fees</span></div>
-            <div class="scroll">
+            <div class="panel-hd"><h2 class="panel-title">Top signals</h2><span class="panel-sub">net after open fees · 7 visible</span></div>
+            <div class="scroll-signals">
               <table class="data">
                 <thead><tr><th>Symbol</th><th>Long → Short</th><th>Net</th><th>Est $</th><th>Fill</th></tr></thead>
                 <tbody id="d_oppBody"><tr><td colspan="5" class="empty">Waiting for scan…</td></tr></tbody>
@@ -79,12 +93,28 @@
           </div>
           <div class="panel">
             <div class="panel-hd"><h2 class="panel-title">Recent trades</h2></div>
-            <div class="scroll">
+            <div class="scroll-trades">
               <table class="data">
                 <thead><tr><th>Time</th><th>Symbol</th><th>PnL</th><th>Status</th></tr></thead>
                 <tbody id="d_tradeBody"><tr><td colspan="4" class="empty">No trades yet</td></tr></tbody>
               </table>
             </div>
+          </div>
+        </div>
+        <div class="g2" style="margin-top:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Paper quality</h2><span class="panel-sub">ledger · skips</span></div>
+            <div id="d_quality" class="muted" style="font-size:13px">—</div>
+            <div id="d_skips" style="margin-top:10px;font-size:12px"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Live spread map</h2><span class="panel-sub">top nets · 5 visible</span></div>
+            <div id="d_spreadBars" class="spread-bars-body"><div class="empty">Waiting for signals…</div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Venue mid snapshot</h2><span class="panel-sub">best signal symbol</span></div>
+            <div id="d_venueMids" class="muted" style="font-size:13px">—</div>
+            <div class="canvas-box" style="margin-top:8px"><canvas id="d_overlayMini"></canvas></div>
           </div>
         </div>
         <div class="panel" style="margin-top:12px">
@@ -93,121 +123,503 @@
         </div>
       </section>
 
-      <!-- MARKET -->
-      <section class="page" data-page="market">
-        <div class="mkt-toolbar">
-          <div class="left">
-            <select id="m_symbol"></select>
-            <select id="m_interval">
-              <option value="1">1m</option>
-              <option value="5">5m</option>
-              <option value="15" selected>15m</option>
-              <option value="60">1h</option>
-              <option value="240">4h</option>
-            </select>
-            <span class="price-pill" id="m_last">—</span>
-            <span class="muted mono" id="m_chartSrc" style="font-size:11px"></span>
+
+      <!-- FUNDING -->
+      <section class="page" data-page="funding">
+        <div class="panel">
+          <div class="panel-hd">
+            <span class="panel-title">Funding rates — all pairs</span>
+            <span class="panel-sub">delta = receive(short) − pay(long) · polled every 5 min</span>
           </div>
-          <div class="right">
-            <span class="tag" id="m_streams">streams —</span>
-          </div>
+          <div id="fundingList"><div class="empty">Loading funding…</div></div>
         </div>
-        <div class="mkt-layout">
-          <div>
-            <div class="chart-box" id="tv_wrap">
-              <div class="chart-placeholder" id="tv_placeholder">Select a symbol to load chart…</div>
-              <iframe id="tv_frame" title="TradingView" style="display:none" allowtransparency="true" scrolling="no" allowfullscreen></iframe>
+      </section>
+
+      <!-- LIVE -->
+      <section class="page" data-page="live">
+        <div class="banner warn" id="live_banner"><b>Live mode</b> · balances and positions from API keys</div>
+        <div class="g3" style="margin-bottom:12px">
+          <div class="kpi" style="border-color:rgba(45,212,191,.3)">
+            <div class="kpi-l">Live total (USDT)</div>
+            <div class="kpi-v" style="color:var(--accent)" id="live_total">—</div>
+          </div>
+          <div class="kpi"><div class="kpi-l">Open hedges</div><div class="kpi-v" id="live_openN">—</div></div>
+          <div class="kpi"><div class="kpi-l">Funding this period</div><div class="kpi-v" id="live_fund">—</div></div>
+        </div>
+        <div class="panel" style="border-color:rgba(56,189,248,.25);margin-bottom:12px">
+          <div class="panel-hd"><span class="panel-title">Exchange balances</span>
+            <button type="button" class="btn sm" id="btnLiveRefresh">↻ Refresh</button>
+          </div>
+          <div class="g3" id="live_balCards"><div class="empty">Open Settings → API keys, then refresh</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-hd"><span class="panel-title">Hold decisions</span><span class="panel-sub">HOLD / CLOSE engine</span></div>
+          <div id="live_holdCards"><div class="empty">No open positions</div></div>
+        </div>
+      </section>
+      <!-- MARKET: multi-exchange terminal 1:1 -->
+      <section class="page" data-page="market">
+        <!-- ══ TERMINAL TOP BAR ══ -->
+        <div class="terminal">
+          <div class="topbar">
+            <div class="tb-left">
+              <span class="brand">AB</span>
+              <div id="m_symTabs" style="display:flex;gap:4px;flex-wrap:wrap"></div>
             </div>
-            <div class="panel" style="margin-top:12px">
-              <div class="panel-hd"><h2 class="panel-title">Signals</h2></div>
-              <div class="scroll" style="max-height:220px">
-                <table class="data">
-                  <thead><tr><th>Symbol</th><th>Route</th><th>Open%</th><th>RT%</th><th>Est $</th></tr></thead>
-                  <tbody id="m_oppBody"><tr><td colspan="5" class="empty">No signals</td></tr></tbody>
-                </table>
+            <div class="tb-right">
+              <span class="tb-stat" id="m_scanStat">scan —</span>
+              <span class="led" id="m_led"></span>
+              <span class="tb-stat" id="m_exLive">— ex</span>
+              <span class="mode-pill ro" id="m_modePill">PAPER</span>
+            </div>
+          </div>
+
+          <!-- ══ MAIN LAYOUT ══ -->
+          <div class="layout">
+
+            <!-- LEFT: Order book -->
+            <div class="left-col">
+              <div class="panel-hd">
+                <span class="ph-title">📖 Стакан заявок</span>
+                <span class="ph-sub" id="obSym">—</span>
+              </div>
+              <!-- Exchange tabs -->
+              <div class="ex-tabs" id="m_exTabs"></div>
+              <!-- Asks -->
+              <div class="ob-wrap">
+                <div class="ob-asks" id="ob-asks"></div>
+                <!-- Mid price -->
+                <div class="ob-mid">
+                  <span class="ob-price" id="ob-mid-price">—</span>
+                  <span class="ob-spread" id="ob-spread">спред —</span>
+                </div>
+                <!-- Bids -->
+                <div class="ob-bids" id="ob-bids"></div>
+              </div>
+              <!-- Bid/Ask imbalance bar -->
+              <div style="padding:6px 10px;border-top:1px solid var(--b)">
+                <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-bottom:3px">
+                  <span>🟢 Покупатели</span><span>Продавцы 🔴</span>
+                </div>
+                <div style="background:rgba(240,92,92,.25);border-radius:3px;height:6px;overflow:hidden">
+                  <div id="m_depthBar" style="height:100%;background:var(--green);border-radius:3px;width:50%;transition:width .5s"></div>
+                </div>
+                <div style="font-size:9px;color:var(--t3);margin-top:2px;text-align:center" id="m_depthLbl">—</div>
+              </div>
+              <!-- Best arb for this symbol -->
+              <div style="padding:10px;border-top:1px solid var(--b)">
+                <div style="font-size:10px;font-weight:700;color:var(--t2);margin-bottom:6px">⚡ Лучший арбитраж</div>
+                <div style="font-size:11px;color:var(--t2);margin-bottom:2px" id="m_liveRoute">Нет данных</div>
+                <div style="font-family:var(--mono);font-size:18px;font-weight:800;color:var(--green);margin-bottom:8px" id="liveEdge">—</div>
+                <button type="button" class="arb-exec" id="m_oneClick" disabled
+                  style="width:100%;padding:7px;font-size:12px;font-weight:700">
+                  ⚡ Открыть хедж одним кликом
+                </button>
               </div>
             </div>
-            <div class="panel" style="margin-top:12px">
-              <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
-              <div id="m_positions" class="pos-list"><div class="empty">No open hedges</div></div>
+
+            <!-- CENTER: Chart + panels -->
+            <div class="center-col">
+              <!-- Chart area -->
+              <div class="chart-area" style="position:relative;overflow:hidden">
+                <div class="chart-hd">
+                  <div>
+                    <div style="font-size:9px;color:var(--t3);margin-bottom:1px" id="chartSym">— · Futures perp</div>
+                    <div style="display:flex;align-items:baseline;gap:8px">
+                      <span class="price-big" id="chartPrice">—</span>
+                      <span class="price-chg" id="chartChg" style="color:var(--t3)">—</span>
+                    </div>
+                  </div>
+                  <div style="font-size:10px;color:var(--t3)">Сравнение цен по биржам в реальном времени</div>
+                </div>
+                <div class="ex-compare" id="exCompare" style="position:absolute;top:52px;left:10px;z-index:2"></div>
+                <div style="position:absolute;inset:56px 0 0 0">
+                  <canvas id="mainChart" style="width:100%;height:100%;display:block"></canvas>
+                </div>
+              </div>
+
+              <!-- Bottom 3 panels -->
+              <div class="bottom-area">
+
+                <!-- Arb scanner -->
+                <div class="bottom-panel">
+                  <div class="panel-hd">
+                    <span class="ph-title">🔍 Арбитражные возможности</span>
+                    <span class="ph-sub" id="arbCount">—</span>
+                  </div>
+                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
+                    Net% = прибыль после комиссий открытия · RT% = после всех комиссий · Нажми <b>Exec</b> чтобы открыть
+                  </div>
+                  <div id="arbList" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                </div>
+
+                <!-- Open positions -->
+                <div class="bottom-panel">
+                  <div class="panel-hd">
+                    <span class="ph-title">📊 Открытые позиции</span>
+                    <span class="ph-sub" id="m_posSub">—</span>
+                  </div>
+                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
+                    Реализованный PnL: <b id="m_posRealized" style="color:var(--t2)">—</b>
+                    &nbsp;·&nbsp; нажми ✕ чтобы закрыть позицию
+                  </div>
+                  <div id="posTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                </div>
+
+                <!-- Funding rates -->
+                <div class="bottom-panel">
+                  <div class="panel-hd">
+                    <span class="ph-title">💸 Funding rates</span>
+                    <span class="ph-sub">каждые 5 мин · APR = годовая доходность</span>
+                  </div>
+                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
+                    Delta = получаем(шорт) − платим(лонг) · нажми на строку чтобы выбрать пару
+                  </div>
+                  <div id="fundTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- RIGHT: Trade panel -->
+            <div class="right-col">
+              <div style="padding:10px 12px;border-bottom:1px solid var(--b)">
+                <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px">📋 Открыть хедж вручную</div>
+                <div style="font-size:10px;color:var(--t3)">Хедж = LONG на одной бирже + SHORT на другой одновременно</div>
+                <div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(0,0,0,.25);font-size:11px" id="m_tradeMode">
+                  Режим: <b>📄 PAPER</b>
+                </div>
+              </div>
+
+              <div class="trade-form" id="tradeForm">
+                <!-- Symbol display -->
+                <div style="padding:4px 0">
+                  <div class="tf-label" style="margin-bottom:3px">Символ (пара)</div>
+                  <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--blue)" id="m_tradeSym">—</div>
+                </div>
+
+                <!-- Long exchange -->
+                <div>
+                  <div class="tf-label" style="margin-bottom:3px">🟢 LONG биржа (покупаем)</div>
+                  <select id="m_tradeEx" style="width:100%;background:rgba(38,212,138,.08);border:1px solid rgba(38,212,138,.3);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px;font-weight:600"></select>
+                </div>
+
+                <!-- Short exchange -->
+                <div>
+                  <div class="tf-label" style="margin-bottom:3px">🔴 SHORT биржа (продаём)</div>
+                  <select id="m_tradeExShort" style="width:100%;background:rgba(240,92,92,.08);border:1px solid rgba(240,92,92,.3);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px;font-weight:600"></select>
+                </div>
+
+                <!-- Size -->
+                <div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                    <span class="tf-label">💵 Размер позиции (USDT)</span>
+                    <span style="font-size:10px;color:var(--accent);font-family:var(--mono)" id="sizeEst">—</span>
+                  </div>
+                  <input class="tf-input" type="number" id="sizeIn" value="100" min="5"
+                    style="font-size:14px;font-weight:700;text-align:left;padding:8px"/>
+                  <div style="display:flex;gap:4px;margin-top:5px" id="m_sizeBtns">
+                    <button type="button" class="pct-btn" data-size="50" style="font-size:11px">$50</button>
+                    <button type="button" class="pct-btn" data-size="100" style="font-size:11px">$100</button>
+                    <button type="button" class="pct-btn" data-size="250" style="font-size:11px">$250</button>
+                    <button type="button" class="pct-btn" data-size="500" style="font-size:11px">$500</button>
+                  </div>
+                </div>
+
+                <!-- Leverage -->
+                <div>
+                  <div class="tf-label" style="margin-bottom:3px">⚙️ Плечо (множитель)</div>
+                  <div class="lev-btns" id="m_levBtns" style="gap:5px">
+                    <button type="button" class="lev-btn" data-lev="1" style="flex:1;padding:6px;font-size:12px">1×</button>
+                    <button type="button" class="lev-btn active" data-lev="3" style="flex:1;padding:6px;font-size:12px">3×</button>
+                    <button type="button" class="lev-btn" data-lev="5" style="flex:1;padding:6px;font-size:12px">5×</button>
+                    <button type="button" class="lev-btn" data-lev="10" style="flex:1;padding:6px;font-size:12px">10×</button>
+                  </div>
+                </div>
+
+                <!-- Summary box -->
+                <div style="background:rgba(0,0,0,.25);border:1px solid var(--b);border-radius:7px;padding:10px">
+                  <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                    <span style="font-size:11px;color:var(--t3)">Маржа на биржу</span>
+                    <span style="font-family:var(--mono);font-size:12px;font-weight:700" id="marginOut">—</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                    <span style="font-size:11px;color:var(--t3)">Текущий спред</span>
+                    <span style="font-family:var(--mono);font-size:13px;font-weight:800" id="m_hedgePx">—</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="font-size:11px;color:var(--t3)">Long / Short</span>
+                    <span style="font-size:11px;color:var(--t2)" id="m_hedgeHint">выбери биржи выше</span>
+                  </div>
+                </div>
+
+                <!-- EXECUTE BUTTON -->
+                <button type="button" class="exec-btn long" id="execBtn"
+                  style="font-size:14px;padding:12px;margin-top:2px">
+                  📄 Открыть Paper Hedge
+                </button>
+
+                <!-- Hint text -->
+                <div id="m_execHint" style="font-size:10px;color:var(--t3);text-align:center;line-height:1.5">
+                  В PAPER режиме сделки симулируются без реальных ордеров.<br/>
+                  Переключись в LIVE в Settings для реальных операций.
+                </div>
+              </div>
             </div>
           </div>
-          <div class="panel ob-panel">
-            <div class="panel-hd"><h2 class="panel-title">Order books</h2><span class="panel-sub">live WS</span></div>
-            <div id="m_depth"><div class="empty">Waiting for books…</div></div>
-          </div>
         </div>
-        <div class="panel" style="margin-top:12px">
-          <div class="panel-hd"><h2 class="panel-title">Cross-exchange tape</h2></div>
-          <div class="scroll" style="max-height:200px">
-            <table class="data">
-              <thead><tr><th>Symbol</th><th>Exchange</th><th>Bid</th><th>Ask</th><th>Spread</th></tr></thead>
-              <tbody id="m_bookBody"><tr><td colspan="5" class="empty">—</td></tr></tbody>
-            </table>
+        <div class="toast" id="toast"></div>
+      </section>
+
+      <!-- SCREENER -->
+      <section class="page" data-page="screener">
+        <div class="banner info">
+          <b>Market screener</b> — pairs ranked by activity intensity (volume, cross-venue gap, depth, arb signal).
+          Select a row for live mid chart and venue breakdown.
+        </div>
+        <div class="scr-kpi-row">
+          <div class="kpi"><div class="kpi-l">Tracked</div><div class="kpi-v" id="scr_n">0</div></div>
+          <div class="kpi"><div class="kpi-l">Hot (≥70)</div><div class="kpi-v" id="scr_hot" style="color:#fbbf24">0</div></div>
+          <div class="kpi"><div class="kpi-l">Max cross Δ</div><div class="kpi-v" id="scr_maxDelta">—</div></div>
+          <div class="kpi"><div class="kpi-l">With arb signal</div><div class="kpi-v pos" id="scr_arbN">0</div></div>
+        </div>
+        <div class="scr-filters">
+          <input type="search" id="scr_q" placeholder="Filter symbol…" style="min-width:140px"/>
+          <label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="scr_multi" checked/> Multi-venue only
+          </label>
+          <label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="scr_depth"/> Depth ≥ 1×
+          </label>
+          <select id="scr_sort">
+            <option value="intensity">Sort: Intensity</option>
+            <option value="delta">Sort: Cross Δ</option>
+            <option value="vol">Sort: Volume</option>
+            <option value="net">Sort: Arb net</option>
+            <option value="depth">Sort: Depth</option>
+          </select>
+          <span class="muted mono" id="scr_hint" style="margin-left:auto;font-size:11px"></span>
+        </div>
+        <div class="screener-layout">
+          <div class="panel" style="margin:0">
+            <div class="panel-hd"><h2 class="panel-title">Universe</h2><span class="panel-sub">live from bot books + discovery</span></div>
+            <div class="scr-table-wrap">
+              <table class="scr-table">
+                <thead>
+                  <tr>
+                    <th data-k="intensity">Intensity</th>
+                    <th data-k="symbol">Symbol</th>
+                    <th data-k="venues">Venues</th>
+                    <th data-k="vol">Vol 24h</th>
+                    <th data-k="depth">Depth×</th>
+                    <th data-k="delta">Cross Δ</th>
+                    <th data-k="net">Arb net</th>
+                  </tr>
+                </thead>
+                <tbody id="scr_body">
+                  <tr><td colspan="7" class="empty">Waiting for market data…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel" style="margin:0">
+            <div class="panel-hd">
+              <h2 class="panel-title" id="scr_selTitle">Select a pair</h2>
+              <span class="panel-sub" id="scr_selSub">detail</span>
+            </div>
+            <div id="scr_chips" style="margin-bottom:10px"></div>
+            <div class="scr-detail-chart">
+              <canvas id="scr_chart" width="480" height="200" style="width:100%;height:200px;display:block"></canvas>
+            </div>
+            <div id="scr_meta" class="muted" style="margin-top:12px;font-size:13px;line-height:1.55">
+              Click a row to plot live mids across exchanges and see intensity breakdown.
+            </div>
+            <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn primary" id="scr_toMarket" disabled>Open in Market</button>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- REPORTS -->
       <section class="page" data-page="reports">
-        <div class="banner info">Paper analytics · files in <code class="mono">data/paper/</code></div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="kpi-l">Realized (net fees)</div><div class="kpi-v" id="r_realized">—</div></div>
-          <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
-          <div class="kpi"><div class="kpi-l">Attempts</div><div class="kpi-v" id="r_attempts">0</div></div>
-          <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="r_open">0</div></div>
-          <div class="kpi"><div class="kpi-l">Leverage</div><div class="kpi-v" id="r_lev">—</div></div>
-          <div class="kpi"><div class="kpi-l">Stop</div><div class="kpi-v" id="r_stop">—</div></div>
+
+        <!-- ══ LIVE SECTION ══════════════════════════════════════════════ -->
+        <div id="rep_liveSection">
+
+          <!-- Live balances & positions -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.4)">
+            <div class="panel-hd">
+              <h2 class="panel-title">🔴 Live balances &amp; positions</h2>
+              <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Refresh</button>
+            </div>
+            <div class="muted" style="font-size:12px;margin-bottom:10px">REST read-only · USDT-M futures · реальные данные с бирж</div>
+            <div class="g3" id="r_liveBal"><div class="empty">Loading…</div></div>
+          </div>
+
+          <!-- Live open hedges (ledger) -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.25)">
+            <div class="panel-hd">
+              <h2 class="panel-title">Open hedges</h2><span class="panel-sub" style="margin-left:8px">paper + live ledger + exchange</span>
+              <span class="panel-sub" id="r_liveOpenCount">—</span>
+            </div>
+            <!-- Hold decisions with funding PnL -->
+            <div class="g2" id="r_holdDecisions" style="margin-bottom:10px"></div>
+            <div class="scroll">
+              <table class="data">
+                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Opened</th></tr></thead>
+                <tbody id="r_posBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Funding rates table -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(45,212,191,0.3)">
+            <div class="panel-hd">
+              <h2 class="panel-title">📊 Funding rates — все пары</h2>
+              <span class="panel-sub">delta = получаем на шорте − платим на лонге · обновляется каждые 5 мин</span>
+            </div>
+            <div id="r_fundingRates"><div class="empty">Loading…</div></div>
+          </div>
+
+          <!-- Live trade ledger -->
+          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.25)">
+            <div class="panel-hd">
+              <h2 class="panel-title">🔴 Live trade ledger</h2>
+              <span class="panel-sub" id="r_liveLedgerCount">—</span>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+              <div class="kpi" style="margin:0;flex:1;min-width:120px">
+                <div class="kpi-l">Realized PnL</div>
+                <div class="kpi-v" id="r_realized">—</div>
+              </div>
+              <div class="kpi" style="margin:0;flex:1;min-width:120px">
+                <div class="kpi-l">Open hedges</div>
+                <div class="kpi-v" id="r_open">—</div>
+              </div>
+              <div class="kpi" style="margin:0;flex:1;min-width:120px">
+                <div class="kpi-l">Total closes</div>
+                <div class="kpi-v" id="r_attempts">—</div>
+              </div>
+            </div>
+            <div class="scroll" style="max-height:380px">
+              <table class="data">
+                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
+                <tbody id="r_tradeBody"></tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
-        <div class="g2" style="margin-bottom:12px">
+
+        <!-- ══ PAPER / DEMO SECTION ══════════════════════════════════════ -->
+        <div id="rep_paperSection">
+          <div class="banner info" style="margin-bottom:12px">
+            📄 <b>PAPER / DEMO</b> — симуляция без реальных ордеров · файлы в <code class="mono">data/paper/</code>
+          </div>
+
+          <!-- Performance KPIs + curve -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Performance</h2>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <button type="button" class="btn sm" data-perf-days="1">1D</button>
+                <button type="button" class="btn sm active" data-perf-days="7">7D</button>
+                <button type="button" class="btn sm" data-perf-days="30">30D</button>
+                <button type="button" class="btn sm" data-perf-days="90">90D</button>
+              </div>
+            </div>
+            <div class="g4" id="perfKpis"></div>
+            <div class="g4" id="perfKpis2" style="margin-top:10px"></div>
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:11px;margin-bottom:6px">CUMULATIVE PNL</div>
+              <svg id="perfCurve" viewBox="0 0 640 160" width="100%" height="160" style="background:rgba(0,0,0,0.25);border-radius:10px"></svg>
+            </div>
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:11px;margin-bottom:6px">DAILY PNL</div>
+              <div id="perfCalendar" class="g7" style="gap:6px"></div>
+            </div>
+            <div style="margin-top:14px">
+              <div class="muted" style="font-size:11px;margin-bottom:6px">TRADE DETAILS</div>
+              <div id="perfTrades" style="max-height:320px;overflow:auto"></div>
+            </div>
+          </div>
+
+          <!-- Paper KPIs row -->
+          <div class="kpi-row" style="margin-bottom:12px">
+            <div class="kpi"><div class="kpi-l">Realized (net fees)</div><div class="kpi-v" id="r_paper_realized">—</div></div>
+            <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
+            <div class="kpi"><div class="kpi-l">Closes</div><div class="kpi-v" id="r_paper_closes">0</div></div>
+            <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="r_paper_open">0</div></div>
+            <div class="kpi"><div class="kpi-l">Leverage</div><div class="kpi-v" id="r_lev">—</div></div>
+            <div class="kpi"><div class="kpi-l">Stop</div><div class="kpi-v" id="r_stop">—</div></div>
+          </div>
+
+          <!-- Day summary + Skip reasons -->
+          <div class="g2" style="margin-bottom:12px">
+            <div class="panel">
+              <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
+              <div id="r_daySummary" class="mono muted" style="font-size:12px;line-height:1.7">—</div>
+            </div>
+            <div class="panel">
+              <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
+              <div id="r_skipReasons">—</div>
+            </div>
+          </div>
+
+          <!-- Recent skips -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd"><h2 class="panel-title">Recent skips</h2></div>
+            <div class="scroll" style="max-height:200px">
+              <table class="data">
+                <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
+                <tbody id="r_skipBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Multi-day history -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd"><h2 class="panel-title">Multi-day history</h2><span class="panel-sub">по дням · paper engine</span></div>
+            <div class="scroll" style="max-height:160px">
+              <table class="data">
+                <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best</th></tr></thead>
+                <tbody id="r_daysBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Margin by venue (paper only) -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Margin by venue</h2>
+              <span class="panel-sub">equity = free + locked · paper simulation</span>
+            </div>
+            <div class="g3" id="r_margin"></div>
+          </div>
+
+          <!-- Paper open positions -->
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-hd"><h2 class="panel-title">Paper open positions</h2></div>
+            <div class="scroll">
+              <table class="data">
+                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
+                <tbody id="r_paperPosBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Paper trade history -->
           <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
-            <div id="r_daySummary" class="mono muted" style="font-size:12px;line-height:1.7">—</div>
+            <div class="panel-hd"><h2 class="panel-title">Paper trade history</h2></div>
+            <div class="scroll" style="max-height:400px">
+              <table class="data">
+                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
+                <tbody id="r_paperTradeBody"></tbody>
+              </table>
+            </div>
           </div>
-          <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
-            <div id="r_skipReasons">—</div>
-          </div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Recent skips</h2></div>
-          <div class="scroll" style="max-height:200px">
-            <table class="data">
-              <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
-              <tbody id="r_skipBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Multi-day</h2></div>
-          <div class="scroll" style="max-height:160px">
-            <table class="data">
-              <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best</th></tr></thead>
-              <tbody id="r_daysBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Margin by venue</h2><span class="panel-sub">equity = free + locked · not the same as Realized KPI</span></div>
-          <div class="g3" id="r_margin"></div>
-        </div>
-        <div class="panel" style="margin-bottom:12px">
-          <div class="panel-hd"><h2 class="panel-title">Open positions</h2></div>
-          <div class="scroll">
-            <table class="data">
-              <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
-              <tbody id="r_posBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-hd"><h2 class="panel-title">Trade ledger</h2></div>
-          <div class="scroll" style="max-height:400px">
-            <table class="data">
-              <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
-              <tbody id="r_tradeBody"></tbody>
-            </table>
-          </div>
+
         </div>
       </section>
 
@@ -220,9 +632,9 @@
             <div class="panel-hd"><h2 class="panel-title">Trading parameters</h2></div>
             <div class="section-label">Preset</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+              <button type="button" class="btn sm primary" id="presetBalanced">Professional</button>
               <button type="button" class="btn sm" id="presetConservative">Conservative</button>
-              <button type="button" class="btn sm primary" id="presetBalanced">Balanced</button>
-              <button type="button" class="btn sm" id="presetAggressive">Aggressive</button>
+              <button type="button" class="btn sm" id="presetAggressive">Balanced</button>
             </div>
             <div class="section-label">Mode</div>
             <div class="form-row">
@@ -237,47 +649,232 @@
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_auto" type="checkbox"/> Auto-execute</label>
               </div>
             </div>
-            <div class="section-label">Entry · size</div>
+            <div class="section-label">Entry · size (scan / paper)</div>
             <div class="form-row">
               <div class="field"><label>Min open edge %</label><input id="s_minProfit" type="number" step="0.005"/><div class="hint">After open fees</div></div>
-              <div class="field"><label>Quote size USDT</label><input id="s_size" type="number" step="50"/></div>
+              <div class="field"><label>Size USDT / leg</label><input id="s_size" type="number" step="1"/><div class="hint">Один размер для scan + paper + live (clamp к max notional)</div></div>
             </div>
             <div class="form-row">
               <div class="field"><label>Leverage</label><input id="s_lev" type="number" min="1" max="10"/></div>
               <div class="field"><label>Max open hedges</label><input id="s_maxPos" type="number"/></div>
             </div>
             <div class="form-row">
-              <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number"/></div>
+              <div class="field"><label>Max notional USD</label><input id="s_maxNotional" type="number"/><div class="hint">Потолок размера; если size больше — уменьшаем qty, не skip</div></div>
               <div class="field"><label>Cooldown ms</label><input id="s_cooldown" type="number"/></div>
             </div>
-            <div class="section-label">Risk</div>
+            <div class="section-label">Live · same profile as paper</div>
+            <div class="banner info" style="margin-bottom:10px;font-size:12px">
+              Size / max notional / opens / leverage — общие. Equity/exchange только справочно для Live (paper demo ≈ 2500 USDT × 4).
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Equity / exchange USDT</label><input id="s_liveEquity" type="number" step="0.5"/><div class="hint">Free USDT on EACH venue</div></div>
+              <div class="field"><label>Margin usage</label><input id="s_liveUsage" type="number" step="0.05" min="0.2" max="0.85"/><div class="hint">0.6 = use 60% of equity</div></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Live max notional</label><input id="s_liveMaxN" type="number" step="1"/></div>
+              <div class="field"><label>Live max open</label><input id="s_liveMaxOpen" type="number"/></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Live stop-loss USD</label><input id="s_liveStop" type="number" step="0.1"/><div class="hint">Negative</div></div>
+              <div class="field"><label>Daily loss limit</label><input id="s_dayLimit" type="number"/></div>
+            </div>
+            <div class="section-label">Risk (paper)</div>
             <div class="form-row">
               <div class="field"><label>Stop-loss USD</label><input id="s_stop" type="number"/><div class="hint">Negative number</div></div>
-              <div class="field"><label>Daily loss limit</label><input id="s_dayLimit" type="number"/></div>
+              <div class="field"><label>Max hold minutes</label><input id="s_hold" type="number"/></div>
             </div>
             <div class="form-row">
               <div class="field"><label>Max margin usage</label><input id="s_marginUse" type="number" step="0.01" min="0.05" max="0.9"/></div>
-              <div class="field"><label>Max hold minutes</label><input id="s_hold" type="number"/></div>
+              <div class="field"><label>Close width ≤ %</label><input id="s_closeWidth" type="number" step="0.005"/></div>
             </div>
             <div class="section-label">Exit · filters</div>
             <div class="form-row">
-              <div class="field"><label>Close width ≤ %</label><input id="s_closeWidth" type="number" step="0.005"/></div>
               <div class="field" style="display:flex;flex-direction:column;gap:8px;justify-content:center">
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_fullFill" type="checkbox"/> Full fill</label>
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_reqRt" type="checkbox"/> Require RT edge</label>
                 <label style="display:flex;gap:8px;align-items:center;margin:0"><input id="s_funding" type="checkbox"/> Include funding</label>
               </div>
             </div>
-            <button type="button" class="btn primary" id="btnSaveTrading">Apply parameters</button>
+            <button type="button" class="btn primary" id="btnSaveTrading">Save all (persist + apply)</button>
           </div>
           <div>
             <div class="panel">
               <div class="panel-hd"><h2 class="panel-title">Exchange API keys</h2></div>
+              
+        <div class="panel" id="livePanel" style="margin-top:12px;border-color:rgba(248,113,113,0.5)">
+          <div class="panel-hd" style="flex-wrap:wrap;gap:8px">
+            <h2 class="panel-title">🔴 Live trading</h2>
+            <div id="liveStatusBadge" style="display:flex;align-items:center;gap:8px">
+              <span id="livePhase" style="font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;background:rgba(148,163,184,0.15);color:#94a3b8">📄 PAPER_ONLY</span>
+            </div>
+          </div>
+
+          <!-- Current status card -->
+          <div id="liveStatusCard" style="background:rgba(0,0,0,0.2);border-radius:10px;padding:12px;margin-bottom:14px">
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <div><span class="muted" style="font-size:11px">Режим</span><br/><b id="live_mode_label" style="font-size:14px">📄 PAPER</b></div>
+              <div><span class="muted" style="font-size:11px">Ордера</span><br/><b id="live_orders_label" style="font-size:14px">🚫 выключены</b></div>
+              <div><span class="muted" style="font-size:11px">Phase</span><br/><span id="live_phase_label" class="mono muted" style="font-size:12px">PAPER_ONLY</span></div>
+            </div>
+          </div>
+
+          <!-- Step 1: Read-only (balances only) -->
+          <div style="border:1px solid rgba(56,189,248,0.3);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:700;color:#38bdf8;margin-bottom:8px">ШАГ 1 — Read-only (балансы, без ордеров)</div>
+            <div class="muted" style="font-size:12px;margin-bottom:10px">Введи фразу и включи read-only — можно видеть реальные балансы и позиции с бирж. Ордера <b>не отправляются</b>.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+              <div class="field" style="flex:1;min-width:180px;margin:0">
+                <label style="font-size:11px">Confirm phrase</label>
+                <input id="live_phrase" type="text" placeholder="ENABLE LIVE TRADING" autocomplete="off" style="font-family:monospace"/>
+              </div>
+              <label style="display:flex;gap:6px;align-items:center;margin-bottom:4px;white-space:nowrap">
+                <input id="live_readonly" type="checkbox" checked/> <span style="font-size:12px">Read-only (без ордеров)</span>
+              </label>
+              <button type="button" class="btn primary" id="btnLiveEnable" style="white-space:nowrap">✓ Enable Live</button>
+              <button type="button" class="btn sm" id="btnLiveVerify">Verify keys</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Full live orders -->
+          <div style="border:1px solid rgba(248,113,113,0.3);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:700;color:#f87171;margin-bottom:8px">ШАГ 2 — Full LIVE (реальные ордера) ⚠️</div>
+            <div class="muted" style="font-size:12px;margin-bottom:10px">Снять галочку Read-only выше и нажать Enable Live ещё раз. <b>Реальные деньги на биржах!</b></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" class="btn" id="btnLiveDisable">Disable Live</button>
+              <button type="button" class="btn danger" id="btnLiveKill">⛔ KILL SWITCH</button>
+            </div>
+          </div>
+
+          <!-- Status output -->
+          <details style="margin-top:8px">
+            <summary class="muted" style="font-size:11px;cursor:pointer">Debug / status JSON</summary>
+            <pre id="live_status" class="mono muted" style="font-size:10px;white-space:pre-wrap;max-height:180px;overflow:auto;margin-top:6px">—</pre>
+          </details>
+        </div>
+
               <div id="s_exchanges"></div>
             </div>
           </div>
         </div>
       </section>
+
+      <!-- HELP -->
+      <section class="page" data-page="help">
+        <div class="banner info">
+          <b>Help map</b> — product overview, how to run, recommended settings for effective paper (and later live).
+          Full text also in <span class="mono">docs/ARBITRAGE_BOT_GUIDE.md</span>
+        </div>
+
+        <div class="g2" style="margin-bottom:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">What the bot does</h2></div>
+            <p style="margin:0 0 10px;line-height:1.55;color:var(--text)">
+              <b>Cross-exchange futures spatial arbitrage.</b>
+              Same USDT-M perpetual on several exchanges: <span class="pos">LONG</span> the cheaper venue,
+              <span class="neg">SHORT</span> the richer. Profit when the spread <b>converges</b> — not from predicting price direction.
+              No asset transfer on the trade path (inventory / pre-funded balances).
+            </p>
+            <div class="muted" style="font-size:13px;line-height:1.5">
+              Paper mode uses <b>real WebSocket books</b> with virtual margin &amp; fees.
+              Live mode is phased (read-only → confirm → small size) with kill switch.
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">UI map</h2></div>
+            <table class="data">
+              <thead><tr><th>Page</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td><b>Dashboard</b></td><td>Health, signals, PnL, quality, skips, spread map</td></tr>
+                <tr><td><b>Market</b></td><td>Chart, multi-venue overlay Δ%, books, positions</td></tr>
+                <tr><td><b>Reports</b></td><td>Margin by venue, performance, history</td></tr>
+                <tr><td><b>Settings</b></td><td>Trading params (live apply), API keys, Live guard</td></tr>
+                <tr><td><b>Help</b></td><td>This guide</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Quick start</h2></div>
+          <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:14px">
+            <li><span class="mono">dotnet run</span> → open the URL from the console</li>
+            <li>Settings: Paper + Auto execute → <b>Apply parameters</b></li>
+            <li><b>Reset paper</b> → balances = starting quote per exchange</li>
+            <li>Wait for heartbeat: <span class="mono">books &gt; 0</span>, discovery <span class="mono">http-tickers+depth</span></li>
+            <li>Few trades with strict gates is <b>normal</b> — watch Paper quality &amp; skip reasons</li>
+          </ol>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Recommended settings (effective work)</h2>
+            <span class="panel-sub">paper ≈ intended live rules</span></div>
+          <div class="scroll">
+            <table class="data">
+              <thead><tr><th>Parameter</th><th>Value</th><th>Why</th></tr></thead>
+              <tbody>
+                <tr><td>Min open edge %</td><td class="mono">0.08 – 0.10</td><td>After open fees; RT still on</td></tr>
+                <tr><td>Quote / notional</td><td class="mono">150 – 200</td><td>Fits ~2500/venue at 5×</td></tr>
+                <tr><td>Leverage</td><td class="mono">5</td><td>Controlled inventory</td></tr>
+                <tr><td>Max open</td><td class="mono">3 – 5</td><td>Start lower while learning</td></tr>
+                <tr><td>Full fill + RT edge</td><td class="mono">ON</td><td>No phantom fills / fee blindness</td></tr>
+                <tr><td>Funding</td><td class="mono">ON</td><td>Perp realism</td></tr>
+                <tr><td>Stop / day limit</td><td class="mono">−50 / −150</td><td>Hard brakes</td></tr>
+                <tr><td>Max hold</td><td class="mono">10 – 15 min</td><td>Spatial windows are short</td></tr>
+                <tr><td>Depth + persist</td><td class="mono">auto</td><td>Fillable books; anti-flash edge</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted" style="margin:10px 0 0;font-size:13px">
+            Do <b>not</b> lower thresholds only to force more trades — that invalidates the lab.
+            Settings → Apply updates runtime risk without full restart (starting balance needs Reset paper).
+          </p>
+        </div>
+
+        <div class="g2" style="margin-bottom:12px">
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">How to read numbers</h2></div>
+            <ul style="margin:0;padding-left:18px;line-height:1.65;font-size:13px">
+              <li><b>NET %</b> — edge after open fees (not guaranteed profit)</li>
+              <li><b>EST $</b> — idealised if exit were perfect now</li>
+              <li><b>Unrealized</b> — can be red while waiting for converge</li>
+              <li><b>width vs entry</b> — wider often hurts the hedge</li>
+              <li><b>Δ% overlay</b> — cheap → rich mid gap across venues</li>
+              <li><b>persistWait</b> — edge seen but not held long enough</li>
+              <li><b>skip reasons</b> — why opens were blocked</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <div class="panel-hd"><h2 class="panel-title">Clean history</h2></div>
+            <p style="margin:0 0 8px;font-size:13px;line-height:1.5">Stop the bot, then:</p>
+            <pre class="mono" style="font-size:11px;background:rgba(0,0,0,0.25);padding:10px;border-radius:8px;overflow:auto">rm -f ArbitrageBot/data/paper/open-state.json
+rm -f ArbitrageBot/data/paper/trades-ledger.json
+rm -f ArbitrageBot/data/paper/events-*.jsonl
+rm -f ArbitrageBot/data/paper/daily-*.json</pre>
+            <p class="muted" style="margin:8px 0 0;font-size:12px">Keep <span class="mono">local-settings.json</span> if you need API keys. Then run + Reset paper.</p>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h2 class="panel-title">Live path (when ready)</h2></div>
+          <ol style="margin:0;padding-left:20px;line-height:1.7;font-size:13px">
+            <li>Paper days with realistic fees → review win rate &amp; skips</li>
+            <li>API keys read-only → Verify balances</li>
+            <li>Trade permission, <b>no withdraw</b>; hedge mode + leverage on each exchange</li>
+            <li>Live: read-only → confirm phrase → 1 position, tiny notional</li>
+            <li>Know <b>KILL SWITCH</b>; scale only if fills match paper assumptions</li>
+          </ol>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd"><h2 class="panel-title">Pitch (one paragraph)</h2></div>
+          <p style="margin:0;line-height:1.6;font-size:14px">
+            <b>ArbitrageBot</b> turns fragmented crypto perpetual prices into a disciplined, measurable
+            cross-exchange hedge workflow — live books, depth-aware symbols, fee-aware gates, and a paper lab
+            that follows real trading rules. Learn the market. Measure skips and win rate. Only then size live.
+          </p>
+        </div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -285,8 +882,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 <script src="/assets/js/core.js"></script>
 <script src="/assets/js/pages/dashboard.js"></script>
+<script src="/assets/js/pages/funding.js"></script>
+<script src="/assets/js/pages/live.js"></script>
 <script src="/assets/js/pages/market.js"></script>
+<script src="/assets/js/pages/screener.js"></script>
 <script src="/assets/js/pages/reports.js"></script>
 <script src="/assets/js/pages/settings.js"></script>
+<script src="/assets/js/pages/help.js"></script>
 </body>
 </html>

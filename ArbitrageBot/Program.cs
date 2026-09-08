@@ -1,7 +1,9 @@
 using ArbitrageBot;
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
+using ArbitrageBot.Models;
 using ArbitrageBot.Services;
+using ArbitrageBot.Services.Metrics;
 using CryptoClients.Net;
 using CryptoClients.Net.Interfaces;
 using CryptoExchange.Net.SharedApis;
@@ -31,15 +33,27 @@ try
 
     builder.Services.Configure<ArbitrageOptions>(
         builder.Configuration.GetSection(ArbitrageOptions.SectionName));
+    builder.Services.Configure<ExternalMetricsOptions>(
+        builder.Configuration.GetSection(ExternalMetricsOptions.SectionName));
 
     builder.Services.AddCryptoClients(options =>
     {
         options.OutputOriginalData = false;
     });
+    builder.Services.AddHttpClient<CoinglassClient>();
+    builder.Services.AddHttpClient<OnChainMetricsClient>();
+    builder.Services.AddSingleton<ExternalMetricsHub>();
+    builder.Services.AddSingleton<IExternalMetricsHub>(sp => sp.GetRequiredService<ExternalMetricsHub>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ExternalMetricsHub>());
 
-    // Shared API exchange parameters (USDT-M) — required before discovery/WS
+
+    // Shared API exchange parameters (USDT-M) — required before discovery/WS/orders
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "MarginAsset", "USDT");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("Bitget", "marginCoin", "USDT");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "MarginAsset", "USDT");
+    CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("BitGet", "marginCoin", "USDT");
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
     CryptoExchange.Net.SharedApis.ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
 
@@ -54,20 +68,60 @@ try
     builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
     builder.Services.AddSingleton<IPaperAnalyticsStore, PaperAnalyticsStore>();
     builder.Services.AddSingleton<RuntimeRiskConfig>();
+    builder.Services.AddSingleton<LiveTradingGuard>();
+    builder.Services.AddSingleton<LiveOrderEngine>();
+    builder.Services.AddSingleton<LiveSafetyService>();
+    builder.Services.AddHttpClient("live-alerts");
+    builder.Services.AddSingleton<ILiveExecutionService, LiveExecutionService>();
+    builder.Services.AddSingleton<FundingRateService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<FundingRateService>());
+    builder.Services.AddSingleton<HoldDecisionEngine>();
     builder.Services.Configure<ExchangeCredentialsOptions>(
         builder.Configuration.GetSection(ExchangeCredentialsOptions.SectionName));
     builder.Services.AddHostedService<ArbitrageWorker>();
     builder.Services.AddHostedService<RealtimeBroadcastService>();
     builder.Services.AddSignalR();
     builder.Services.AddHttpClient("discovery");
+    builder.Services.AddRazorComponents()
+        .AddInteractiveServerComponents();
 
     var app = builder.Build();
 
+    // Re-apply persisted trading/live settings from data/local-settings.json (survives restart)
+    try
+    {
+        var store = app.Services.GetRequiredService<ISettingsStore>();
+        var risk = app.Services.GetRequiredService<RuntimeRiskConfig>();
+        var saved = store.GetTrading();
+        risk.ApplyTrading(saved);
+        app.Logger.LogInformation(
+            "Runtime settings restored from local-settings.json (equity={E}$ liveMaxN={N} lev={L})",
+            saved.LiveEquityPerExchangeUsd, saved.LiveMaxNotionalUsd, saved.FuturesPaperLeverage);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not restore trading settings from local-settings.json");
+    }
+
     app.UseDefaultFiles();
     app.UseStaticFiles();
+    app.UseAntiforgery();
 
     app.MapHub<ArbitrageHub>("/hubs/arbitrage");
     app.MapGet("/api/snapshot", (ArbitrageState state) => Results.Json(state.GetSnapshot()));
+    app.MapGet("/api/funding", (FundingRateService funding, ArbitrageState state) =>
+    {
+        var ex = state.Exchanges?.ToList() ?? [];
+        var rows = new List<FundingDelta>();
+        foreach (var sym in state.Symbols ?? Array.Empty<string>())
+        {
+            var best = funding.GetBestDelta(sym, ex);
+            if (best != null) rows.Add(best);
+        }
+        rows.Sort((a, b) => b.DeltaRate.CompareTo(a.DeltaRate));
+        return Results.Json(rows);
+    });
+    app.MapGet("/api/funding/all", (FundingRateService funding) => Results.Json(funding.GetAllLatest()));
     app.MapGet("/api/health", (ArbitrageState state) =>
     {
         var snap = state.GetSnapshot();
@@ -136,18 +190,33 @@ try
     app.MapPost("/api/settings/risk", async (RiskUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
     {
         risk.ApplyRisk(body);
-        // persist overlapping trading fields
+        var s = risk.Snapshot;
+        var prev = store.GetTrading();
         await store.SaveTradingAsync(new TradingUiSettings
         {
-            StrategyMode = risk.Snapshot.StrategyMode,
-            PaperTrading = risk.Snapshot.PaperTrading,
-            PaperAutoExecute = risk.Snapshot.PaperAutoExecute,
-            MinProfitPercent = risk.Snapshot.MinProfitPercent,
-            QuoteSize = risk.Snapshot.QuoteSize,
-            FuturesPaperLeverage = risk.Snapshot.FuturesPaperLeverage,
-            FuturesMaxOpenPositions = risk.Snapshot.FuturesMaxOpenPositions,
-            FuturesStopLossUsd = risk.Snapshot.FuturesStopLossUsd,
-            FuturesDailyLossLimitUsd = risk.Snapshot.FuturesDailyLossLimitUsd
+            StrategyMode = s.StrategyMode,
+            PaperTrading = s.PaperTrading,
+            PaperAutoExecute = s.PaperAutoExecute,
+            MinProfitPercent = s.MinProfitPercent,
+            QuoteSize = s.QuoteSize,
+            FuturesPaperLeverage = s.FuturesPaperLeverage,
+            FuturesMaxOpenPositions = s.FuturesMaxOpenPositions,
+            FuturesStopLossUsd = s.FuturesStopLossUsd,
+            FuturesDailyLossLimitUsd = s.FuturesDailyLossLimitUsd,
+            MaxHoldMinutes = s.FuturesMaxHoldMinutes,
+            CloseBelowNetPercent = s.FuturesCloseBelowNetPercent,
+            MaxMarginUsagePercent = s.FuturesMaxMarginUsagePercent,
+            MaxNotionalUsd = s.FuturesMaxNotionalUsd,
+            PaperCooldownMs = s.PaperCooldownMs,
+            PaperRequireFullFill = s.PaperRequireFullFill,
+            RequireRoundTripEdge = s.FuturesRequireRoundTripEdge,
+            IncludeFunding = s.FuturesIncludeFunding,
+            LiveEquityPerExchangeUsd = body.LiveEquityPerExchangeUsd > 0 ? body.LiveEquityPerExchangeUsd : prev.LiveEquityPerExchangeUsd,
+            LiveMarginUsageFraction = body.LiveMarginUsageFraction > 0 ? body.LiveMarginUsageFraction : prev.LiveMarginUsageFraction,
+            LiveMaxNotionalUsd = body.LiveMaxNotionalUsd > 0 ? body.LiveMaxNotionalUsd : prev.LiveMaxNotionalUsd,
+            LiveMaxOpenPositions = body.LiveMaxOpenPositions > 0 ? body.LiveMaxOpenPositions : prev.LiveMaxOpenPositions,
+            LiveStopLossUsd = body.LiveStopLossUsd != 0 ? body.LiveStopLossUsd : prev.LiveStopLossUsd,
+            LiveDailyLossLimitUsd = prev.LiveDailyLossLimitUsd
         });
         return Results.Ok(new { saved = true, appliedRuntime = true, risk = risk.Snapshot });
     });
@@ -167,7 +236,12 @@ try
         paperCooldownMs = risk.Snapshot.PaperCooldownMs,
         paperRequireFullFill = risk.Snapshot.PaperRequireFullFill,
         requireRoundTripEdge = risk.Snapshot.FuturesRequireRoundTripEdge,
-        includeFunding = risk.Snapshot.FuturesIncludeFunding
+        includeFunding = risk.Snapshot.FuturesIncludeFunding,
+        liveEquityPerExchangeUsd = risk.Snapshot.LiveEquityPerExchangeUsd,
+        liveMarginUsageFraction = risk.Snapshot.LiveMarginUsageFraction,
+        liveMaxNotionalUsd = risk.Snapshot.LiveMaxNotionalUsd,
+        liveMaxOpenPositions = risk.Snapshot.LiveMaxOpenPositions,
+        liveStopLossUsd = risk.Snapshot.LiveStopLossUsd
     }));
 
     app.MapPost("/api/paper/close/{tradeId:guid}", (
@@ -180,10 +254,29 @@ try
             var books = market.GetBookTickers(symbol);
             if (!books.TryGetValue(longEx, out var l) || !books.TryGetValue(shortEx, out var s))
                 return null;
+            if (l.BestBid <= 0 || s.BestAsk <= 0) return null;
             return (l.BestBid, s.BestAsk);
         });
         if (result == null) return Results.NotFound(new { error = "position not found" });
         return Results.Ok(result);
+    });
+
+    app.MapPost("/api/paper/close-all", (IFuturesPaperService paper) =>
+    {
+        var n = paper.ForceCloseAll();
+        return Results.Ok(new { closed = n });
+    });
+
+    app.MapPost("/api/paper/prune-orphans", (IFuturesPaperService paper, ActiveMarketContext markets) =>
+    {
+        var n = paper.PruneOrphanPositions(markets.Symbols);
+        return Results.Ok(new { pruned = n, activeSymbols = markets.Symbols });
+    });
+
+    app.MapDelete("/api/settings/exchanges/{name}", async (string name, ISettingsStore store, CancellationToken ct) =>
+    {
+        await store.ClearExchangeCredentialAsync(name, ct);
+        return Results.Ok(new { ok = true, exchange = name, cleared = true });
     });
 
     app.MapPost("/api/settings/exchanges/{name}", async (string name, ExchangeCredential body, ISettingsStore store) =>
@@ -257,9 +350,187 @@ try
     app.MapGet("/api/analytics/summary", (IPaperAnalyticsStore a) => Results.Json(a.GetLiveSummary()));
     app.MapGet("/api/analytics/events", (IPaperAnalyticsStore a, int take = 80) => Results.Json(a.GetRecentEvents(take)));
     app.MapGet("/api/analytics/skips", (IPaperAnalyticsStore a, int take = 40) => Results.Json(a.GetRecentSkips(take)));
+    app.MapGet("/api/analytics/performance", (IPaperAnalyticsStore a, int days = 7) => Results.Json(a.GetPerformanceReport(days)));
+    app.MapGet("/api/analytics/trades", (IPaperAnalyticsStore a, int take = 80) => Results.Json(a.GetTradeDetails(take)));
     app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 14) => Results.Json(a.GetDaySummaries(maxDays)));
 
-    app.MapFallbackToFile("index.html");
+// ─── Live trading control (Phase 1: gate + verify, no orders) ───
+    app.MapGet("/api/live/status", (LiveTradingGuard guard) => Results.Ok(guard.Status()));
+
+    app.MapPost("/api/live/enable", async (HttpRequest req, LiveTradingGuard guard, IOptions<ArbitrageOptions> opt) =>
+    {
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body);
+        var root = doc.RootElement;
+        var phrase = root.TryGetProperty("confirmPhrase", out var p) ? p.GetString() ?? "" : "";
+        var readOnly = !root.TryGetProperty("readOnly", out var r) || r.ValueKind != System.Text.Json.JsonValueKind.False;
+        var (ok, message) = guard.TryEnable(phrase, readOnly, opt.Value);
+        return ok ? Results.Ok(new { ok, message, status = guard.Status() })
+                  : Results.BadRequest(new { ok, message, status = guard.Status() });
+    });
+
+    app.MapPost("/api/live/disable", (LiveTradingGuard guard, IOptions<ArbitrageOptions> opt, RuntimeRiskConfig risk) =>
+    {
+        guard.Disable("api");
+        // DEMO: same professional gates, paper wallet, real WS books
+        var o = opt.Value;
+        o.PaperTrading = true;
+        o.PaperAutoExecute = true;
+        o.LiveTradingEnabled = false;
+        risk.ApplyTrading(new TradingUiSettings
+        {
+            PaperTrading = true,
+            PaperAutoExecute = true,
+            MinProfitPercent = o.MinProfitPercent > 0 ? o.MinProfitPercent : 0.10m,
+            QuoteSize = o.QuoteSize > 0 ? o.QuoteSize : 100m,
+            FuturesPaperLeverage = o.FuturesPaperLeverage > 0 ? o.FuturesPaperLeverage : 5m,
+            FuturesMaxOpenPositions = o.FuturesMaxOpenPositions > 0 ? o.FuturesMaxOpenPositions : 2,
+            FuturesStopLossUsd = o.FuturesStopLossUsd,
+            FuturesDailyLossLimitUsd = o.FuturesDailyLossLimitUsd,
+            MaxNotionalUsd = o.FuturesMaxNotionalUsd > 0 ? o.FuturesMaxNotionalUsd : 100m,
+            MaxMarginUsagePercent = o.FuturesMaxMarginUsagePercent > 0 ? o.FuturesMaxMarginUsagePercent : 0.35m,
+            MaxHoldMinutes = 0,
+            CloseBelowNetPercent = o.FuturesCloseBelowNetPercent,
+            PaperCooldownMs = o.PaperCooldownMs > 0 ? o.PaperCooldownMs : 15000,
+            PaperRequireFullFill = true,
+            RequireRoundTripEdge = true,
+            IncludeFunding = o.FuturesIncludeFunding,
+            LiveEquityPerExchangeUsd = o.LiveEquityPerExchangeUsd > 0 ? o.LiveEquityPerExchangeUsd : 2500m,
+            LiveMarginUsageFraction = 0.35m,
+            LiveMaxNotionalUsd = o.LiveMaxNotionalUsd > 0 ? o.LiveMaxNotionalUsd : 100m,
+            LiveMaxOpenPositions = o.LiveMaxOpenPositions > 0 ? o.LiveMaxOpenPositions : 2,
+            LiveStopLossUsd = o.LiveStopLossUsd,
+            LiveDailyLossLimitUsd = o.LiveDailyLossLimitUsd
+        });
+        return Results.Ok(new
+        {
+            ok = true,
+            message = "Live disabled → DEMO paper auto-exec on real order books (same professional thresholds).",
+            status = guard.Status(),
+            mode = "PAPER"
+        });
+    });
+
+    app.MapPost("/api/live/kill", async (HttpRequest req, LiveTradingGuard guard) =>
+    {
+        var reason = "manual kill";
+        try
+        {
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body);
+            if (doc.RootElement.TryGetProperty("reason", out var r))
+                reason = r.GetString() ?? reason;
+        }
+        catch { /* empty body ok */ }
+        guard.Kill(reason);
+        try
+        {
+            var safety = app.Services.GetRequiredService<LiveSafetyService>();
+            _ = safety.AlertAsync("KILL SWITCH", reason, CancellationToken.None);
+        }
+        catch { /* ignore */ }
+        return Results.Ok(guard.Status());
+    });
+
+    app.MapPost("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.VerifyCredentialsAsync(ct)));
+    app.MapGet("/api/live/balances", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.GetLiveBalancesAsync(ct)));
+    app.MapGet("/api/live/positions", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.GetLivePositionsViewAsync(ct)));
+    app.MapPost("/api/live/close/{tradeId}", async (string tradeId, ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.TryCloseHedgeAsync(tradeId, ct)));
+    app.MapGet("/api/live/verify", async (ILiveExecutionService live, CancellationToken ct) =>
+        Results.Ok(await live.VerifyCredentialsAsync(ct)));
+
+    // ── Manual hedge open (terminal UI) ─────────────────────────────────────
+    // Paper: open a manual hedge from the terminal UI
+    app.MapPost("/api/paper/hedge", async (HttpRequest req,
+        IFuturesPaperService paper, IFuturesMarketService futMarket,
+        RuntimeRiskConfig runtime) =>
+    {
+        var body = await req.ReadFromJsonAsync<ManualHedgeRequest>();
+        if (body == null) return Results.BadRequest(new { ok = false, error = "invalid body" });
+        var snap = runtime.Snapshot;
+        var books = futMarket.GetBookTickers(body.Symbol);
+        if (!books.TryGetValue(body.LongExchange, out var longBook) ||
+            !books.TryGetValue(body.ShortExchange, out var shortBook))
+            return Results.Ok(new { ok = false, error = "no live books for this route" });
+        var notional = body.NotionalUsd > 0 ? body.NotionalUsd : snap.QuoteSize;
+        var longAsk  = longBook.BestAsk;
+        var shortBid = shortBook.BestBid;
+        if (longAsk <= 0 || shortBid <= 0)
+            return Results.Ok(new { ok = false, error = "stale book prices" });
+        var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
+        var gross = (shortBid - longAsk) / longAsk * 100m;
+        var longFee  = snap.EstimatedTakerFees.GetValueOrDefault(body.LongExchange, 0.06m);
+        var shortFee = snap.EstimatedTakerFees.GetValueOrDefault(body.ShortExchange, 0.06m);
+        var opp = new ArbitrageBot.Models.FuturesOpportunity
+        {
+            Symbol       = body.Symbol,
+            LongExchange = body.LongExchange,
+            ShortExchange= body.ShortExchange,
+            LongAskVwap  = longAsk,
+            ShortBidVwap = shortBid,
+            LongAskTop   = longAsk,
+            ShortBidTop  = shortBid,
+            NotionalUsd  = notional,
+            BaseQty      = qty,
+            FullyFilled  = true,
+            IsExecutable = true,
+            GrossSpreadPercent   = gross,
+            NetSpreadPercent     = gross - longFee - shortFee,
+            NetRoundTripPercent  = gross - 2 * (longFee + shortFee),
+            LongFeePercent       = longFee,
+            ShortFeePercent      = shortFee,
+            EstNetPnlUsd         = (shortBid - longAsk) * qty - notional * (longFee + shortFee) / 100m
+        };
+        var trade = paper.TryOpen(opp);
+        return Results.Ok(new { ok = trade?.Status == "Open", status = trade?.Status, message = trade?.Message });
+    });
+
+    // Live: open a manual hedge (requires CanPlaceOrders)
+    app.MapPost("/api/live/hedge", async (HttpRequest req,
+        LiveTradingGuard guard, ILiveExecutionService live,
+        IFuturesMarketService futMarket, RuntimeRiskConfig runtime, CancellationToken ct) =>
+    {
+        if (!guard.CanPlaceOrders)
+            return Results.Ok(new { ok = false, error = "live orders not enabled" });
+        var body = await req.ReadFromJsonAsync<ManualHedgeRequest>();
+        if (body == null) return Results.BadRequest(new { ok = false, error = "invalid body" });
+        var snap = runtime.Snapshot;
+        var books = futMarket.GetBookTickers(body.Symbol);
+        if (!books.TryGetValue(body.LongExchange, out var longBook) ||
+            !books.TryGetValue(body.ShortExchange, out var shortBook))
+            return Results.Ok(new { ok = false, error = "no live books for this route" });
+        var notional = body.NotionalUsd > 0 ? body.NotionalUsd : snap.QuoteSize;
+        var longAsk  = longBook.BestAsk;
+        var shortBid = shortBook.BestBid;
+        if (longAsk <= 0) return Results.Ok(new { ok = false, error = "stale ask price" });
+        var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
+        var req2 = new LiveHedgeRequest
+        {
+            Symbol        = body.Symbol,
+            LongExchange  = body.LongExchange,
+            ShortExchange = body.ShortExchange,
+            BaseQty       = qty,
+            NotionalUsd   = notional,
+            LongAsk       = longAsk,
+            ShortBid      = shortBid,
+            Leverage      = body.Leverage > 0 ? body.Leverage : 3m
+        };
+        var result = await live.TryOpenHedgeAsync(req2, ct);
+        return Results.Ok(result);
+    });
+
+    app.MapGet("/api/metrics", (IExternalMetricsHub hub) => Results.Ok(hub.GetSnapshot()));
+    app.MapPost("/api/metrics/refresh", async (IExternalMetricsHub hub, CancellationToken ct) =>
+    {
+        await hub.RefreshAsync(ct);
+        return Results.Ok(hub.GetSnapshot());
+    });
+
+    // Blazor terminal UI — root "/" = Dashboard
+    //app.MapRazorComponents<ArbitrageBot.Components.App>()
+    //    .AddInteractiveServerRenderMode();
 
     await app.RunAsync();
 }
@@ -271,3 +542,4 @@ finally
 {
     await Log.CloseAndFlushAsync();
 }
+

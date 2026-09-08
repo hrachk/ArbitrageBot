@@ -30,5 +30,7 @@ public interface IFuturesPaperService
     int TradeAttempts { get; }
     void Reset(IEnumerable<string> exchanges);
     FuturesPaperTrade? ForceClose(Guid tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks);
+    int PruneOrphanPositions(IReadOnlyCollection<string> activeSymbols);
+    int ForceCloseAll();
     void PersistNow();
 }

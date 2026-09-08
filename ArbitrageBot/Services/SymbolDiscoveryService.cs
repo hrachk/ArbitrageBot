@@ -21,7 +21,12 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
 
     private static readonly HashSet<string> HardExclude = new(StringComparer.OrdinalIgnoreCase)
     {
-        "BTC", "ETH", "BNB", "USDC", "FDUSD", "TUSD", "DAI", "EUR", "BUSD"
+        "BTC", "ETH", "BNB", "USDC", "FDUSD", "TUSD", "DAI", "EUR", "BUSD",
+        // toxic for spatial EV (meme / equity-style perps)
+        "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
+        "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
+        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
     };
 
     /// <summary>Stable liquid names that usually list on 3+ venues — used only if HTTP fails.</summary>
@@ -29,11 +34,11 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     [
         "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "NEARUSDT",
         "SUIUSDT", "ARBUSDT", "OPUSDT", "APTUSDT", "INJUSDT", "SEIUSDT", "TIAUSDT",
-        "WIFUSDT", "PEPEUSDT", "FILUSDT", "ATOMUSDT", "LTCUSDT", "DOTUSDT", "TONUSDT",
+        "FILUSDT", "ATOMUSDT", "LTCUSDT", "DOTUSDT", "TONUSDT",
         "RENDERUSDT", "FETUSDT", "AAVEUSDT", "UNIUSDT", "ENAUSDT", "JUPUSDT", "WLDUSDT",
         "STRKUSDT", "ORDIUSDT", "STXUSDT", "IMXUSDT", "GRTUSDT", "SANDUSDT", "MANAUSDT",
         "CRVUSDT", "MKRUSDT", "LDOUSDT", "RUNEUSDT", "CFXUSDT", "TRXUSDT", "BCHUSDT",
-        "1000PEPEUSDT", "1000BONKUSDT", "ORDIUSDT", "PYTHUSDT", "JTOUSDT", "MEMEUSDT"
+        "PYTHUSDT", "JTOUSDT"
     ];
 
     public SymbolDiscoveryService(
@@ -57,6 +62,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             var set = new HashSet<string>(HardExclude, StringComparer.OrdinalIgnoreCase);
             foreach (var b in _options.ExcludeMajorBases ?? [])
                 set.Add(b);
+            foreach (var b in _options.ExcludeToxicBases ?? [])
+                set.Add(b);
             return set;
         }
     }
@@ -66,6 +73,8 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         CancellationToken ct = default)
     {
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("Bitget", "MarginAsset", "USDT");
+        ExchangeParameters.SetStaticParameter("Bitget", "marginCoin", "USDT");
         ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
 
@@ -75,7 +84,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         var excluded = ExcludedBases;
 
         _logger.LogInformation(
-            "Discovery: public tickers Binance/Bybit/OKX (arb band {Min:0}–{Max:0} USDT vol, top {N})",
+            "Discovery: public tickers Binance/Bybit/OKX/Bitget/Gate/Kucoin (arb band {Min:0}–{Max:0} USDT vol, top {N})",
             minVol, maxVol, topN);
 
         // symbol -> exchange -> quote volume
@@ -86,6 +95,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         await MergeHttpOkxAsync(volumes, excluded, ct);
         await MergeHttpBitgetAsync(volumes, excluded, ct);
         await MergeHttpGateAsync(volumes, excluded, ct);
+        await MergeHttpKucoinAsync(volumes, excluded, ct);
 
         // Optional supplemental via library for Bitget/Gate if configured
         try
@@ -103,28 +113,203 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             return RotatingFallback("HTTP tickers empty (geo/network) — rotating arb pool", topN);
         }
 
-        var ranked = RankForArb(volumes, minVol, maxVol, topN);
+        var poolN = Math.Max(topN * 3, topN + 8);
+        var ranked = RankForArb(volumes, minVol, maxVol, poolN);
         if (ranked.Count < Math.Min(4, topN))
         {
-            // Relax band: accept wider volume, still require ≥2 venues
-            ranked = RankForArb(volumes, minVol * 0.3m, maxVol * 2m, topN, minVenues: 2);
+            ranked = RankForArb(volumes, minVol * 0.3m, maxVol * 2m, poolN, minVenues: 2);
         }
         if (ranked.Count == 0)
-            ranked = RankForArb(volumes, 500_000m, 2_000_000_000m, topN, minVenues: 2);
+            ranked = RankForArb(volumes, 500_000m, 2_000_000_000m, poolN, minVenues: 2);
 
         if (ranked.Count == 0)
             return RotatingFallback("rank empty after filters — rotating arb pool", topN);
 
-        _logger.LogInformation("Discovered {Count} arb pairs: {List}",
+        // Depth score on trade size (Binance public book) — prefer pairs that actually fill
+        var target = _options.QuoteSize > 0 ? _options.QuoteSize : 180m;
+        ranked = await EnrichAndRankByDepthAsync(ranked, target, topN, ct);
+        ranked = MergeCoreArbWatchlist(ranked, volumes, topN);
+
+        _logger.LogInformation("Discovered {Count} arb pairs (depth-scored): {List}",
             ranked.Count,
-            string.Join(", ", ranked.Select(r => $"{r.Symbol}@{r.ExchangeCount}ex/{Fmt(r.MedianQuoteVolume)}")));
+            string.Join(", ", ranked.Select(r =>
+                $"{r.Symbol}@{r.ExchangeCount}ex/vol={Fmt(r.MedianQuoteVolume)}/d={r.DepthScore:0.0}x")));
 
         return new DiscoveryResult
         {
             Symbols = ranked,
-            Source = "http-tickers-arb",
-            Message = $"band {Fmt(minVol)}–{Fmt(maxVol)}; ≥2 venues; top-{ranked.Count} by arb score"
+            Source = "http-tickers+depth",
+            Message = $"band {Fmt(minVol)}–{Fmt(maxVol)}; ≥2 venues; depth≥trade size; top-{ranked.Count}"
         };
+    }
+
+
+    /// <summary>
+    /// Sample Binance futures depth; score = min(bid,ask) top-book quote notional / target size.
+    /// Prefer DepthScore ≥ 1 (can fill QuoteSize on both sides near touch).
+    /// </summary>
+
+    /// <summary>
+    /// Always keep a core multi-venue liquid set a human desk would watch 24/7.
+    /// Merged with dynamic rank — never only exotic thin names.
+    /// </summary>
+    private static readonly string[] CoreArbWatchlist =
+    [
+        "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
+        "SUIUSDT", "NEARUSDT", "ARBUSDT", "OPUSDT", "APTUSDT", "INJUSDT",
+        "DOTUSDT", "ATOMUSDT", "LTCUSDT", "FILUSDT", "TIAUSDT", "SEIUSDT",
+        "TONUSDT", "AAVEUSDT", "UNIUSDT", "RENDERUSDT", "FETUSDT", "ENAUSDT"
+    ];
+
+    private List<DiscoveredSymbol> MergeCoreArbWatchlist(
+        List<DiscoveredSymbol> ranked,
+        Dictionary<string, Dictionary<string, decimal>> volumes,
+        int topN)
+    {
+        var result = ranked.ToList();
+        var have = new HashSet<string>(result.Select(r => r.Symbol), StringComparer.OrdinalIgnoreCase);
+        foreach (var sym in CoreArbWatchlist)
+        {
+            if (result.Count >= Math.Max(topN, 12)) break;
+            if (have.Contains(sym)) continue;
+            if (!volumes.TryGetValue(sym, out var byEx) || byEx.Count < 2) continue;
+            var vols = byEx.Values.OrderBy(v => v).ToList();
+            var median = vols[vols.Count / 2];
+            result.Add(new DiscoveredSymbol
+            {
+                Symbol = sym,
+                BaseAsset = BaseOf(sym),
+                QuoteAsset = "USDT",
+                MedianQuoteVolume = median,
+                ExchangeCount = byEx.Count,
+                Exchanges = byEx.Keys.OrderBy(x => x).ToList(),
+                DepthScore = 1m // assume liquid core; live scan still enforces fill
+            });
+            have.Add(sym);
+        }
+        // Prefer higher venue count then volume
+        return result
+            .GroupBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(x => x.ExchangeCount).ThenByDescending(x => x.DepthScore).First())
+            .OrderByDescending(x => x.ExchangeCount)
+            .ThenByDescending(x => x.DepthScore)
+            .ThenByDescending(x => x.MedianQuoteVolume)
+            .Take(Math.Max(topN, 12))
+            .ToList();
+    }
+
+    private async Task<List<DiscoveredSymbol>> EnrichAndRankByDepthAsync(
+        List<DiscoveredSymbol> candidates,
+        decimal targetNotional,
+        int topN,
+        CancellationToken ct)
+    {
+        if (candidates.Count == 0) return candidates;
+        targetNotional = Math.Max(50m, targetNotional);
+        var enriched = new List<DiscoveredSymbol>();
+
+        // Parallel depth samples (no artificial per-symbol delay)
+        var bag = new System.Collections.Concurrent.ConcurrentBag<(DiscoveredSymbol d, decimal depth, decimal score)>();
+        await Parallel.ForEachAsync(candidates.Take(36), new ParallelOptions
+        {
+            MaxDegreeOfParallelism = 8,
+            CancellationToken = ct
+        }, async (c, token) =>
+        {
+            var (depthUsd, score) = await SampleBinanceDepthAsync(c.Symbol, targetNotional, token);
+            bag.Add((c, depthUsd, score));
+        });
+
+        foreach (var (c, depthUsd, score) in bag)
+            enriched.Add(c with { DepthNotionalUsd = depthUsd, DepthScore = score });
+
+        var seen = new HashSet<string>(enriched.Select(e => e.Symbol), StringComparer.OrdinalIgnoreCase);
+        foreach (var c in candidates)
+        {
+            if (!seen.Contains(c.Symbol))
+                enriched.Add(c with { DepthScore = 0m }); // unsampled = fail depth gate
+        }
+
+        var minDepth = _options.MinDepthScoreForUniverse > 0 ? _options.MinDepthScoreForUniverse : 0.85m;
+        var ordered = enriched
+            .OrderByDescending(d => d.ExchangeCount)           // human: more venues = more routes
+            .ThenByDescending(d => d.DepthScore)
+            .ThenByDescending(d => d.MedianQuoteVolume)
+            .ToList();
+
+        // Prefer depth≥min & ≥2 venues; never starve the bot — backfill with best multi-venue
+        var fillable = ordered.Where(d => d.DepthScore >= minDepth && d.ExchangeCount >= 2).ToList();
+        var pick = fillable.Take(topN).ToList();
+        if (pick.Count < topN)
+        {
+            foreach (var d in ordered.Where(x => x.ExchangeCount >= 2))
+            {
+                if (pick.Count >= topN) break;
+                if (pick.All(p => !p.Symbol.Equals(d.Symbol, StringComparison.OrdinalIgnoreCase)))
+                    pick.Add(d);
+            }
+        }
+        if (pick.Count == 0)
+            pick = ordered.Take(topN).ToList();
+
+        var ok = pick.Count(d => d.DepthScore >= 1m);
+        _logger.LogInformation(
+            "Depth score: {Ok}/{Total} pairs fill ≥{Target:0} USDT near touch (sample Binance book)",
+            ok, pick.Count, targetNotional);
+
+        return pick;
+    }
+
+    private async Task<(decimal depthUsd, decimal score)> SampleBinanceDepthAsync(
+        string symbol,
+        decimal targetNotional,
+        CancellationToken ct)
+    {
+        try
+        {
+            var url = $"https://fapi.binance.com/fapi/v1/depth?symbol={symbol.ToUpperInvariant()}&limit=20";
+            using var resp = await _http.GetAsync(url, ct);
+            if (!resp.IsSuccessStatusCode)
+                return (0, 0);
+
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            decimal bidQ = 0, askQ = 0;
+            if (doc.RootElement.TryGetProperty("bids", out var bids))
+            {
+                foreach (var lvl in bids.EnumerateArray())
+                {
+                    if (lvl.GetArrayLength() < 2) continue;
+                    if (!decimal.TryParse(lvl[0].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var px)) continue;
+                    if (!decimal.TryParse(lvl[1].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var qty)) continue;
+                    bidQ += px * qty;
+                }
+            }
+            if (doc.RootElement.TryGetProperty("asks", out var asks))
+            {
+                foreach (var lvl in asks.EnumerateArray())
+                {
+                    if (lvl.GetArrayLength() < 2) continue;
+                    if (!decimal.TryParse(lvl[0].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var px)) continue;
+                    if (!decimal.TryParse(lvl[1].GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var qty)) continue;
+                    askQ += px * qty;
+                }
+            }
+
+            var depth = Math.Min(bidQ, askQ);
+            var score = targetNotional > 0 ? depth / targetNotional : 0;
+            if (score > 50m) score = 50m;
+            return (Math.Round(depth, 2), Math.Round(score, 2));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Depth sample failed for {S}", symbol);
+            return (0, 0);
+        }
     }
 
     /// <summary>
@@ -137,7 +322,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         int topN,
         int minVenues = 2)
     {
-        var mid = (double)((minVol + maxVol) / 2m);
+        var midVolLog = (double)((minVol + maxVol) / 2m);
         var scored = new List<(DiscoveredSymbol d, double score)>();
 
         foreach (var (symbol, byEx) in volumes)
@@ -149,15 +334,17 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             if (median < minVol || median > maxVol) continue;
 
             // Score: venue count strongly, proximity to mid-band volume, log volume
-            var venueScore = byEx.Count * 30.0;
-            var volDist = Math.Abs(Math.Log10((double)median + 1) - Math.Log10(mid + 1));
-            var bandScore = Math.Max(0, 25.0 - volDist * 12.0);
+            var venueScore = byEx.Count * 35.0; // more venues = better arb routes
+            var volDist = Math.Abs(Math.Log10((double)median + 1) - Math.Log10(midVolLog + 1));
+            var bandScore = Math.Max(0, 20.0 - volDist * 10.0);
             var logVol = Math.Log10((double)median + 1);
-            var score = venueScore + bandScore + logVol;
+            // Prefer mid/thin over mega-liquid (spreads die on majors)
+            var thinBoost = median < 20_000_000m ? 12.0 : (median < 80_000_000m ? 6.0 : 0.0);
+            var score = venueScore + bandScore + logVol * 0.5 + thinBoost;
 
-            // Slight boost for known movers (meme/L2) — still must pass volume filters
             var baseAsset = BaseOf(symbol);
-            if (IsMoverish(baseAsset)) score += 5;
+            // Mild boost only for known liquid alts — no meme/equity boost
+            if (IsMoverish(baseAsset) && baseAsset is not ("PEPE" or "WIF" or "BONK" or "TRUMP")) score += 3;
 
             scored.Add((new DiscoveredSymbol
             {
@@ -170,16 +357,61 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             }, score));
         }
 
-        return scored
-            .OrderByDescending(x => x.score)
-            .Select(x => x.d)
-            .Take(topN)
+        // Stratified pick: high / mid / low volume within band so list is not always the same majors-mid
+        var ordered = scored.OrderByDescending(x => x.score).Select(x => x.d).ToList();
+        if (ordered.Count <= topN)
+            return ordered;
+
+        var byVol = ordered.OrderByDescending(d => d.MedianQuoteVolume).ToList();
+        var nHigh = Math.Max(1, topN / 3);
+        var nLow = Math.Max(1, topN / 3);
+        var nMid = topN - nHigh - nLow;
+
+        // Hourly salt so refresh can rotate borderline names
+        var salt = (int)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute / 10); // changes every 10 min
+        var rng = new Random(salt ^ ordered.Count * 397);
+
+        List<DiscoveredSymbol> TakeSlice(IEnumerable<DiscoveredSymbol> src, int n)
+        {
+            var arr = src.ToList();
+            if (arr.Count <= n) return arr;
+            // shuffle top candidates in slice then take n
+            return arr.OrderBy(_ => rng.Next()).Take(Math.Min(n * 2, arr.Count))
+                .OrderByDescending(d => d.MedianQuoteVolume)
+                .Take(n)
+                .ToList();
+        }
+
+        var high = TakeSlice(byVol.Take(Math.Max(nHigh * 3, nHigh)), nHigh);
+        var low = TakeSlice(byVol.Skip(Math.Max(0, byVol.Count - nLow * 4)), nLow);
+        var used = new HashSet<string>(high.Concat(low).Select(d => d.Symbol), StringComparer.OrdinalIgnoreCase);
+        var midPool = byVol.Where(d => !used.Contains(d.Symbol)).ToList();
+        // mid: around median volume
+        midPool = midPool.OrderBy(d => Math.Abs(Math.Log10((double)d.MedianQuoteVolume + 1) - Math.Log10((double)((minVol + maxVol) / 2m) + 1))).ToList();
+        var midSlice = TakeSlice(midPool, nMid);
+
+        var result = high.Concat(midSlice).Concat(low)
+            .GroupBy(d => d.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
             .ToList();
+
+        // fill remainder from score order
+        foreach (var d in ordered)
+        {
+            if (result.Count >= topN) break;
+            if (result.All(x => !x.Symbol.Equals(d.Symbol, StringComparison.OrdinalIgnoreCase)))
+                result.Add(d);
+        }
+
+        return result.Take(topN).ToList();
     }
 
     private static bool IsMoverish(string baseAsset) =>
         baseAsset is "DOGE" or "WIF" or "PEPE" or "1000PEPE" or "1000BONK" or "WLD" or "ENA"
-            or "ARB" or "OP" or "SUI" or "SEI" or "TIA" or "INJ" or "JUP" or "STRK";
+            or "ARB" or "OP" or "SUI" or "SEI" or "TIA" or "INJ" or "JUP" or "STRK"
+            or "ORDI" or "FET" or "RENDER" or "W" or "AAVE" or "MKR" or "CRV"
+            or "XAU" or "XAG" or "PAXG" or "SOLV" or "BOME" or "NOT" or "TRB"
+            or "BLUR" or "IMX" or "ZK" or "MANTA" or "DYM" or "ALT";
 
     private async Task MergeHttpBinanceAsync(
         Dictionary<string, Dictionary<string, decimal>> volumes,
@@ -388,6 +620,73 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         }
     }
 
+
+    private async Task MergeHttpKucoinAsync(
+        Dictionary<string, Dictionary<string, decimal>> volumes,
+        HashSet<string> excluded,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Active USDT-margined contracts (public)
+            using var resp = await _http.GetAsync("https://api-futures.kucoin.com/api/v1/contracts/active", ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Kucoin contracts HTTP {Code}", (int)resp.StatusCode);
+                return;
+            }
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return;
+            var n = 0;
+            foreach (var el in data.EnumerateArray())
+            {
+                var quote = el.TryGetProperty("quoteCurrency", out var qc) ? qc.GetString() ?? "" : "";
+                var settle = el.TryGetProperty("settleCurrency", out var sc) ? sc.GetString() ?? "" : "";
+                if (!quote.Equals("USDT", StringComparison.OrdinalIgnoreCase)
+                    && !settle.Equals("USDT", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var baseCur = el.TryGetProperty("displayBaseCurrency", out var dbc) ? dbc.GetString()
+                    : el.TryGetProperty("baseCurrency", out var bc) ? bc.GetString() : null;
+                if (string.IsNullOrWhiteSpace(baseCur)) continue;
+                // KuCoin uses XBT for BTC
+                if (baseCur.Equals("XBT", StringComparison.OrdinalIgnoreCase))
+                    baseCur = "BTC";
+                if (excluded.Contains(baseCur)) continue;
+                var sym = baseCur.ToUpperInvariant() + "USDT";
+                // turnoverOf24h is quote volume-ish
+                decimal vol = 0;
+                if (el.TryGetProperty("turnoverOf24h", out var to))
+                {
+                    if (to.ValueKind == JsonValueKind.Number && to.TryGetDecimal(out var d)) vol = d;
+                    else if (to.ValueKind == JsonValueKind.String
+                             && decimal.TryParse(to.GetString(),
+                                 System.Globalization.NumberStyles.Any,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var d2))
+                        vol = d2;
+                }
+                if (vol <= 0 && el.TryGetProperty("volumeOf24h", out var vo))
+                {
+                    if (vo.ValueKind == JsonValueKind.Number && vo.TryGetDecimal(out var d)) vol = d;
+                    else if (vo.ValueKind == JsonValueKind.String
+                             && decimal.TryParse(vo.GetString(),
+                                 System.Globalization.NumberStyles.Any,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var d2))
+                        vol = d2;
+                }
+                if (vol <= 0) continue;
+                AddVol(volumes, sym, "Kucoin", vol);
+                n++;
+            }
+            _logger.LogInformation("Kucoin USDT futures: {N} contracts with volume", n);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Kucoin public contracts fetch failed");
+        }
+    }
+
     private async Task MergeLibraryFuturesAsync(
         IReadOnlyList<string> exchanges,
         Dictionary<string, Dictionary<string, decimal>> volumes,
@@ -397,7 +696,11 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         var core = exchanges.Where(e =>
             e.Equals("Binance", StringComparison.OrdinalIgnoreCase) ||
             e.Equals("Bybit", StringComparison.OrdinalIgnoreCase) ||
-            e.Equals("OKX", StringComparison.OrdinalIgnoreCase)).ToList();
+            e.Equals("OKX", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("KuCoin", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("Coinbase", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("Bitget", StringComparison.OrdinalIgnoreCase)).ToList();
         if (core.Count == 0) return;
 
         var fut = await _rest.GetFuturesTickersAsync(
@@ -451,7 +754,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     private DiscoveryResult RotatingFallback(string reason, int topN)
     {
         // Rotate by UTC day-hour so list is not frozen forever when REST is blocked
-        var seed = (int)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerHour);
+        var seed = (int)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute / 10);
         var rng = new Random(seed);
         var pool = ArbFriendlyPool.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         // Prefer config symbols first if present
@@ -479,7 +782,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         {
             Symbols = list,
             Source = "rotated-curated",
-            Message = reason + " | rotates hourly"
+            Message = reason + " | rotates ~10m"
         };
     }
 

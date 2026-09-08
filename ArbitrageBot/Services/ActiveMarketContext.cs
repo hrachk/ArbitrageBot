@@ -46,4 +46,18 @@ public class ActiveMarketContext
                 _discovered = meta.ToList();
         }
     }
+
+    /// <summary>Exchanges that reported this symbol in discovery; empty = all configured.</summary>
+    public IReadOnlyList<string> ExchangesFor(string symbol)
+    {
+        lock (_lock)
+        {
+            var d = _discovered.FirstOrDefault(x =>
+                x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
+            if (d?.Exchanges is { Count: > 0 })
+                return d.Exchanges.ToList();
+            return _exchanges.ToList();
+        }
+    }
 }
+

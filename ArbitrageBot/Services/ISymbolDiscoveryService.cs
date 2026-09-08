@@ -23,4 +23,8 @@ public record DiscoveredSymbol
     public decimal MedianQuoteVolume { get; init; }
     public int ExchangeCount { get; init; }
     public IReadOnlyList<string> Exchanges { get; init; } = [];
+    /// <summary>Min(bid,ask) quote depth near top of book (USDT), Binance sample.</summary>
+    public decimal DepthNotionalUsd { get; init; }
+    /// <summary>DepthNotional / target trade size (≥1 = fills QuoteSize comfortably).</summary>
+    public decimal DepthScore { get; init; }
 }

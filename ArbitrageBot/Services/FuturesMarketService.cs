@@ -32,6 +32,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public decimal? LastScanBestNetOpen { get; private set; }
     public int LastScanBooksReady { get; private set; }
     public int LastScanPairsCompared { get; private set; }
+    public int LastScanStaleSkipped { get; private set; }
+    public int LastScanPersistPending { get; private set; }
+    private readonly ConcurrentDictionary<string, (decimal gross, DateTime utc)> _grossHistory = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _edgeFirstSeen = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
     private DateTime _lastFundingRefreshUtc = DateTime.MinValue;
@@ -40,6 +44,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public IReadOnlyDictionary<string, string> ConnectionStatus => _status;
     public bool IsReady => _started && _tickers.Count > 0;
 
+    private readonly FundingRateService? _fundingSvc;
+
     public FuturesMarketService(
         IExchangeOrderBookFactory factory,
         IExchangeSocketClient socket,
@@ -47,7 +53,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         ActiveMarketContext markets,
         IOptions<ArbitrageOptions> options,
         ILogger<FuturesMarketService> logger,
-        RuntimeRiskConfig runtime)
+        RuntimeRiskConfig runtime,
+        FundingRateService? fundingSvc = null)
     {
         _factory = factory;
         _socket = socket;
@@ -56,10 +63,15 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         _options = options.Value;
         _logger = logger;
         _runtime = runtime;
+        _fundingSvc = fundingSvc;
 
         // Exchange-specific Shared API parameters for USDT-M perps
         ExchangeParameters.SetStaticParameter("Bitget", "ProductType", "UsdtFutures");
         ExchangeParameters.SetStaticParameter("BitGet", "ProductType", "UsdtFutures");
+        ExchangeParameters.SetStaticParameter("Bitget", "MarginAsset", "USDT");
+        ExchangeParameters.SetStaticParameter("Bitget", "marginCoin", "USDT");
+        ExchangeParameters.SetStaticParameter("BitGet", "MarginAsset", "USDT");
+        ExchangeParameters.SetStaticParameter("BitGet", "marginCoin", "USDT");
         ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("Gate", "SettleAsset", "usdt");
@@ -87,13 +99,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 continue;
             }
 
+            // Try every configured venue. Missing instruments → skip-no-instrument (not discovery skip).
+            // Discovery ExchangesFor is ranking-only; KuCoin often absent from HTTP vol maps.
             foreach (var exchange in _markets.Exchanges)
             {
                 var key = $"{exchange}:{symbolStr}";
                 try
                 {
                     var depth = _options.MaxDepthLevels > 0 ? _options.MaxDepthLevels : 20;
-                    // Try canonical name + common aliases (OKX vs Okx)
                     ISymbolOrderBook? book = null;
                     foreach (var name in ExchangeNameVariants(exchange))
                     {
@@ -116,20 +129,34 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (book == null)
                     {
                         _status[key] = "no-factory→ticker";
-                        _logger.LogWarning("No futures order-book factory for {Key}, using book-ticker", key);
                         await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct);
                         continue;
                     }
 
-                    book.OnStatusChange += (_, st) => _status[key] = st.ToString();
+                    book.OnStatusChange += (_, st) =>
+                    {
+                        var s = st.ToString();
+                        _status[key] = s;
+                        // Quiet missing-instrument spam after connect errors
+                        if (IsMissingInstrument(s))
+                            _status[key] = "skip-no-instrument";
+                    };
                     book.OnOrderBookUpdate += _ => UpdateFromBook(exchange, symbolStr, book);
                     book.OnBestOffersChanged += _ => UpdateFromBook(exchange, symbolStr, book);
 
                     var start = await book.StartAsync(ct);
                     if (!start.Success)
                     {
-                        _status[key] = $"failed:{start.Error?.Message}";
-                        _logger.LogWarning("Futures book {Key} failed: {E}", key, start.Error?.Message);
+                        var err = start.Error?.Message ?? "start failed";
+                        if (IsMissingInstrument(err))
+                        {
+                            _status[key] = "skip-no-instrument";
+                            _logger.LogDebug("Skip {Key}: instrument not on venue ({E})", key, err);
+                            try { await book.StopAsync(); } catch { /* ignore */ }
+                            continue; // do NOT ticker-subscribe — same 60018
+                        }
+                        _status[key] = "failed:" + err;
+                        _logger.LogWarning("Futures book {Key} failed: {E}", key, err);
                         await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct);
                         continue;
                     }
@@ -141,8 +168,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
+                    if (IsMissingInstrument(ex.Message))
+                    {
+                        _status[key] = "skip-no-instrument";
+                        _logger.LogDebug(ex, "Skip {Key}: no instrument", key);
+                        continue;
+                    }
                     _status[key] = $"error:{ex.Message}";
-                    _logger.LogError(ex, "Futures book {Key}", key);
+                    _logger.LogWarning(ex, "Futures book {Key}", key);
                     try { await SubscribeBookTickerAsync(exchange, symbol, symbolStr, ct); } catch { /* ignore */ }
                 }
             }
@@ -177,6 +210,19 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         {
             yield return "Bitget";
             yield return "BitGet";
+        }
+        if (exchange.Equals("Coinbase", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Coinbase";
+            yield return "CoinbaseInternational";
+            yield return "CoinbaseAdv";
+        }
+        if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Kucoin";
+            yield return "KuCoin";
+            yield return "KucoinFutures";
         }
     }
 
@@ -270,11 +316,18 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public Dictionary<string, BookTicker> GetBookTickers(string symbol)
     {
         var result = new Dictionary<string, BookTicker>(StringComparer.OrdinalIgnoreCase);
+        var maxAge = _runtime.Snapshot.MaxBookAgeMs;
+        var now = DateTime.UtcNow;
         foreach (var ex in _markets.Exchanges)
         {
             var key = $"{ex}:{symbol}";
-            if (_tickers.TryGetValue(key, out var t))
-                result[ex] = t;
+            if (!_tickers.TryGetValue(key, out var t)) continue;
+            if (maxAge > 0 && t.Timestamp != default)
+            {
+                var ageMs = (now - t.Timestamp).TotalMilliseconds;
+                if (ageMs > maxAge) continue; // stale
+            }
+            result[ex] = t;
         }
         return result;
     }
@@ -372,16 +425,24 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             await RefreshFundingCacheAsync(ct);
 
         var list = new List<FuturesOpportunity>();
-        var notional = _runtime.Snapshot.QuoteSize > 0 ? _runtime.Snapshot.QuoteSize : 500m;
+        // Professional: one size for scan/paper/live. Cap by max notional so we never skip "180 > 100".
+        var snapN = _runtime.Snapshot;
+        var quote = snapN.QuoteSize > 0 ? snapN.QuoteSize : 100m;
+        var maxN = snapN.FuturesMaxNotionalUsd > 0 ? snapN.FuturesMaxNotionalUsd : quote;
+        var notional = Math.Min(quote, maxN);
+        if (notional < 10m) notional = 10m;
         decimal? bestGross = null, bestNet = null;
         var booksReady = 0;
         var pairsCompared = 0;
+        LastScanPersistPending = 0;
+        LastScanStaleSkipped = 0;
         foreach (var s0 in _markets.Symbols)
             booksReady += GetBookTickers(s0).Count;
 
         foreach (var symbol in _markets.Symbols)
         {
             if (ct.IsCancellationRequested) break;
+            if (_runtime.Snapshot.IsExcludedSymbol(symbol)) continue;
             var tickers = GetBookTickers(symbol);
             if (tickers.Count < 2) continue;
 
@@ -399,12 +460,16 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var sellFill = Estimate(symbol, shortEx, notional, isBuy: false);
                     if (!buyFill.Success || !sellFill.Success) continue;
 
-                    var qty = Math.Min(buyFill.FilledBaseQty, sellFill.FilledBaseQty);
-                    if (qty <= 0) continue;
+                    var qtyRaw = Math.Min(buyFill.FilledBaseQty, sellFill.FilledBaseQty);
+                    if (qtyRaw <= 0) continue;
 
                     var longVwap = buyFill.VwapPrice;
                     var shortVwap = sellFill.VwapPrice;
                     if (shortVwap <= longVwap) continue;
+
+                    // Round qty to exchange-safe precision (prevents Binance -1111 on live; keeps paper realistic)
+                    var qty = LiveOrderEngine.RoundBaseQty(qtyRaw, longVwap);
+                    if (qty <= 0) continue;
 
                     pairsCompared++;
                     var longFee = _options.EstimatedTakerFees.GetValueOrDefault(longEx, 0.05m);
@@ -435,7 +500,63 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         - shortVwap * qty * (shortFee / 100m) * 2m
                         + notional * fundPct / 100m;
 
-                    if (thresholdMetric < _runtime.Snapshot.MinProfitPercent) continue;
+                    // Rank ALL positive-gross routes for UI + bot (same list). Executable = passed gates.
+                    if (gross <= 0) continue;
+
+                    var snap = _runtime.Snapshot;
+                    // QUALITY: always score on full round-trip (open+close fees).
+                    // Net-open-only entries were the "kopeck then give back" loss factory.
+                    var scalp = snap.SpatialScalpMode;
+                    if (snap.FuturesRequireRoundTripEdge)
+                        thresholdMetric = snap.FuturesIncludeFunding ? netAfterFund : netRt;
+                    else if (scalp)
+                        // Still require RT >= 0 so close fees are not ignored
+                        thresholdMetric = Math.Min(netOpen, netRt);
+                    else
+                        thresholdMetric = netOpen;
+
+                    var minEdge = snap.MinProfitPercent
+                                  + (snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0m);
+                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.25m;
+                    // Hard floor: never EXEC if RT cannot cover close path
+                    if (netRt < minEdge * 0.5m)
+                        thresholdMetric = Math.Min(thresholdMetric, netRt);
+                    var edgeKey = $"{symbol}|{longEx}|{shortEx}";
+
+                    var spreadingOk = true;
+                    if (snap.RequireSpreadingEdge)
+                    {
+                        var now = DateTime.UtcNow;
+                        if (_grossHistory.TryGetValue(edgeKey, out var prev)
+                            && (now - prev.utc).TotalMilliseconds is >= 400 and <= 3000
+                            && gross + 0.015m < prev.gross)
+                            spreadingOk = false;
+                        _grossHistory[edgeKey] = (gross, now);
+                    }
+
+                    var persistMs = snap.MinSpreadPersistMs;
+                    var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
+                    var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
+                    var persistOk = persistMs <= 0 || heldMs >= persistMs;
+                    if (!persistOk)
+                        LastScanPersistPending++;
+
+                    var filled = buyFill.FullyFilled && sellFill.FullyFilled;
+                    var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
+                    var fillOk = !needFill || filled;
+
+                    // Executable only when gates pass (UI still shows ranked near-misses)
+                    var executable = gross >= minGross
+                                     && thresholdMetric >= minEdge
+                                     && spreadingOk
+                                     && persistOk
+                                     && fillOk;
+
+                    if (!executable && (gross < minGross * 0.5m || thresholdMetric < 0))
+                    {
+                        // too far from tradeable — keep ranking noise low
+                        if (gross < 0.04m) continue;
+                    }
 
                     list.Add(new FuturesOpportunity
                     {
@@ -448,7 +569,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         ShortBidTop = sellFill.TopOfBookPrice,
                         NotionalUsd = notional,
                         BaseQty = qty,
-                        FullyFilled = buyFill.FullyFilled && sellFill.FullyFilled,
+                        FullyFilled = filled,
+                        IsExecutable = executable,
                         GrossSpreadPercent = gross,
                         NetSpreadPercent = netOpen,
                         NetRoundTripPercent = netRt,
@@ -465,11 +587,26 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             }
         }
 
+        var alive = new HashSet<string>(list.Select(o => $"{o.Symbol}|{o.LongExchange}|{o.ShortExchange}"), StringComparer.OrdinalIgnoreCase);
+        foreach (var k in _edgeFirstSeen.Keys)
+        {
+            if (alive.Contains(k)) continue;
+            if (_edgeFirstSeen.TryGetValue(k, out var t0) &&
+                (DateTime.UtcNow - t0).TotalMilliseconds > Math.Max(5000, _runtime.Snapshot.MinSpreadPersistMs * 3))
+                _edgeFirstSeen.TryRemove(k, out _);
+        }
+
         LastScanBestGross = bestGross;
         LastScanBestNetOpen = bestNet;
         LastScanBooksReady = booksReady;
         LastScanPairsCompared = pairsCompared;
-        return list.OrderByDescending(x => x.NetAfterFundingPercent).ToList();
+
+        // One ranked list for dashboard + execution (top by open-edge net)
+        return list
+            .OrderByDescending(x => x.IsExecutable)
+            .ThenByDescending(x => x.NetSpreadPercent)
+            .Take(20)
+            .ToList();
     }
 
     public async Task StopAsync(CancellationToken ct = default)
@@ -494,6 +631,13 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     private decimal? GetCachedFunding(string exchange, string symbol)
     {
+        // Prefer FundingRateService (5-min fresh, all exchanges)
+        if (_fundingSvc != null)
+        {
+            var snap = _fundingSvc.GetLatest(symbol, exchange);
+            if (snap != null) return snap.Rate;
+        }
+        // Fallback: own shared-API cache (45-min TTL)
         var key = $"{exchange}:{symbol}";
         if (_fundingCache.TryGetValue(key, out var e) && DateTime.UtcNow - e.at < FundingCacheTtl)
             return e.rate;
@@ -515,11 +659,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 return;
 
             // Prefer core venues for funding; Bitget/Gate often need extra params and burn rate limits
+            // Kucoin shared funding often 404000 (contract id) — skip REST funding poll noise
             var fundingExchanges = _markets.Exchanges
                 .Where(e => e is not null &&
                     !e.Equals("Bitget", StringComparison.OrdinalIgnoreCase) &&
                     !e.Equals("GateIo", StringComparison.OrdinalIgnoreCase) &&
-                    !e.Equals("GateIO", StringComparison.OrdinalIgnoreCase))
+                    !e.Equals("GateIO", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (fundingExchanges.Count == 0)
@@ -571,6 +718,19 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         {
             _fundingLock.Release();
         }
+    }
+
+    private static bool IsMissingInstrument(string? msg)
+    {
+        if (string.IsNullOrEmpty(msg)) return false;
+        return msg.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("60018", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Invalid symbol", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Unknown symbol", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("-1121", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("instrument_id", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Wrong URL or channel", StringComparison.OrdinalIgnoreCase);
     }
 
     private static SharedSymbol ParsePerp(string symbol)

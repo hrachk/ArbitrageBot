@@ -12,6 +12,8 @@ public record FuturesOpportunity
     public decimal NotionalUsd { get; init; }
     public decimal BaseQty { get; init; }
     public bool FullyFilled { get; init; }
+    /// <summary>Passed all open gates (fees, persist, depth).</summary>
+    public bool IsExecutable { get; init; }
     public decimal GrossSpreadPercent { get; init; }
     /// <summary>Open fees only (legacy view).</summary>
     public decimal NetSpreadPercent { get; init; }
@@ -70,5 +72,21 @@ public class FuturesPaperPosition
     public decimal CurrentWidthPercent { get; set; }
     public decimal LockedMarginUsd { get; set; }
     public decimal Leverage { get; set; }
+    // HoldDecisionEngine output — updated each scan cycle
+    public string? LastHoldDecision { get; set; }         // "HOLD" | "CLOSE"
+    public string? LastHoldDecisionReason { get; set; }
+    public decimal AccumulatedFundingPnlUsd { get; set; } // paper: simulated funding credits
+    public decimal EntryFundingDeltaRate { get; set; }    // delta at open
+    public string PositionType { get; set; } = "Spatial"; // "Spatial" | "FundingArb"
 }
 
+
+// ── Manual hedge request from terminal UI ────────────────────────────────────
+public record ManualHedgeRequest
+{
+    public string Symbol { get; init; } = "";
+    public string LongExchange { get; init; } = "";
+    public string ShortExchange { get; init; } = "";
+    public decimal NotionalUsd { get; init; }
+    public decimal Leverage { get; init; }
+}

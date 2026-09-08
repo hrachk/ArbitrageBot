@@ -1,0 +1,22 @@
+{
+  "dayUtc": "2026-09-05",
+  "scans": 201675,
+  "avgCandidates": 3.14,
+  "opens": 0,
+  "closes": 0,
+  "skips": 1220,
+  "realizedPnlUsd": 0,
+  "bestOpenPctSeen": 2.0936,
+  "bestRtPctSeen": 2.0036,
+  "skipReasons": [
+    {
+      "reason": "no-candidates-above-min",
+      "count": 1061
+    },
+    {
+      "reason": "Notional 180 \u003E max 100",
+      "count": 159
+    }
+  ],
+  "updatedUtc": "2026-09-06T00:00:00.6413365Z"
+}

@@ -14,6 +14,8 @@ public interface IPaperAnalyticsStore
     IReadOnlyList<object> GetRecentEvents(int take = 80);
     IReadOnlyList<object> GetRecentSkips(int take = 40);
     IReadOnlyList<object> GetDaySummaries(int maxDays = 14);
+    object GetPerformanceReport(int days = 7);
+    IReadOnlyList<object> GetTradeDetails(int take = 100);
 }
 
 /// <summary>
@@ -204,20 +206,24 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                              ?? row.GetType().GetProperty("id")?.GetValue(row)?.ToString();
                 // anonymous types — serialize compare via json
             }
+            var holdMin = trade.ClosedAt is { } cAt
+                ? (cAt - trade.OpenedAt).TotalMinutes
+                : 0d;
             _tradeLedger.Insert(0, new
             {
-                trade.Id,
+                id = trade.Id,
                 status = trade.Status,
-                trade.OpenedAt,
-                trade.ClosedAt,
-                trade.Symbol,
-                trade.LongExchange,
-                trade.ShortExchange,
-                trade.BaseQty,
-                trade.LongEntry,
-                trade.ShortEntry,
+                openedAt = trade.OpenedAt,
+                closedAt = trade.ClosedAt,
+                symbol = trade.Symbol,
+                longExchange = trade.LongExchange,
+                shortExchange = trade.ShortExchange,
+                baseQty = trade.BaseQty,
+                longEntry = trade.LongEntry,
+                shortEntry = trade.ShortEntry,
                 realizedPnlUsd = pnl,
-                trade.Message
+                holdMin,
+                message = trade.Message
             });
             SaveLedger();
             MaybeFlushDaily();
@@ -243,9 +249,63 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 bestRtPctSeen = Math.Round(_bestRtSeen, 4),
                 skipReasons = _skipReasons.OrderByDescending(kv => kv.Value)
                     .Select(kv => new { reason = kv.Key, count = kv.Value }).ToList(),
+                quality = ComputeQualityUnlocked(),
                 dataDir = _dir,
                 note = "Persisted under data/paper/ (events-*.jsonl, daily-*.json, trades-ledger.json)"
             };
+        }
+    }
+
+
+    private object ComputeQualityUnlocked()
+    {
+        try
+        {
+            if (!File.Exists(LedgerPath))
+                return new { winRate = 0m, closed = 0, wins = 0, avgPnl = 0m, avgHoldSec = 0m };
+            using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return new { winRate = 0m, closed = 0, wins = 0, avgPnl = 0m, avgHoldSec = 0m };
+            int closed = 0, wins = 0;
+            decimal sumPnl = 0, sumHold = 0;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                var status = el.TryGetProperty("status", out var st) ? st.GetString() ?? "" :
+                             el.TryGetProperty("Status", out var st2) ? st2.GetString() ?? "" : "";
+                var hasClosedAt = el.TryGetProperty("closedAt", out _) || el.TryGetProperty("ClosedAt", out _);
+                if (status.StartsWith("Open", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!status.Contains("Closed", StringComparison.OrdinalIgnoreCase) && !hasClosedAt)
+                    continue;
+                closed++;
+                decimal pnl = 0;
+                if (el.TryGetProperty("realizedPnlUsd", out var pr) && pr.TryGetDecimal(out var pd)) pnl = pd;
+                else if (el.TryGetProperty("RealizedPnlUsd", out var pr2) && pr2.TryGetDecimal(out var pd2)) pnl = pd2;
+                sumPnl += pnl;
+                if (pnl > 0) wins++;
+                DateTime? openAt = null, closeAt = null;
+                if (el.TryGetProperty("openedAt", out var oa) && oa.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(oa.GetString(), out var oad)) openAt = oad.ToUniversalTime();
+                if (el.TryGetProperty("OpenedAt", out var oa2) && oa2.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(oa2.GetString(), out var oad2)) openAt = oad2.ToUniversalTime();
+                if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(ca.GetString(), out var cad)) closeAt = cad.ToUniversalTime();
+                if (el.TryGetProperty("ClosedAt", out var ca2) && ca2.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(ca2.GetString(), out var cad2)) closeAt = cad2.ToUniversalTime();
+                if (openAt is not null && closeAt is not null)
+                    sumHold += (decimal)(closeAt.Value - openAt.Value).TotalSeconds;
+            }
+            return new
+            {
+                winRate = closed > 0 ? Math.Round(100m * wins / closed, 1) : 0m,
+                closed,
+                wins,
+                avgPnl = closed > 0 ? Math.Round(sumPnl / closed, 4) : 0m,
+                avgHoldSec = closed > 0 ? Math.Round(sumHold / closed, 1) : 0m
+            };
+        }
+        catch
+        {
+            return new { winRate = 0m, closed = 0, wins = 0, avgPnl = 0m, avgHoldSec = 0m };
         }
     }
 
@@ -309,6 +369,188 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         _lastDailyFlush = DateTime.UtcNow;
         PersistDailySummary(_day);
     }
+
+
+    public object GetPerformanceReport(int days = 7)
+    {
+        days = Math.Clamp(days, 1, 90);
+        var since = DateTime.UtcNow.Date.AddDays(-(days - 1));
+        List<JsonElement> closed = [];
+        lock (_lock)
+        {
+            // Prefer re-read ledger file for stable shape
+            try
+            {
+                if (File.Exists(LedgerPath))
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var el in doc.RootElement.EnumerateArray())
+                        {
+                            var status = el.TryGetProperty("status", out var st) ? st.GetString() : "";
+                            if (status is null) continue;
+                            if (!status.Contains("Close", StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(status, "Closed", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("converged", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("stop", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                                && !status.Contains("manual", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // still include if has realizedPnl
+                                if (!el.TryGetProperty("realizedPnlUsd", out var rp) || rp.ValueKind == JsonValueKind.Null)
+                                    continue;
+                            }
+                            if (!el.TryGetProperty("realizedPnlUsd", out var pnlEl) || pnlEl.ValueKind == JsonValueKind.Null)
+                                continue;
+                            DateTime closedAt = DateTime.MinValue;
+                            if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
+                                && DateTime.TryParse(ca.GetString(), out var cdt))
+                                closedAt = cdt.ToUniversalTime();
+                            else if (el.TryGetProperty("ClosedAt", out var ca2) && ca2.ValueKind == JsonValueKind.String
+                                && DateTime.TryParse(ca2.GetString(), out var cdt2))
+                                closedAt = cdt2.ToUniversalTime();
+                            if (closedAt == DateTime.MinValue) closedAt = DateTime.UtcNow;
+                            if (closedAt.Date < since) continue;
+                            closed.Add(el.Clone());
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "performance report ledger parse");
+            }
+        }
+
+        var pnls = new List<(DateTime closedAt, decimal pnl, double holdMin, string symbol, string status, string message)>();
+        foreach (var el in closed)
+        {
+            var pnl = el.TryGetProperty("realizedPnlUsd", out var p) && p.TryGetDecimal(out var pd) ? pd : 0m;
+            DateTime closedAt = DateTime.UtcNow;
+            if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(ca.GetString(), out var cdt))
+                closedAt = cdt.ToUniversalTime();
+            DateTime openedAt = closedAt;
+            if (el.TryGetProperty("openedAt", out var oa) && oa.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(oa.GetString(), out var odt))
+                openedAt = odt.ToUniversalTime();
+            else if (el.TryGetProperty("OpenedAt", out var oa2) && oa2.ValueKind == JsonValueKind.String
+                && DateTime.TryParse(oa2.GetString(), out var odt2))
+                openedAt = odt2.ToUniversalTime();
+            double hold = Math.Max(0, (closedAt - openedAt).TotalMinutes);
+            if (el.TryGetProperty("holdMin", out var hm) && hm.TryGetDouble(out var hmd) && hmd > 0)
+                hold = hmd;
+            var sym = el.TryGetProperty("symbol", out var s) ? s.GetString() ?? "?" :
+                      (el.TryGetProperty("Symbol", out var s2) ? s2.GetString() ?? "?" : "?");
+            var status = el.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";
+            var msg = el.TryGetProperty("message", out var m) ? m.GetString() ?? "" :
+                      (el.TryGetProperty("Message", out var m2) ? m2.GetString() ?? "" : "");
+            pnls.Add((closedAt, pnl, hold, sym, status, msg));
+        }
+
+        pnls = pnls.OrderBy(x => x.closedAt).ToList();
+        var wins = pnls.Where(x => x.pnl > 0).ToList();
+        var losses = pnls.Where(x => x.pnl < 0).ToList();
+        var flats = pnls.Where(x => x.pnl == 0).ToList();
+        var net = pnls.Sum(x => x.pnl);
+        var grossWin = wins.Sum(x => x.pnl);
+        var grossLoss = Math.Abs(losses.Sum(x => x.pnl));
+        var winRate = pnls.Count > 0 ? (decimal)wins.Count / pnls.Count * 100m : 0;
+        var avgWin = wins.Count > 0 ? wins.Average(x => x.pnl) : 0;
+        var avgLoss = losses.Count > 0 ? losses.Average(x => x.pnl) : 0;
+        var pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? 99m : 0);
+        var avgHold = pnls.Count > 0 ? pnls.Average(x => x.holdMin) : 0;
+        var expectancy = pnls.Count > 0 ? net / pnls.Count : 0;
+        var avgRr = avgLoss != 0 ? Math.Abs(avgWin / avgLoss) : 0;
+
+        // equity curve + max drawdown
+        decimal peak = 0, equity = 0, maxDd = 0;
+        var curve = new List<object>();
+        foreach (var x in pnls)
+        {
+            equity += x.pnl;
+            if (equity > peak) peak = equity;
+            var dd = peak - equity;
+            if (dd > maxDd) maxDd = dd;
+            curve.Add(new { t = x.closedAt, equity = Math.Round(equity, 4), pnl = Math.Round(x.pnl, 4) });
+        }
+
+        // consecutive
+        int consecW = 0, consecL = 0, maxCW = 0, maxCL = 0;
+        foreach (var x in pnls)
+        {
+            if (x.pnl > 0) { consecW++; consecL = 0; maxCW = Math.Max(maxCW, consecW); }
+            else if (x.pnl < 0) { consecL++; consecW = 0; maxCL = Math.Max(maxCL, consecL); }
+            else { consecW = 0; consecL = 0; }
+        }
+
+        // daily calendar
+        var byDay = pnls.GroupBy(x => x.closedAt.Date)
+            .Select(g => new
+            {
+                day = g.Key.ToString("yyyy-MM-dd"),
+                pnl = Math.Round(g.Sum(x => x.pnl), 4),
+                trades = g.Count(),
+                wins = g.Count(x => x.pnl > 0),
+                losses = g.Count(x => x.pnl < 0)
+            })
+            .OrderBy(x => x.day)
+            .ToList();
+
+        var best = pnls.OrderByDescending(x => x.pnl).FirstOrDefault();
+        var worst = pnls.OrderBy(x => x.pnl).FirstOrDefault();
+
+        return new
+        {
+            mode = "PAPER",
+            rangeDays = days,
+            fromUtc = since.ToString("yyyy-MM-dd"),
+            toUtc = DateTime.UtcNow.Date.ToString("yyyy-MM-dd"),
+            netPnl = Math.Round(net, 4),
+            winRate = Math.Round(winRate, 2),
+            totalTrades = pnls.Count,
+            wins = wins.Count,
+            losses = losses.Count,
+            flats = flats.Count,
+            avgWin = Math.Round(avgWin, 4),
+            avgLoss = Math.Round(avgLoss, 4),
+            profitFactor = Math.Round(pf, 2),
+            maxDrawdown = Math.Round(maxDd, 4),
+            bestTrade = best.symbol != null ? new { best.symbol, pnl = Math.Round(best.pnl, 4), best.closedAt } : null,
+            worstTrade = worst.symbol != null ? new { worst.symbol, pnl = Math.Round(worst.pnl, 4), worst.closedAt } : null,
+            avgDurationMin = Math.Round((decimal)avgHold, 1),
+            expectancy = Math.Round(expectancy, 4),
+            avgRr = Math.Round((decimal)avgRr, 2),
+            consecWins = maxCW,
+            consecLoss = maxCL,
+            equityCurve = curve,
+            daily = byDay,
+            note = "Built from data/paper/trades-ledger.json closed rows. Equity curve = cumulative realized (not mark-to-market)."
+        };
+    }
+
+    public IReadOnlyList<object> GetTradeDetails(int take = 100)
+    {
+        take = Math.Clamp(take, 1, 500);
+        try
+        {
+            if (!File.Exists(LedgerPath)) return Array.Empty<object>();
+            using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return Array.Empty<object>();
+            var list = new List<object>();
+            foreach (var el in doc.RootElement.EnumerateArray().Take(take))
+            {
+                list.Add(JsonSerializer.Deserialize<object>(el.GetRawText())!);
+            }
+            return list;
+        }
+        catch
+        {
+            return Array.Empty<object>();
+        }
+    }
+
 
     private void PersistDailySummary(DateTime day)
     {

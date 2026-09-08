@@ -21,8 +21,13 @@ public class ArbitrageWorker : BackgroundService
     private readonly ILogger<ArbitrageWorker> _logger;
     private readonly IPaperAnalyticsStore _analytics;
     private readonly RuntimeRiskConfig _runtime;
+    private readonly LiveTradingGuard _liveGuard;
+    private readonly ILiveExecutionService _liveExec;
+    private readonly FundingRateService _fundingRates;
+    private readonly HoldDecisionEngine _holdEngine;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
+    private DateTime _lastHeartbeatLogUtc = DateTime.MinValue;
 
     public ArbitrageWorker(
         IMarketDataService spotMarket,
@@ -37,7 +42,11 @@ public class ArbitrageWorker : BackgroundService
         IHubContext<ArbitrageHub> hub,
         ILogger<ArbitrageWorker> logger,
         IPaperAnalyticsStore analytics,
-        RuntimeRiskConfig runtime)
+        RuntimeRiskConfig runtime,
+        LiveTradingGuard liveGuard,
+        ILiveExecutionService liveExec,
+        FundingRateService fundingRates,
+        HoldDecisionEngine holdEngine)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -52,9 +61,13 @@ public class ArbitrageWorker : BackgroundService
         _logger = logger;
         _analytics = analytics;
         _runtime = runtime;
+        _liveGuard = liveGuard;
+        _liveExec = liveExec;
+        _fundingRates = fundingRates;
+        _holdEngine = holdEngine;
 
         _state.StrategyMode = _options.StrategyMode;
-        _state.Mode = _options.PaperTrading ? "PAPER" : "LIVE";
+        _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE" : (_liveGuard.IsEnabled ? "LIVE-RO" : "PAPER");
         _state.MinProfitPercent = _options.MinProfitPercent;
         _state.QuoteSize = _options.QuoteSize;
         _state.DynamicSymbols = _options.DynamicSymbols;
@@ -97,6 +110,40 @@ public class ArbitrageWorker : BackgroundService
         {
             try
             {
+                // Обновляем Mode динамически — чтобы UI сразу видел смену Live/Paper
+                _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE"
+                            : _liveGuard.IsEnabled      ? "LIVE-RO"
+                            : "PAPER";
+
+                // Visible heartbeat — proves engine is alive
+                if ((DateTime.UtcNow - _lastHeartbeatLogUtc).TotalSeconds >= 30)
+                {
+                    _lastHeartbeatLogUtc = DateTime.UtcNow;
+                    var opens = _options.IsFuturesCross ? _futPaper.OpenCount : 0;
+                    decimal? bestNet = null;
+                    var books = 0;
+                    var persistWait = 0;
+                    var pairs = 0;
+                    if (_futMarket is FuturesMarketService fmsHb)
+                    {
+                        bestNet = fmsHb.LastScanBestNetOpen;
+                        books = fmsHb.LastScanBooksReady;
+                        persistWait = fmsHb.LastScanPersistPending;
+                        pairs = fmsHb.LastScanPairsCompared;
+                    }
+                    _logger.LogInformation(
+                        "Arb heartbeat | mode={Mode} symbols={Sym} opens={Op}/{Max} bestNet={Net}% books={Books} discovery={Src} persistWait={Persist} pairs={Pairs}",
+                        _state.Mode,
+                        _markets.Symbols.Count,
+                        opens,
+                        _runtime.Snapshot.FuturesMaxOpenPositions,
+                        bestNet?.ToString("F4") ?? "n/a",
+                        books,
+                        _state.DiscoverySource ?? "?",
+                        persistWait,
+                        pairs);
+                }
+
                 // Periodic symbol universe refresh (config DynamicRefreshMinutes)
                 var refreshMin = _options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0;
                 if (_options.DynamicSymbols && refreshMin > 0 &&
@@ -108,6 +155,7 @@ public class ArbitrageWorker : BackgroundService
                 if (_state.IsPaused)
                 {
                     PushSnapshotExtras();
+                    await RefreshLivePositionsAsync(stoppingToken);
                     await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
                     await Task.Delay(_options.ScanIntervalMs, stoppingToken);
                     continue;
@@ -118,6 +166,8 @@ public class ArbitrageWorker : BackgroundService
                 else
                     await RunSpotCycleAsync(stoppingToken);
 
+                PushSnapshotExtras();
+                await RefreshLivePositionsAsync(stoppingToken);
                 await _hub.Clients.All.SendAsync("Snapshot", _state.GetSnapshot(), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
@@ -160,25 +210,30 @@ public class ArbitrageWorker : BackgroundService
         // Map futures opps into existing opportunity list shape for UI reuse
         var mapped = opps.Select(o => new Models.ArbitrageOpportunity
         {
-            Symbol = o.Symbol,
-            BuyExchange = o.LongExchange,
-            SellExchange = o.ShortExchange,
-            BuyPriceTop = o.LongAskTop,
-            SellPriceTop = o.ShortBidTop,
-            BuyPriceVwap = o.LongAskVwap,
-            SellPriceVwap = o.ShortBidVwap,
-            QuoteSize = o.NotionalUsd,
-            FillBaseQty = o.BaseQty,
-            FullyFilled = o.FullyFilled,
-            GrossSpreadTopPercent = o.GrossSpreadPercent,
+            Symbol                 = o.Symbol,
+            BuyExchange            = o.LongExchange,
+            SellExchange           = o.ShortExchange,
+            BuyPriceTop            = o.LongAskTop,
+            SellPriceTop           = o.ShortBidTop,
+            BuyPriceVwap           = o.LongAskVwap,
+            SellPriceVwap          = o.ShortBidVwap,
+            QuoteSize              = o.NotionalUsd,
+            FillBaseQty            = o.BaseQty,
+            FullyFilled            = o.FullyFilled,
+            IsExecutable           = o.IsExecutable,
+            GrossSpreadTopPercent  = o.GrossSpreadPercent,
             GrossSpreadVwapPercent = o.GrossSpreadPercent,
-            BuyFeePercent = o.LongFeePercent,
-            SellFeePercent = o.ShortFeePercent,
-            // UI/threshold display: open edge is primary; RT kept via Gross for now
-            NetProfitPercent = o.NetSpreadPercent,
-            NetProfitQuote = o.EstNetPnlUsd,
-            BuySlippagePercent = o.SlippagePercent / 2,
-            SellSlippagePercent = o.SlippagePercent / 2
+            BuyFeePercent          = o.LongFeePercent,
+            SellFeePercent         = o.ShortFeePercent,
+            NetProfitPercent       = o.NetSpreadPercent,
+            NetRoundTripPercent    = o.NetRoundTripPercent,
+            NetAfterFundingPercent = o.NetAfterFundingPercent,
+            NetProfitQuote         = o.EstNetPnlUsd,
+            BuySlippagePercent     = o.SlippagePercent / 2,
+            SellSlippagePercent    = o.SlippagePercent / 2,
+            LongFundingRate        = o.LongFundingRate,
+            ShortFundingRate       = o.ShortFundingRate,
+            ExpectedFundingPercent = o.ExpectedFundingPercent
         }).ToList();
 
         _state.UpdateScan(mapped, tickersBySymbol);
@@ -189,15 +244,41 @@ public class ArbitrageWorker : BackgroundService
             depthMap[sym] = _futMarket.GetDepth(sym, 18);
         _state.OrderBookDepth = depthMap;
 
-        // Close converged hedges first
-        _futPaper.TryCloseConverged((symbol, longEx, shortEx) =>
+        // Close converged hedges first (paper always; live only if orders allowed)
+        (decimal longBid, decimal shortAsk)? Marks(string symbol, string longEx, string shortEx)
         {
             var books = _futMarket.GetBookTickers(symbol);
             if (!books.TryGetValue(longEx, out var l) || !books.TryGetValue(shortEx, out var s))
                 return null;
-            // close long at bid, cover short at ask
             return (l.BestBid, s.BestAsk);
-        }, _runtime.Snapshot.FuturesCloseBelowNetPercent);
+        }
+
+        _futPaper.TryCloseConverged(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent);
+
+        // ── HoldDecisionEngine: evaluate all open paper positions each cycle ──
+        foreach (var pos in _futPaper.GetOpenPositions())
+        {
+            var spreadPct = Marks(pos.Symbol, pos.LongExchange, pos.ShortExchange) is { } m && m.longBid > 0
+                ? (decimal?)((m.longBid - m.shortAsk) / m.shortAsk * 100m) : null;
+
+            var livePos = new ArbitrageBot.Models.LiveHedgePosition
+            {
+                Symbol         = pos.Symbol,
+                LongExchange   = pos.LongExchange,
+                ShortExchange  = pos.ShortExchange,
+                NotionalUsd    = pos.LongEntry * pos.BaseQty,
+                BaseQty        = pos.BaseQty,
+                OpenedAt       = pos.OpenedAt,
+                AccumulatedFundingPnlUsd = 0m,     // paper: funding credited separately
+                UnrealizedPricePnlUsd    = pos.UnrealizedPnlUsd
+            };
+            var decision = _holdEngine.Evaluate(livePos, spreadPct);
+            pos.LastHoldDecision = decision.ShouldHold ? "HOLD" : "CLOSE";
+            pos.LastHoldDecisionReason = decision.Reason;
+        }
+
+        if (_liveGuard.CanPlaceOrders)
+            await _liveExec.TryCloseConvergedAsync(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent, ct);
 
         decimal? bestOpen = opps.Count > 0 ? opps.Max(x => x.NetSpreadPercent) : null;
         decimal? bestRt = opps.Count > 0 ? opps.Max(x => x.NetRoundTripPercent) : null;
@@ -205,8 +286,12 @@ public class ArbitrageWorker : BackgroundService
 
         if (opps.Count > 0)
         {
-            _logger.LogInformation("Futures scan: {N} candidate(s), best RT={Best:F3}% open={Open:F3}%",
-                opps.Count, bestRt, bestOpen);
+            var nExec = opps.Count(x => x.IsExecutable);
+            _logger.LogInformation(
+                "Futures scan: ranked={N} EXEC={E} best open={Open:F3}% RT={Best:F3}% | top={Top}",
+                opps.Count, nExec, bestOpen, bestRt,
+                string.Join(", ", opps.Take(5).Select(x =>
+                    $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} {x.NetSpreadPercent:F3}%{(x.IsExecutable ? "*" : "")}")));
         }
         else if ((DateTime.UtcNow - _lastNoCandDiagUtc).TotalSeconds >= 30)
         {
@@ -215,14 +300,46 @@ public class ArbitrageWorker : BackgroundService
                 $"minOpen={_runtime.Snapshot.MinProfitPercent:F3}% requireRT={_runtime.Snapshot.FuturesRequireRoundTripEdge}");
         }
 
-        if (opps.Count > 0 && _options.PaperTrading && _options.PaperAutoExecute)
+        // Unified gates: same MinProfit/RT/full-fill for paper and live.
+        // Live orders ONLY if guard.CanPlaceOrders; otherwise DEMO paper on real books.
+        var autoExec = _options.PaperAutoExecute || _options.PaperTrading;
+        if (opps.Count > 0 && autoExec)
         {
-            // Professional paper: fill several hedges per cycle (until max positions / skips)
             var openedThisCycle = 0;
             var maxPerCycle = Math.Max(1, _options.FuturesMaxOpenPositions);
-            foreach (var o in opps.OrderByDescending(x => x.NetSpreadPercent))
+            foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.NetSpreadPercent))
             {
                 if (openedThisCycle >= maxPerCycle) break;
+
+                // Real exchange orders only when Live fully enabled (not RO)
+                if (_liveGuard.CanPlaceOrders)
+                {
+                    var liveReq = new LiveHedgeRequest
+                    {
+                        Symbol = o.Symbol,
+                        LongExchange = o.LongExchange,
+                        ShortExchange = o.ShortExchange,
+                        BaseQty = o.BaseQty,
+                        NotionalUsd = o.NotionalUsd,
+                        LongAsk = o.LongAskVwap,
+                        ShortBid = o.ShortBidVwap,
+                        Leverage = _options.LiveMaxOpenPositions > 0 ? _runtime.Snapshot.FuturesPaperLeverage : 3
+                    };
+                    var liveRes = await _liveExec.TryOpenHedgeAsync(liveReq, ct);
+                    var okProp = liveRes.GetType().GetProperty("ok")?.GetValue(liveRes);
+                    if (okProp is true)
+                    {
+                        openedThisCycle++;
+                        _logger.LogWarning("LIVE OPENED ({N}): {Sym} {L}->{S}", openedThisCycle, o.Symbol, o.LongExchange, o.ShortExchange);
+                    }
+                    else
+                    {
+                        var err = liveRes.GetType().GetProperty("error")?.GetValue(liveRes)?.ToString();
+                        _logger.LogWarning("LIVE skip {Sym}: {Err}", o.Symbol, err);
+                    }
+                    continue;
+                }
+
                 var trade = _futPaper.TryOpen(o);
                 if (trade is null) continue;
                 if (trade.Status == "Open")
@@ -343,14 +460,20 @@ public class ArbitrageWorker : BackgroundService
                 p.BaseQty,
                 p.LongEntry,
                 p.ShortEntry,
-                unrealizedPnl = p.UnrealizedPnlUsd,
+                unrealizedPnl    = p.UnrealizedPnlUsd,
                 unrealizedPnlUsd = p.UnrealizedPnlUsd,
                 currentWidthPercent = p.CurrentWidthPercent,
-                entryWidthPercent = p.EntryWidthPercent,
-                openedAt = p.OpenedAt,
+                entryWidthPercent   = p.EntryWidthPercent,
+                openedAt   = p.OpenedAt,
                 holdSeconds = (int)(DateTime.UtcNow - p.OpenedAt).TotalSeconds,
-                leverage = p.Leverage,
-                lockedMarginUsd = p.LockedMarginUsd
+                leverage   = p.Leverage,
+                lockedMarginUsd = p.LockedMarginUsd,
+                // Funding & hold decision fields
+                positionType             = p.PositionType,
+                entryFundingDeltaRate    = p.EntryFundingDeltaRate,
+                accumulatedFundingPnlUsd = p.AccumulatedFundingPnlUsd,
+                lastHoldDecision         = p.LastHoldDecision,
+                lastHoldDecisionReason   = p.LastHoldDecisionReason
             }).ToList(),
             trades = trades.Select(t => new
             {
@@ -386,9 +509,86 @@ public class ArbitrageWorker : BackgroundService
                 StringComparer.OrdinalIgnoreCase));
     }
 
+    private DateTime _lastLivePosPullUtc = DateTime.MinValue;
+
     private void PushSnapshotExtras()
     {
         if (_options.IsFuturesCross) PushFuturesPaper();
+        _state.LiveStatus = _liveGuard.Status();
+        // Always publish ledger (instant); exchange pull throttled
+        try { _state.LivePositions = _liveExec.GetLivePaperSnapshot(); } catch { /* ignore */ }
+        // Push funding rates snapshot for UI (Dashboard + Reports)
+        try { PushFundingRatesSnapshot(); } catch { /* ignore */ }
+    }
+
+    private DateTime _lastFundingSnapshotUtc = DateTime.MinValue;
+
+    private void PushFundingRatesSnapshot()
+    {
+        // Funding data updates every 5 min — no need to rebuild snapshot every 900ms
+        if ((DateTime.UtcNow - _lastFundingSnapshotUtc).TotalSeconds < 60) return;
+        _lastFundingSnapshotUtc = DateTime.UtcNow;
+
+        var exchanges = _state.Exchanges;
+        var symbols   = _state.Symbols;
+        if (symbols.Count == 0 || exchanges.Count == 0) return;
+
+        // Build per-symbol funding table
+        var rows = symbols.Select(sym =>
+        {
+            var rates = exchanges.Select(ex =>
+            {
+                var snap = _fundingRates.GetLatest(sym, ex);
+                return new
+                {
+                    exchange = ex,
+                    rate     = snap?.Rate,
+                    apr      = snap?.AnnualizedApr,
+                    nextUtc  = snap?.NextFundingUtc
+                };
+            }).ToList();
+
+            // Best delta (max ShortRate - LongRate across all pairs)
+            var bestDelta = _fundingRates.GetBestDelta(sym, exchanges);
+
+            return new
+            {
+                symbol    = sym,
+                rates,
+                bestDelta = bestDelta == null ? null : new
+                {
+                    longExchange  = bestDelta.LongExchange,
+                    shortExchange = bestDelta.ShortExchange,
+                    deltaRate     = bestDelta.DeltaRate,
+                    apr           = bestDelta.AnnualizedApr,
+                    trend         = bestDelta.Trend,
+                    ema5          = bestDelta.Ema5,
+                    ema20         = bestDelta.Ema20,
+                    nextFundingUtc = bestDelta.NextFundingUtc
+                }
+            };
+        }).OrderByDescending(r => r.bestDelta?.apr ?? 0).ToList();
+
+        _state.FundingRates = new
+        {
+            updatedUtc = DateTime.UtcNow,
+            symbols    = rows
+        };
+    }
+
+    private async Task RefreshLivePositionsAsync(CancellationToken ct)
+    {
+        // Pull real exchange positions every 12s so UI shows truth after restart / half-fills
+        if ((DateTime.UtcNow - _lastLivePosPullUtc).TotalSeconds < 12) return;
+        _lastLivePosPullUtc = DateTime.UtcNow;
+        try
+        {
+            _state.LivePositions = await _liveExec.GetLivePositionsViewAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Live positions pull failed");
+        }
     }
 
     private async Task RefreshSymbolsAsync(CancellationToken ct)
@@ -426,13 +626,24 @@ public class ArbitrageWorker : BackgroundService
 
         _markets.SetSymbols(symbols, discovered);
         _state.Symbols = _markets.Symbols;
+        try
+        {
+            if (_options.IsFuturesCross)
+                _futPaper.PruneOrphanPositions(_markets.Symbols);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Orphan prune failed");
+        }
         _state.DiscoveredSymbols = discovered.Select(d => (object)new
         {
             d.Symbol,
             d.BaseAsset,
             d.QuoteAsset,
             medianQuoteVolume = d.MedianQuoteVolume,
-            d.ExchangeCount
+            d.ExchangeCount,
+            depthNotionalUsd = d.DepthNotionalUsd,
+            depthScore = d.DepthScore
         }).ToList();
     }
 

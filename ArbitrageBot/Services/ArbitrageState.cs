@@ -8,6 +8,8 @@ public class ArbitrageState
     private readonly object _lock = new();
 
     public DateTime LastScanUtc { get; private set; }
+
+    // Mode обновляется динамически из LiveTradingGuard в каждом heartbeat
     public string Mode { get; set; } = "PAPER";
     public IReadOnlyList<string> Symbols { get; set; } = [];
     public IReadOnlyList<string> Exchanges { get; set; } = [];
@@ -21,6 +23,9 @@ public class ArbitrageState
     public IReadOnlyList<object> DiscoveredSymbols { get; set; } = [];
     public string DiscoverySource { get; set; } = "config-fallback";
     public string? DiscoveryMessage { get; set; }
+    public object? LiveStatus { get; set; }
+    public object? LivePositions { get; set; }
+    public object? FundingRates { get; set; }  // latest funding snapshot for UI
     /// <summary>Best gross/open net seen last scan (even if below threshold).</summary>
     public decimal? LastBestGrossPercent { get; set; }
     public decimal? LastBestNetOpenPercent { get; set; }
@@ -168,6 +173,9 @@ public class ArbitrageState
                 discoveredSymbols = DiscoveredSymbols,
                 discoverySource = DiscoverySource,
                 discoveryMessage = DiscoveryMessage,
+                liveStatus = LiveStatus,
+                livePositions = LivePositions,
+                fundingRates = FundingRates,
                 lastBestGrossPercent = LastBestGrossPercent,
                 lastBestNetOpenPercent = LastBestNetOpenPercent,
                 lastBooksReady = LastBooksReady,
@@ -190,28 +198,30 @@ public class ArbitrageState
                     o.Symbol,
                     o.BuyExchange,
                     o.SellExchange,
-                    // FuturesCross aliases for UI
-                    longExchange = o.BuyExchange,
+                    longExchange  = o.BuyExchange,
                     shortExchange = o.SellExchange,
-                    buyPriceTop = o.BuyPriceTop,
-                    sellPriceTop = o.SellPriceTop,
-                    buyPriceVwap = o.BuyPriceVwap,
+                    buyPriceTop   = o.BuyPriceTop,
+                    sellPriceTop  = o.SellPriceTop,
+                    buyPriceVwap  = o.BuyPriceVwap,
                     sellPriceVwap = o.SellPriceVwap,
                     o.QuoteSize,
                     o.FillBaseQty,
                     o.FullyFilled,
+                    isExecutable          = o.IsExecutable,
+                    grossSpreadPercent    = o.GrossSpreadVwapPercent,
                     grossSpreadTopPercent = o.GrossSpreadTopPercent,
-                    grossSpreadVwapPercent = o.GrossSpreadVwapPercent,
+                    netSpreadPercent      = o.NetProfitPercent,   // net open (after open fees)
+                    netRoundTripPercent   = o.NetRoundTripPercent, // net open+close fees
+                    netAfterFundingPercent= o.NetAfterFundingPercent,
+                    estNetPnlUsd          = o.NetProfitQuote,
                     o.BuyFeePercent,
                     o.SellFeePercent,
-                    netProfitPercent = o.NetProfitPercent,
-                    netSpreadPercent = o.NetProfitPercent,
-                    netRoundTripPercent = o.NetProfitPercent,
-                    netProfitQuote = o.NetProfitQuote,
-                    estNetPnlUsd = o.NetProfitQuote,
-                    buySlippagePercent = o.BuySlippagePercent,
-                    sellSlippagePercent = o.SellSlippagePercent,
-                    detectedAt = o.DetectedAt
+                    buySlippagePercent    = o.BuySlippagePercent,
+                    sellSlippagePercent   = o.SellSlippagePercent,
+                    longFundingRate       = o.LongFundingRate,
+                    shortFundingRate      = o.ShortFundingRate,
+                    expectedFundingPct    = o.ExpectedFundingPercent,
+                    detectedAt            = o.DetectedAt
                 }).ToList(),
                 bookTickers = books,
                 orderBookDepth = OrderBookDepth,

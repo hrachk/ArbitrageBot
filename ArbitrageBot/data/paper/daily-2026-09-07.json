@@ -1,0 +1,54 @@
+{
+  "dayUtc": "2026-09-07",
+  "scans": 169201,
+  "avgCandidates": 2.37,
+  "opens": 31,
+  "closes": 24,
+  "skips": 475,
+  "realizedPnlUsd": 20.2149,
+  "bestOpenPctSeen": 1.1135,
+  "bestRtPctSeen": 1.0285,
+  "skipReasons": [
+    {
+      "reason": "no-candidates-above-min",
+      "count": 419
+    },
+    {
+      "reason": "Cooldown open 12000ms",
+      "count": 30
+    },
+    {
+      "reason": "Cooldown open 15000ms",
+      "count": 7
+    },
+    {
+      "reason": "Cooldown close 15000ms",
+      "count": 6
+    },
+    {
+      "reason": "Cooldown open 1200ms",
+      "count": 5
+    },
+    {
+      "reason": "RT -0.063% \u003C min 0.120%",
+      "count": 3
+    },
+    {
+      "reason": "Notional 200 \u003E max 150",
+      "count": 2
+    },
+    {
+      "reason": "Already open on symbol",
+      "count": 1
+    },
+    {
+      "reason": "Cooldown close 1200ms",
+      "count": 1
+    },
+    {
+      "reason": "RT -0.099% \u003C min 0.120%",
+      "count": 1
+    }
+  ],
+  "updatedUtc": "2026-09-08T00:00:00.1826162Z"
+}

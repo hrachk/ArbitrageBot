@@ -10,8 +10,8 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.08m;
-    public int ScanIntervalMs { get; set; } = 1500;
+    public decimal MinProfitPercent { get; set; } = 0.06m;
+    public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
     public Dictionary<string, decimal> EstimatedTakerFees { get; set; } = new(StringComparer.OrdinalIgnoreCase)
@@ -20,7 +20,8 @@ public class ArbitrageOptions
         ["Bybit"] = 0.055m,
         ["OKX"] = 0.05m,
         ["Bitget"] = 0.06m,
-        ["GateIo"] = 0.05m
+        ["GateIo"] = 0.05m, 
+        ["Kucoin"] = 0.06m
     };
 
     public decimal QuoteSize { get; set; } = 500m;
@@ -45,13 +46,42 @@ public class ArbitrageOptions
     public int DynamicRefreshMinutes { get; set; } = 60;
     /// <summary>Skip these base assets (majors with near-zero cross-exchange edge).</summary>
     public List<string> ExcludeMajorBases { get; set; } = ["BTC", "ETH", "BNB"];
+    /// <summary>Meme / equity-perp / thin names that destroy spatial EV.</summary>
+    public List<string> ExcludeToxicBases { get; set; } =
+    [
+        "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
+        "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
+        "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
+    ];
+    /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
+    public decimal MinDepthScoreForUniverse { get; set; } = 0.85m;
+    /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.01m;
+    /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
+    public decimal MinTakeProfitUsd { get; set; } = 0.80m;
+    /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
+    public decimal MinGrossSpreadPercent { get; set; } = 0.22m;
+    /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
+    public bool SpatialScalpMode { get; set; } = false;
+    /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
+    public int FuturesMaxHoldSeconds { get; set; } = 0; // 0 = no soft timer
+    /// <summary>
+    /// After this many minutes, flatten even if red (inventory recycle). 0 = never force-red.
+    /// Soft timeout never closes a losing hedge; only SL or this hard cap does.
+    /// </summary>
+    public int FuturesHardMaxHoldMinutes { get; set; } = 0; // 0 = never force-flat
+    /// <summary>Close leg fees as fraction of taker (0.5 ≈ limit/maker exit).</summary>
+    public decimal PaperCloseFeeFactor { get; set; } = 0.55m;
+    /// <summary>Open only if gross is rising vs ~1s ago (avoid dying spreads).</summary>
+    public bool RequireSpreadingEdge { get; set; } = true;
     /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
     // Futures paper
     public decimal FuturesPaperLeverage { get; set; } = 5m;
     public int FuturesMaxOpenPositions { get; set; } = 3;
-    public int FuturesMaxHoldMinutes { get; set; } = 30;
+    public int FuturesMaxHoldMinutes { get; set; } = 5;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
 
@@ -71,6 +101,52 @@ public class ArbitrageOptions
     /// <summary>Use round-trip (open+close) fees for entry threshold.</summary>
     public bool FuturesRequireRoundTripEdge { get; set; } = true;
 
+
+    // ─── Live trading (OFF by default — paper remains default path) ───
+    /// <summary>Master switch. Must stay false until paper equity results are validated.</summary>
+    public bool LiveTradingEnabled { get; set; } = false;
+    /// <summary>If true, only verify balances/positions via API — never place orders.</summary>
+    public bool LiveReadOnlyMode { get; set; } = true;
+    /// <summary>Hard ceiling: max concurrent live hedges.</summary>
+    public int LiveMaxOpenPositions { get; set; } = 1;
+    /// <summary>Max notional USD per leg on live (hard ceiling).</summary>
+    public decimal LiveMaxNotionalUsd { get; set; } = 200m;
+    /// <summary>
+    /// Assumed free USDT equity available for margin on EACH exchange.
+    /// Live notional = equity × leverage × LiveMarginUsageFraction (capped by LiveMaxNotionalUsd).
+    /// </summary>
+    public decimal LiveEquityPerExchangeUsd { get; set; } = 5m;
+    /// <summary>Fraction of per-exchange equity to lock as margin (0.6 = use $3 of $5).</summary>
+    public decimal LiveMarginUsageFraction { get; set; } = 0.6m;
+    /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
+    public decimal LiveDailyLossLimitUsd { get; set; } = -50m;
+    /// <summary>Per-hedge stop (USD, negative).</summary>
+    public decimal LiveStopLossUsd { get; set; } = -25m;
+    /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
+    public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
+    /// <summary>Reject live open if book status is not healthy (Synced/book-ticker).</summary>
+    public bool LiveRequireHealthyBooks { get; set; } = true;
+    /// <summary>Min ms between any live order attempts (global + per venue).</summary>
+    public int LiveMinOrderIntervalMs { get; set; } = 3000;
+    /// <summary>Optional webhook (Telegram bot or Discord) on kill/enable/errors.</summary>
+    public string? LiveAlertWebhookUrl { get; set; }
+    /// <summary>Exchanges allowed for live orders (empty = all configured).</summary>
+    public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
+
+    /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
+    public int MinSpreadPersistMs { get; set; } = 250;
+    /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
+    public int MaxBookAgeMs { get; set; } = 3000;
+    /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
+    public int MaxLegsPerVenue { get; set; } = 3;
+    /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>
+    public decimal MaxWidthExpansionPercent { get; set; } = 0.25m;
+    /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
+    public bool RequireDepthFullFill { get; set; } = true;
+
+    /// <summary>Leverage used for live orders (separate from paper simulation).</summary>
+    public decimal LivePaperLeverage { get; set; } = 3m;
+
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
 
@@ -85,4 +161,26 @@ public class ArbitrageOptions
             .Select(e => e.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    public static string BaseAsset(string? symbol)
+    {
+        if (string.IsNullOrWhiteSpace(symbol)) return "";
+        var s = symbol.Trim().ToUpperInvariant()
+            .Replace("-USDT-SWAP", "", StringComparison.Ordinal)
+            .Replace("-USDT", "", StringComparison.Ordinal)
+            .Replace("USDT", "", StringComparison.Ordinal);
+        if (s.StartsWith("1000", StringComparison.Ordinal)) s = "1000" + s[4..];
+        return s;
+    }
+
+    public bool IsExcludedSymbol(string? symbol)
+    {
+        var b = BaseAsset(symbol);
+        if (string.IsNullOrEmpty(b)) return false;
+        if (ExcludeMajorBases?.Any(x => string.Equals(x, b, StringComparison.OrdinalIgnoreCase)) == true)
+            return true;
+        if (ExcludeToxicBases?.Any(x => string.Equals(x, b, StringComparison.OrdinalIgnoreCase)) == true)
+            return true;
+        return b is "BTC" or "ETH" or "BNB";
+    }
 }

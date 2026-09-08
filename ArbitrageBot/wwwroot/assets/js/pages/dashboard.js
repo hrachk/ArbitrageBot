@@ -22,7 +22,68 @@ AB.pages.dashboard = {
       }
       html('d_best', best == null ? '—' : AB.fmtPct(best));
       html('d_pnl', AB.fmtUsd(fp.realizedPnlUsd != null ? fp.realizedPnlUsd : (fp.realizedPnl != null ? fp.realizedPnl : 0)));
-      text('d_open', (fp.positions && fp.positions.length) || 0);
+      // Open count: paper + live ledger + real exchange legs
+      const livePos = data.livePositions || {};
+      const paperN = (fp.positions && fp.positions.length) || 0;
+      const ledgerN = livePos.openLedgerCount != null
+        ? livePos.openLedgerCount
+        : ((livePos.open && livePos.open.length) || (livePos.ledger && livePos.ledger.length) || 0);
+      const exLegs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
+      const exN = livePos.exchangeLegCount != null ? livePos.exchangeLegCount : exLegs.length;
+      text('d_open', paperN + 'p / ' + ledgerN + 'L / ' + exN + 'ex');
+
+      // Cross-exchange arb board (ranked like terminal UIs)
+      const board = document.getElementById('d_arbBoard');
+      const boardSub = document.getElementById('d_arbBoardSub');
+      if (board) {
+        const minShow = Number(data.minProfitPercent) || 0;
+        // Primary: real opportunities from scan
+        let list = opps.slice().map(o => ({
+          symbol: (o.symbol || '').replace(/USDT$/i, '') || o.symbol,
+          full: o.symbol,
+          longEx: o.longExchange || o.buyExchange || '?',
+          shortEx: o.shortExchange || o.sellExchange || '?',
+          net: Number(o.netSpreadPercent != null ? o.netSpreadPercent : o.netProfitPercent) || 0,
+          gross: Number(o.grossSpreadPercent != null ? o.grossSpreadPercent : o.grossSpreadTopPercent) || 0,
+          rt: Number(o.netRoundTripPercent) || 0,
+          fund: Number(o.expectedFundingPercent) || 0,
+          fill: o.fullyFilled !== false,
+          exec: o.isExecutable === true,
+          midOnly: o.isExecutable !== true
+        }));
+        // Board = same ranked routes as bot scan (no foreign midΔ symbols)
+        // near-miss rows: isExecutable === false
+        list.sort((a, b) => b.net - a.net);
+        list = list.slice(0, 20);
+        if (boardSub) {
+          boardSub.textContent = list.length
+            ? (list.filter(x => x.exec).length + ' EXEC · ' + list.length + ' ranked · threshold ' + AB.fmt(minShow, 2) + '%')
+            : ('threshold ' + AB.fmt(minShow, 2) + '% · waiting books');
+        }
+        if (!list.length) {
+          board.innerHTML = '<div class="arb-empty">No routes — waiting WS books / scan. Universe: ' +
+            (symbols.length || 0) + ' pairs</div>';
+        } else {
+          const top = list.slice(0, 12);
+          board.innerHTML = '<div class="arb-body" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">' +
+            top.map((r, i) => {
+              const tags = [];
+              if (r.exec) tags.push('<span class="tag">executable</span>');
+              else tags.push('<span class="tag amber">watch</span>');
+              if (r.fund) tags.push('<span class="tag blue">funding ' + (r.fund >= 0 ? '+' : '') + r.fund.toFixed(3) + '%</span>');
+              if (r.rt) tags.push('<span class="tag" style="background:rgba(167,139,250,.1);color:var(--purple);border-color:rgba(167,139,250,.2)">RT ' + r.rt.toFixed(3) + '%</span>');
+              return '<div class="arb-card">' +
+                (i === 0 ? '<div class="bar-live"></div>' : '') +
+                '<div class="sym">' + (r.full || r.symbol) + '</div>' +
+                '<div class="spread">' + (r.net >= 0 ? '+' : '') + r.net.toFixed(3) + '%</div>' +
+                '<div class="route">' + r.longEx + ' LONG → ' + r.shortEx + ' SHORT</div>' +
+                '<div class="tags">' + tags.join('') + '</div>' +
+              '</div>';
+            }).join('') + '</div>';
+        }
+      }
+
+
       html('d_day', AB.fmtUsd(fp.dailyRealizedPnlUsd != null ? fp.dailyRealizedPnlUsd : 0));
 
       const banner = $('d_banner');
@@ -37,8 +98,13 @@ AB.pages.dashboard = {
           if (Number(bestNet) < Number(data.minProfitPercent))
             why += ' — below threshold, no open';
         }
+        const isLive = mode === 'LIVE';
+        const modeTag = isLive
+          ? '<span style="color:#f87171;font-weight:800;font-size:13px">🔴 LIVE — REAL MONEY</span>'
+          : '<span style="font-weight:700">📄 PAPER</span>';
+        banner.className = 'banner ' + (isLive ? 'warn' : 'info');
         banner.innerHTML =
-          '<b>' + mode + pause + '</b> — ' +
+          modeTag + pause + ' &nbsp;·&nbsp; ' +
           exchanges.length + ' exchanges · ' + symbols.length + ' symbols · ' +
           'scan #' + (data.scanCount != null ? data.scanCount : 0) +
           ' · books ' + (data.lastBooksReady != null ? data.lastBooksReady : '—') +
@@ -138,10 +204,162 @@ AB.pages.dashboard = {
       const posEl = $('d_positions');
       if (posEl) {
         const positions = fp.positions || [];
-        posEl.innerHTML = positions.length
-          ? positions.map(function (p) { return AB.posCardHtml(p); }).join('')
-          : '<div class="empty">No open hedges</div>';
+        const ledger = (livePos.ledger || livePos.open || []);
+        const legs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
+        let htmlPos = '';
+        if (legs.length) {
+          htmlPos += '<div class="section-label" style="margin:4px 0 8px">Exchange positions (real)</div>';
+          htmlPos += legs.map(function (p) {
+            const pnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null;
+            const pnlCol = pnl == null ? 'var(--muted)' : (pnl >= 0 ? 'var(--green)' : 'var(--red)');
+            return '<div class="pos-card" style="border-left:3px solid var(--amber)">' +
+              '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
+              '<div class="muted" style="font-size:12px">' + (p.exchange || '?') + ' · ' + (p.side || '?') +
+              ' · qty ' + (p.quantity != null ? p.quantity : '—') +
+              (p.entryPrice != null ? ' @ ' + p.entryPrice : '') + '</div>' +
+              (pnl != null ? '<div class="mono" style="color:' + pnlCol + '">uPnL ' + AB.fmtUsd(pnl) + '</div>' : '') +
+              '</div>';
+          }).join('');
+        }
+        if (ledger.length) {
+          htmlPos += '<div class="section-label" style="margin:12px 0 8px">Live ledger (bot hedges)</div>';
+          htmlPos += ledger.map(function (p) {
+            return '<div class="pos-card" style="border-left:3px solid var(--green)">' +
+              '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
+              '<div class="muted" style="font-size:12px">' + (p.longExchange || '?') + ' long / ' +
+              (p.shortExchange || '?') + ' short · qty ' + (p.baseQty != null ? p.baseQty : '—') + '</div>' +
+              '<div class="muted" style="font-size:11px">' + (p.status || '') + ' ' + (p.message || '') + '</div></div>';
+          }).join('');
+        }
+        if (positions.length) {
+          htmlPos += '<div class="section-label" style="margin:12px 0 8px">Paper hedges</div>';
+          htmlPos += positions.map(function (p) { return AB.posCardHtml(p); }).join('');
+        }
+        posEl.innerHTML = htmlPos || '<div class="empty">No open hedges (paper / ledger / exchange)</div>';
       }
+    
+      // Live spread bars
+      const bars = document.getElementById('d_spreadBars');
+      if (bars) {
+        const list = opps.slice(0, 8);
+        if (!list.length) {
+          bars.innerHTML = '<div class="empty">No signals ≥ threshold — watch best net in banner</div>';
+        } else {
+          const maxN = Math.max(...list.map(o => Math.abs(Number(o.netSpreadPercent || o.netProfitPercent || 0))), 0.01);
+          bars.innerHTML = list.map(o => {
+            const n = Number(o.netSpreadPercent != null ? o.netSpreadPercent : o.netProfitPercent) || 0;
+            const w = Math.min(100, (Math.abs(n) / maxN) * 100);
+            const col = n >= 0 ? '#34d399' : '#f87171';
+            const route = (o.longExchange || o.buyExchange || '?') + '→' + (o.shortExchange || o.sellExchange || '?');
+            return '<div style="display:grid;grid-template-columns:90px 1fr 70px;gap:8px;align-items:center;margin:6px 0">' +
+              '<span class="mono" style="color:var(--blue)">' + (o.symbol || '') + '</span>' +
+              '<div style="background:rgba(148,163,184,0.08);border-radius:4px;height:10px;overflow:hidden">' +
+              '<div style="width:' + w + '%;height:100%;background:' + col + ';border-radius:4px"></div></div>' +
+              '<span class="mono" style="color:' + col + ';text-align:right">' + (n >= 0 ? '+' : '') + n.toFixed(3) + '%</span>' +
+              '<span class="muted" style="grid-column:1/-1;font-size:11px">' + route +
+              (o.fullyFilled === false ? ' · partial fill' : ' · full') + '</span></div>';
+          }).join('');
+        }
+      }
+
+      // Venue mids for top opportunity or first symbol
+      const vm = document.getElementById('d_venueMids');
+      const mini = document.getElementById('d_overlayMini');
+      const focusSym = (opps[0] && opps[0].symbol) || (symbols[0]) || '';
+      const bt = (data.bookTickers || {})[focusSym] || {};
+      const venues = Object.keys(bt);
+      if (vm) {
+        if (!venues.length) vm.textContent = focusSym ? (focusSym + ': no quotes yet') : '—';
+        else {
+          const rows = venues.map(ex => {
+            const b = bt[ex];
+            const mid = (Number(b.bestBid) + Number(b.bestAsk)) / 2;
+            return ex + ' ' + AB.fmt(mid, mid < 1 ? 6 : 4);
+          });
+          let delta = '';
+          if (venues.length >= 2) {
+            const mids = venues.map(ex => (Number(bt[ex].bestBid) + Number(bt[ex].bestAsk)) / 2).filter(x => x > 0);
+            const lo = Math.min(...mids), hi = Math.max(...mids);
+            delta = ' · Δ ' + (((hi - lo) / lo) * 100).toFixed(3) + '%';
+          }
+          vm.innerHTML = '<b>' + focusSym + '</b> ' + rows.join(' · ') + delta;
+        }
+      }
+      if (mini && venues.length) {
+        const dpr = window.devicePixelRatio || 1;
+        const box = mini.parentElement;
+        const w = Math.max(120, (box && box.clientWidth) || mini.clientWidth || 400);
+        const h = 120;
+        mini.style.width = '100%';
+        mini.style.height = h + 'px';
+        mini.width = Math.floor(w * dpr); mini.height = Math.floor(h * dpr);
+        const ctx = mini.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = '#0a0e14'; ctx.fillRect(0, 0, w, h);
+        const mids = venues.map((ex, i) => {
+          const b = bt[ex];
+          return { ex, mid: (Number(b.bestBid) + Number(b.bestAsk)) / 2, i };
+        }).filter(x => x.mid > 0);
+        if (mids.length) {
+          const lo = Math.min(...mids.map(x => x.mid));
+          const hi = Math.max(...mids.map(x => x.mid));
+          const colors = ['#2dd4bf', '#60a5fa', '#f472b6', '#fbbf24'];
+          mids.forEach((m, i) => {
+            const x = ((i + 0.5) / mids.length) * w;
+            const y = h - 20 - ((m.mid - lo) / ((hi - lo) || 1)) * (h - 40);
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px monospace';
+            ctx.fillText(m.ex, x - 16, h - 6);
+            ctx.fillText(AB.fmt(m.mid, m.mid < 1 ? 5 : 3), x - 18, y - 10);
+          });
+          // line connecting
+          ctx.strokeStyle = 'rgba(45,212,191,0.35)';
+          ctx.beginPath();
+          mids.forEach((m, i) => {
+            const x = ((i + 0.5) / mids.length) * w;
+            const y = h - 20 - ((m.mid - lo) / ((hi - lo) || 1)) * (h - 40);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+      }
+
+    
+      // Paper quality + skip taxonomy
+      const qel = document.getElementById('d_quality');
+      const sel = document.getElementById('d_skips');
+      const pa = data.paperAnalytics || data.PaperAnalytics || {};
+      const q = pa.quality || {};
+      if (qel) {
+        qel.innerHTML =
+          'Win rate <b>' + (q.winRate != null ? q.winRate : '—') + '%</b> · ' +
+          'closed ' + (q.closed != null ? q.closed : (pa.closes != null ? pa.closes : '—')) + ' · ' +
+          'avg PnL <b>' + AB.fmtUsd(q.avgPnl != null ? q.avgPnl : 0) + '</b> · ' +
+          'avg hold ' + (q.avgHoldSec != null ? Math.round(q.avgHoldSec) + 's' : '—') + '<br>' +
+          'scans ' + (pa.scans != null ? pa.scans : '—') +
+          ' · opens ' + (pa.opens != null ? pa.opens : '—') +
+          ' · skips ' + (pa.skips != null ? pa.skips : '—') +
+          ' · best RT seen ' + (pa.bestRtPctSeen != null ? AB.fmt(pa.bestRtPctSeen, 3) + '%' : '—');
+      }
+      if (sel) {
+        const reasons = pa.skipReasons || [];
+        if (!reasons.length) sel.innerHTML = '<span class="muted">No skip reasons yet</span>';
+        else {
+          const maxC = Math.max(...reasons.map(r => Number(r.count) || 0), 1);
+          sel.innerHTML = reasons.slice(0, 8).map(r => {
+            const c = Number(r.count) || 0;
+            const w = Math.min(100, (c / maxC) * 100);
+            return '<div style="display:grid;grid-template-columns:1fr 48px;gap:6px;align-items:center;margin:4px 0">' +
+              '<div><div class="mono" style="font-size:11px">' + (r.reason || '') + '</div>' +
+              '<div style="height:6px;background:rgba(148,163,184,0.1);border-radius:3px"><div style="width:' + w +
+              '%;height:100%;background:#fbbf24;border-radius:3px"></div></div></div>' +
+              '<span class="mono">' + c + '</span></div>';
+          }).join('');
+        }
+      }
+
     } catch (e) {
       console.error('dashboard render', e);
       const b = $('d_banner');
