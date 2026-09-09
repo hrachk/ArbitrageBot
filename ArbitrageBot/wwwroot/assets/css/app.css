@@ -528,3 +528,77 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
   font-size: 12px;
   color: #94a3b8;
 }
+
+
+/* ── Help (bilingual) ─────────────────────────────────────── */
+.help-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.help-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: #f1f5f9;
+}
+.help-sub { margin: 4px 0 0; font-size: 13px; }
+.help-lang {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 12px;
+  background: #0c1422;
+  border: 1px solid rgba(148,163,184,0.14);
+  gap: 4px;
+}
+.help-lang-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #8b9bb4;
+  font-weight: 750;
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.help-lang-btn.active {
+  color: #041018;
+  background: linear-gradient(135deg, #2dd4bf, #22d3ee);
+  box-shadow: 0 4px 14px rgba(34,211,238,0.25);
+}
+.help-lang-pane { display: none; }
+.help-lang-pane.active { display: block; }
+.help-toc { margin-bottom: 12px; }
+.help-toc-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.help-toc-grid a {
+  text-decoration: none;
+  color: #cbd5e1;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(148,163,184,0.08);
+  border: 1px solid rgba(148,163,184,0.12);
+}
+.help-toc-grid a:hover {
+  color: #041018;
+  background: linear-gradient(135deg, #2dd4bf, #22d3ee);
+  border-color: transparent;
+}
+.help-ol, .help-ul {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.7;
+  font-size: 13.5px;
+  color: #dbe4f0;
+}
+.help-p { margin: 12px 0 0; font-size: 13px; line-height: 1.55; }
+#help .panel, .page[data-page="help"] .panel { margin-bottom: 12px; }
