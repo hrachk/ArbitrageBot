@@ -364,3 +364,6 @@ FodyWeavers.xsd
 # Local secrets (never commit)
 ArbitrageBot/data/
 **/local-settings.json
+/ArbitrageBot/logs/arbitrage-20260828.log
+/ArbitrageBot/logs/arbitrage-20260826.log
+/ArbitrageBot/logs/arbitrage-20260827.log

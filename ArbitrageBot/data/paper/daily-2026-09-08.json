@@ -1,0 +1,162 @@
+{
+  "dayUtc": "2026-09-08",
+  "scans": 142278,
+  "avgCandidates": 1.25,
+  "opens": 109,
+  "closes": 100,
+  "skips": 23585,
+  "realizedPnlUsd": 68.3474,
+  "bestOpenPctSeen": 7.5501,
+  "bestRtPctSeen": 7.4551,
+  "skipReasons": [
+    {
+      "reason": "Already open on symbol",
+      "count": 21892
+    },
+    {
+      "reason": "Cooldown open 1200ms",
+      "count": 844
+    },
+    {
+      "reason": "no-candidates-above-min",
+      "count": 284
+    },
+    {
+      "reason": "Max legs on venue Binance (2)",
+      "count": 178
+    },
+    {
+      "reason": "Cooldown close 1200ms",
+      "count": 123
+    },
+    {
+      "reason": "Max legs on venue Bybit (2)",
+      "count": 24
+    },
+    {
+      "reason": "RT 0.097% \u003C min 0.100%",
+      "count": 19
+    },
+    {
+      "reason": "RT 0.094% \u003C min 0.100%",
+      "count": 17
+    },
+    {
+      "reason": "RT 0.096% \u003C min 0.100%",
+      "count": 17
+    },
+    {
+      "reason": "RT 0.095% \u003C min 0.100%",
+      "count": 16
+    },
+    {
+      "reason": "RT 0.100% \u003C min 0.100%",
+      "count": 16
+    },
+    {
+      "reason": "Max legs on venue Bitget (2)",
+      "count": 14
+    },
+    {
+      "reason": "RT 0.118% \u003C min 0.120%",
+      "count": 13
+    },
+    {
+      "reason": "RT 0.093% \u003C min 0.100%",
+      "count": 13
+    },
+    {
+      "reason": "RT 0.098% \u003C min 0.100%",
+      "count": 13
+    },
+    {
+      "reason": "RT 0.099% \u003C min 0.100%",
+      "count": 12
+    },
+    {
+      "reason": "RT 0.091% \u003C min 0.100%",
+      "count": 12
+    },
+    {
+      "reason": "RT 0.092% \u003C min 0.100%",
+      "count": 10
+    },
+    {
+      "reason": "RT 0.090% \u003C min 0.100%",
+      "count": 9
+    },
+    {
+      "reason": "RT 0.114% \u003C min 0.120%",
+      "count": 8
+    },
+    {
+      "reason": "RT 0.119% \u003C min 0.120%",
+      "count": 7
+    },
+    {
+      "reason": "RT 0.112% \u003C min 0.120%",
+      "count": 5
+    },
+    {
+      "reason": "RT 0.117% \u003C min 0.120%",
+      "count": 5
+    },
+    {
+      "reason": "RT 0.116% \u003C min 0.120%",
+      "count": 4
+    },
+    {
+      "reason": "RT 0.108% \u003C min 0.120%",
+      "count": 4
+    },
+    {
+      "reason": "RT 0.102% \u003C min 0.120%",
+      "count": 4
+    },
+    {
+      "reason": "RT 0.101% \u003C min 0.120%",
+      "count": 4
+    },
+    {
+      "reason": "RT 0.109% \u003C min 0.120%",
+      "count": 3
+    },
+    {
+      "reason": "RT 0.104% \u003C min 0.120%",
+      "count": 3
+    },
+    {
+      "reason": "RT 0.115% \u003C min 0.120%",
+      "count": 2
+    },
+    {
+      "reason": "RT 0.107% \u003C min 0.120%",
+      "count": 2
+    },
+    {
+      "reason": "RT 0.105% \u003C min 0.120%",
+      "count": 2
+    },
+    {
+      "reason": "RT 0.113% \u003C min 0.120%",
+      "count": 2
+    },
+    {
+      "reason": "RT 0.111% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.110% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.103% \u003C min 0.120%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.106% \u003C min 0.120%",
+      "count": 1
+    }
+  ],
+  "updatedUtc": "2026-09-09T00:01:13.9935683Z"
+}

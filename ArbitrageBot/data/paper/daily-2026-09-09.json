@@ -1,0 +1,74 @@
+{
+  "dayUtc": "2026-09-09",
+  "scans": 29724,
+  "avgCandidates": 1.56,
+  "opens": 14,
+  "closes": 7,
+  "skips": 4268,
+  "realizedPnlUsd": -2.8626,
+  "bestOpenPctSeen": 0.2924,
+  "bestRtPctSeen": 0.2074,
+  "skipReasons": [
+    {
+      "reason": "Already open on symbol",
+      "count": 3543
+    },
+    {
+      "reason": "RT 0.095% \u003C min 0.100%",
+      "count": 239
+    },
+    {
+      "reason": "RT 0.085% \u003C min 0.100%",
+      "count": 153
+    },
+    {
+      "reason": "RT 0.096% \u003C min 0.100%",
+      "count": 139
+    },
+    {
+      "reason": "RT 0.086% \u003C min 0.100%",
+      "count": 66
+    },
+    {
+      "reason": "Cooldown open 1200ms",
+      "count": 51
+    },
+    {
+      "reason": "no-candidates-above-min",
+      "count": 29
+    },
+    {
+      "reason": "RT 0.094% \u003C min 0.100%",
+      "count": 13
+    },
+    {
+      "reason": "RT 0.092% \u003C min 0.100%",
+      "count": 10
+    },
+    {
+      "reason": "RT 0.082% \u003C min 0.100%",
+      "count": 8
+    },
+    {
+      "reason": "RT 0.088% \u003C min 0.100%",
+      "count": 7
+    },
+    {
+      "reason": "RT 0.083% \u003C min 0.100%",
+      "count": 5
+    },
+    {
+      "reason": "RT 0.087% \u003C min 0.100%",
+      "count": 3
+    },
+    {
+      "reason": "RT 0.089% \u003C min 0.100%",
+      "count": 1
+    },
+    {
+      "reason": "RT 0.093% \u003C min 0.100%",
+      "count": 1
+    }
+  ],
+  "updatedUtc": "2026-09-09T07:50:02.7703609Z"
+}
