@@ -624,10 +624,33 @@ public class ArbitrageWorker : BackgroundService
         if (_options.IsFuturesCross && symbols.Count > _options.DynamicTopN)
             symbols = symbols.Take(_options.DynamicTopN).ToList();
 
+        // Pin open hedge symbols so discovery churn does not ForceClose them at a fee loss
+        try
+        {
+            if (_options.IsFuturesCross)
+            {
+                var openSyms = _futPaper.GetOpenPositions()
+                    .Select(pos => pos.Symbol)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                foreach (var s in openSyms)
+                {
+                    if (!symbols.Contains(s, StringComparer.OrdinalIgnoreCase))
+                        symbols.Add(s);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Pin open symbols failed");
+        }
+
         _markets.SetSymbols(symbols, discovered);
         _state.Symbols = _markets.Symbols;
         try
         {
+            // Only prune if symbol still missing after pin (should be rare)
             if (_options.IsFuturesCross)
                 _futPaper.PruneOrphanPositions(_markets.Symbols);
         }
