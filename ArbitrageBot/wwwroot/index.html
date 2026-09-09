@@ -126,12 +126,34 @@
 
       <!-- FUNDING -->
       <section class="page" data-page="funding">
-        <div class="panel">
+        <div class="banner info">
+          <b>Funding</b> — carry по USDT‑M: positive rate → longs платят shorts.
+          Delta = rate(short) − rate(long). Учитывается в net edge, если в Settings включено «Учитывать funding».
+        </div>
+        <div class="kpi-row" id="fundingKpis">
+          <div class="kpi"><div class="kpi-l">Pairs</div><div class="kpi-v" id="f_pairs">—</div></div>
+          <div class="kpi"><div class="kpi-l">Best Δ</div><div class="kpi-v pos" id="f_best">—</div></div>
+          <div class="kpi"><div class="kpi-l">Next funding</div><div class="kpi-v" id="f_next">—</div></div>
+          <div class="kpi"><div class="kpi-l">Venues</div><div class="kpi-v" id="f_venues">—</div></div>
+        </div>
+        <div class="panel" style="margin-bottom:12px">
           <div class="panel-hd">
-            <span class="panel-title">Funding rates — all pairs</span>
-            <span class="panel-sub">delta = receive(short) − pay(long) · polled every 5 min</span>
+            <h2 class="panel-title">Best cross-exchange delta</h2>
+            <span class="panel-sub">sorted by |Δ| · poll ~5 min · all configured venues</span>
           </div>
           <div id="fundingList"><div class="empty">Loading funding…</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-hd">
+            <h2 class="panel-title">Rates by venue</h2>
+            <span class="panel-sub">absolute funding per exchange (universe symbols)</span>
+          </div>
+          <div class="scroll" style="max-height:420px">
+            <table class="data" id="fundingTable">
+              <thead id="fundingTableHead"><tr><th>Symbol</th></tr></thead>
+              <tbody id="fundingTableBody"><tr><td class="empty">…</td></tr></tbody>
+            </table>
+          </div>
         </div>
       </section>
 

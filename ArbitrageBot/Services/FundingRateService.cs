@@ -157,6 +157,7 @@ public sealed class FundingRateService : BackgroundService
                 "OKX"     => await FetchOkxAsync(symbols, ct),
                 "BITGET"  => await FetchBitgetAsync(symbols, ct),
                 "GATEIO"  => await FetchGateIoAsync(symbols, ct),
+                "KUCOIN"  => await FetchKucoinAsync(symbols, ct),
                 _         => []
             };
 
@@ -381,6 +382,70 @@ public sealed class FundingRateService : BackgroundService
             ));
         }
         return result;
+    }
+
+
+    private async Task<List<FundingRateSnapshot>> FetchKucoinAsync(
+        IReadOnlyList<string> symbols, CancellationToken ct)
+    {
+        var client = _http.CreateClient("discovery");
+        // Active contracts include fundingFeeRate + nextFundingRateDateTime
+        var resp = await client.GetAsync("https://api-futures.kucoin.com/api/v1/contracts/active", ct)
+            .ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode) return [];
+
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("data", out var data)) return [];
+
+        var result = new List<FundingRateSnapshot>();
+        foreach (var el in data.EnumerateArray())
+        {
+            var raw = el.TryGetProperty("symbol", out var s) ? s.GetString() ?? "" : "";
+            // SOLUSDTM → SOLUSDT, XBTUSDTM → BTCUSDT
+            var normalized = NormalizeKucoinSymbol(raw);
+            if (string.IsNullOrEmpty(normalized) || !IsWatched(normalized, symbols)) continue;
+
+            decimal rate = 0;
+            if (el.TryGetProperty("fundingFeeRate", out var fr))
+            {
+                if (fr.ValueKind == JsonValueKind.Number) rate = fr.GetDecimal();
+                else decimal.TryParse(fr.GetString(), System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out rate);
+            }
+
+            long nextMs = 0;
+            if (el.TryGetProperty("nextFundingRateDateTime", out var nft) && nft.ValueKind == JsonValueKind.Number)
+                nextMs = nft.GetInt64();
+
+            int intervalH = 8;
+            if (el.TryGetProperty("fundingRateGranularity", out var gran) && gran.ValueKind == JsonValueKind.Number)
+            {
+                var ms = gran.GetInt64();
+                if (ms > 0) intervalH = Math.Max(1, (int)(ms / 3_600_000));
+            }
+
+            result.Add(new FundingRateSnapshot(
+                Symbol:         normalized,
+                Exchange:       "Kucoin",
+                Rate:           rate,
+                MarkPrice:      0,
+                IntervalHours:  intervalH,
+                NextFundingUtc: nextMs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(nextMs).UtcDateTime : default,
+                FetchedUtc:     DateTime.UtcNow
+            ));
+        }
+        return result;
+    }
+
+    private static string NormalizeKucoinSymbol(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var s = raw.Trim().ToUpperInvariant();
+        if (s.EndsWith("M")) s = s[..^1];
+        if (s.StartsWith("XBT")) s = "BTC" + s[3..];
+        if (!s.EndsWith("USDT") && s.EndsWith("USD")) s = s + "T"; // rare
+        return Normalize(s);
     }
 
     // ── Storage & EMA ───────────────────────────────────────────────────────
