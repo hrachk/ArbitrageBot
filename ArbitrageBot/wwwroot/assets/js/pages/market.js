@@ -407,76 +407,108 @@ AB.pages.market = {
                  : Array.isArray(live.open)   ? live.open : [];
 
     const rows = [];
-    paper.forEach(p => rows.push({
-      sym:    p.symbol || p.Symbol,
-      long:   p.longExchange,
-      short:  p.shortExchange,
-      entry:  Number(p.longEntry ?? 0),
-      upnl:   Number(p.unrealizedPnlUsd ?? p.unrealizedPnl ?? 0),
-      type:   p.positionType || 'Paper',
-      hold:   p.lastHoldDecision,
-      id:     p.tradeId || p.id,
-      source: 'paper'
-    }));
-    ledger.forEach(p => rows.push({
-      sym:    p.symbol || p.Symbol,
-      long:   p.longExchange || p.LongExchange,
-      short:  p.shortExchange || p.ShortExchange,
-      entry:  Number(p.longEntry ?? p.LongEntry ?? 0),
-      upnl:   Number(p.unrealizedPricePnlUsd ?? p.unrealizedPnl ?? 0),
-      type:   'LIVE',
-      hold:   p.shouldHold ? 'HOLD' : p.shouldHold === false ? 'CLOSE' : null,
-      id:     p.tradeId || p.id,
-      source: 'live'
-    }));
+    paper.forEach(p => {
+      const qty = Number(p.baseQty ?? p.BaseQty ?? 0);
+      const entry = Number(p.longEntry ?? p.LongEntry ?? 0);
+      const notional = qty && entry ? qty * entry : Number(p.notionalUsd ?? p.QuoteSize ?? 0);
+      rows.push({
+        sym:    p.symbol || p.Symbol,
+        long:   p.longExchange || p.LongExchange,
+        short:  p.shortExchange || p.ShortExchange,
+        entry,
+        qty,
+        notional,
+        upnl:   Number(p.unrealizedPnlUsd ?? p.unrealizedPnl ?? 0),
+        lev:    Number(p.leverage ?? p.Leverage ?? fp.leverage ?? 5),
+        type:   'PAPER',
+        hold:   (p.lastHoldDecision || p.hold || '').toString().toUpperCase().includes('HOLD') ? 'HOLD'
+              : (p.lastHoldDecision || '').toString().toUpperCase().includes('CLOSE') ? 'CLOSE' : null,
+        id:     p.tradeId || p.TradeId || p.id,
+        source: 'paper',
+        opened: p.openedAt || p.OpenedAt || p.opened,
+        openNet: p.openNetPercent ?? p.OpenNetPercent ?? p.entryNetPercent,
+        funding: Number(p.accumulatedFundingPnlUsd ?? 0)
+      });
+    });
+    ledger.forEach(p => {
+      const qty = Number(p.baseQty ?? p.BaseQty ?? 0);
+      const entry = Number(p.longEntry ?? p.LongEntry ?? 0);
+      rows.push({
+        sym:    p.symbol || p.Symbol,
+        long:   p.longExchange || p.LongExchange,
+        short:  p.shortExchange || p.ShortExchange,
+        entry,
+        qty,
+        notional: qty && entry ? qty * entry : 0,
+        upnl:   Number(p.unrealizedPricePnlUsd ?? p.unrealizedPnl ?? p.unrealizedPnlUsd ?? 0),
+        lev:    Number(p.leverage ?? 5),
+        type:   'LIVE',
+        hold:   p.shouldHold === true ? 'HOLD' : p.shouldHold === false ? 'CLOSE' : null,
+        id:     p.tradeId || p.id,
+        source: 'live',
+        opened: p.openedAt || p.OpenedAt,
+        openNet: null,
+        funding: Number(p.accumulatedFundingPnlUsd ?? 0)
+      });
+    });
 
     const sub = document.getElementById('m_posSub');
-    if (sub) sub.textContent = rows.length + ' open';
+    if (sub) {
+      const nP = paper.length, nL = ledger.length;
+      sub.textContent = rows.length
+        ? (rows.length + ' open' + (nP && nL ? ` · paper ${nP} · live ${nL}` : (nP ? ' · paper' : ' · live')))
+        : '0 open';
+    }
     const realEl = document.getElementById('m_posRealized');
     if (realEl) {
-      const r = Number(live.realizedPnlUsd ?? fp.realizedPnlUsd ?? fp.realizedPnl) || 0;
+      const r = Number(fp.realizedPnlUsd ?? fp.realizedPnl ?? live.realizedPnlUsd ?? 0) || 0;
       realEl.textContent = (r >= 0 ? '+$' : '-$') + Math.abs(r).toFixed(2);
       realEl.style.color = r >= 0 ? 'var(--green)' : 'var(--red)';
     }
 
     if (!rows.length) {
-      el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--t3)">
-        <div style="font-size:20px;margin-bottom:6px">📭</div>
-        <div style="font-size:11px">Нет открытых позиций</div>
-        <div style="font-size:10px;margin-top:4px">Открой хедж через панель справа или нажми Exec в сканере</div>
+      el.innerHTML = `<div style="padding:20px 12px;text-align:center;color:var(--t3)">
+        <div style="font-size:22px;margin-bottom:6px;opacity:.7">📭</div>
+        <div style="font-size:12px;font-weight:600;color:var(--t2)">Нет открытых позиций</div>
+        <div style="font-size:10px;margin-top:6px;line-height:1.4">Открой хедж справа или <b>Exec</b> в сканере слева.<br/>Здесь появятся все paper + live хеджи.</div>
       </div>`;
       return;
     }
+
     el.innerHTML = rows.map(p => {
-      const holdCol = p.hold === 'HOLD'
-        ? 'rgba(45,212,191,.15)' : p.hold === 'CLOSE'
-        ? 'rgba(248,113,113,.15)' : 'transparent';
-      const srcBadge = p.source === 'live'
-        ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(248,113,113,.15);color:var(--red);font-weight:700">LIVE</span>'
-        : '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(56,189,248,.1);color:var(--t2)">PAPER</span>';
-      const typeLabel = p.type === 'FundingArb'
-        ? '<span style="font-size:9px;color:var(--accent)">💸 Funding</span>'
-        : '<span style="font-size:9px;color:var(--t3)">⚡ Spatial</span>';
-      return `<div style="padding:8px 10px;border-bottom:1px solid rgba(28,42,58,.6);background:${holdCol}">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--blue)">${String(p.sym || '').replace(/USDT$/i, '')}</span>
-            ${srcBadge}
-            ${typeLabel}
+      const upnlCls = p.upnl > 0.01 ? 'pos' : p.upnl < -0.01 ? 'neg' : '';
+      const upnlS = (p.upnl >= 0 ? '+$' : '-$') + Math.abs(p.upnl).toFixed(2);
+      const badge = p.source === 'live'
+        ? '<span class="pos-badge live">LIVE</span>'
+        : '<span class="pos-badge paper">PAPER</span>';
+      const holdHtml = p.hold
+        ? `<span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;background:${p.hold==='HOLD'?'rgba(45,212,191,.2)':'rgba(248,113,113,.2)'};color:${p.hold==='HOLD'?'#2dd4bf':'#f87171'}">${p.hold}</span>`
+        : '';
+      const opened = p.opened ? String(p.opened).replace('T',' ').slice(0, 19) : '—';
+      const netS = p.openNet != null ? (Number(p.openNet).toFixed(3) + '%') : '—';
+      const notionalS = p.notional ? ('$' + p.notional.toFixed(0)) : '—';
+      const fundS = p.funding ? ((p.funding >= 0 ? '+$' : '-$') + Math.abs(p.funding).toFixed(2)) : '—';
+      return `<div class="pos-card">
+        <div class="pos-card-hd">
+          <div>
+            <span class="pos-sym">${p.sym || '—'}</span>
+            ${badge}
           </div>
-          <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:${p.upnl >= 0 ? 'var(--green)' : 'var(--red)'}">
-            ${p.upnl >= 0 ? '+' : ''}$${Math.abs(p.upnl).toFixed(2)}
-          </span>
+          <div class="mono ${upnlCls}" style="font-size:15px;font-weight:800">${upnlS}</div>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="font-size:10px;color:var(--t3)">
-            🟢 ${p.long || '?'} → 🔴 ${p.short || '?'}
-            ${p.entry ? ' · вход ' + this.fmtP(p.entry) : ''}
-          </div>
-          <div style="display:flex;gap:4px;align-items:center">
-            ${p.hold ? `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;background:${p.hold==='HOLD'?'rgba(45,212,191,.2)':'rgba(248,113,113,.2)'};color:${p.hold==='HOLD'?'var(--accent)':'var(--red)'}">${p.hold}</span>` : ''}
-            <button type="button" class="close-btn" style="padding:3px 8px;font-size:11px" data-close="${p.id || ''}" data-src="${p.source}">✕ Закрыть</button>
-          </div>
+        <div class="pos-grid">
+          <div><div class="lbl">Route</div><div class="val">🟢 ${p.long || '?'} → 🔴 ${p.short || '?'}</div></div>
+          <div><div class="lbl">Notional · Lev</div><div class="val">${notionalS} · ${p.lev}x</div></div>
+          <div><div class="lbl">Entry</div><div class="val mono">${p.entry ? this.fmtP(p.entry) : '—'}</div></div>
+          <div><div class="lbl">Qty</div><div class="val mono">${p.qty ? this.fmtP(p.qty) : '—'}</div></div>
+          <div><div class="lbl">Open net</div><div class="val">${netS}</div></div>
+          <div><div class="lbl">Funding</div><div class="val">${fundS}</div></div>
+          <div style="grid-column:1/-1"><div class="lbl">Opened</div><div class="val" style="font-weight:500;color:#94a3b8">${opened}</div></div>
+        </div>
+        <div class="pos-foot">
+          <div style="display:flex;gap:6px;align-items:center">${holdHtml}</div>
+          <button type="button" class="close-btn" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:6px;border:1px solid rgba(248,113,113,.35);background:rgba(248,113,113,.1);color:#fca5a5;cursor:pointer"
+            data-close="${p.id || ''}" data-src="${p.source}">✕ Закрыть</button>
         </div>
       </div>`;
     }).join('');
@@ -495,7 +527,7 @@ AB.pages.market = {
           this.showToast(r.ok !== false ? '✓ Position closed' : '✗ ' + (r.error || r.message || 'failed'));
         } catch (err) {
           this.showToast('✗ ' + (err.message || err));
-          btn.textContent = '✕'; btn.disabled = false;
+          btn.textContent = '✕ Закрыть'; btn.disabled = false;
         }
       };
     });

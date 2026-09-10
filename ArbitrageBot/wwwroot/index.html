@@ -281,11 +281,12 @@
                     <span class="ph-title">📊 Открытые позиции</span>
                     <span class="ph-sub" id="m_posSub">—</span>
                   </div>
-                  <div style="padding:4px 8px;background:rgba(0,0,0,.2);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b)">
-                    Реализованный PnL: <b id="m_posRealized" style="color:var(--t2)">—</b>
-                    &nbsp;·&nbsp; нажми ✕ чтобы закрыть позицию
+                  <div style="padding:6px 10px;background:rgba(0,0,0,.25);font-size:10px;color:var(--t3);border-bottom:1px solid var(--b);flex-shrink:0">
+                    Realized: <b id="m_posRealized" style="color:var(--t2)">—</b>
+                    &nbsp;·&nbsp; все paper + live хеджи списком (не стек)
+                    &nbsp;·&nbsp; ✕ закрыть
                   </div>
-                  <div id="posTable" style="overflow-y:auto;flex:1;scrollbar-width:none"></div>
+                  <div id="posTable" style="overflow-y:auto;flex:1;min-height:0;scrollbar-width:thin"></div>
                 </div>
 
                 <!-- Funding rates -->
