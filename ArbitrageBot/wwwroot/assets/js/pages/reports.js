@@ -322,40 +322,32 @@ AB.pages.reports = {
         kpi('CONSEC LOSS',   p.consecLoss, 'neg'),
       ].join('');
 
-      // Equity curve
+      // Equity curve → canvas + optional hidden svg fallback
+      const pts = (p.equityCurve && p.equityCurve.length) ? p.equityCurve : [];
+      const sub = AB.$('perfCurveSub');
+      if (sub) sub.textContent = pts.length ? (pts.length + ' points · ' + d + 'D') : 'нет данных';
+      this._drawEquityCanvas(pts);
       const svg = AB.$('perfCurve');
-      if (svg && p.equityCurve && p.equityCurve.length) {
-        const pts  = p.equityCurve;
-        const ys   = pts.map(x => x.equity);
-        const minY = Math.min(0, ...ys), maxY = Math.max(0, ...ys);
-        const span = (maxY - minY) || 1;
-        const w = 640, h = 160, pad = 12;
-        const xy = pts.map((pt, i) => [
-          pad + (i / Math.max(pts.length - 1, 1)) * (w - 2 * pad),
-          h - pad - ((pt.equity - minY) / span) * (h - 2 * pad)
-        ]);
-        const poly  = xy.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-        const zeroY = h - pad - ((0 - minY) / span) * (h - 2 * pad);
-        svg.innerHTML = `<line x1="0" y1="${zeroY}" x2="${w}" y2="${zeroY}" stroke="rgba(148,163,184,0.25)" stroke-dasharray="4"/>
-          <polyline fill="none" stroke="#2dd4bf" stroke-width="2" points="${poly}"/>`;
-      } else if (svg) {
-        svg.innerHTML = '<text x="20" y="80" fill="#94a3b8" font-size="12">No closed trades in range</text>';
-      }
+      if (svg) svg.innerHTML = '';
 
       // Daily calendar
       const cal = AB.$('perfCalendar');
       if (cal) {
         const daily = p.daily || [];
-        cal.innerHTML = daily.length ? daily.map(d => {
-          const n  = Number(d.pnl) || 0;
-          const bg = n > 0 ? 'rgba(45,212,191,0.2)' : (n < 0 ? 'rgba(248,113,113,0.2)' : 'rgba(148,163,184,0.1)');
-          return `<div style="background:${bg};border-radius:8px;padding:8px;text-align:center">
-            <div class="muted" style="font-size:10px">${d.day.slice(5)}</div>
+        cal.innerHTML = daily.length ? daily.map(d0 => {
+          const n  = Number(d0.pnl) || 0;
+          const bg = n > 0 ? 'rgba(34,197,94,0.18)' : (n < 0 ? 'rgba(239,68,68,0.18)' : 'rgba(148,163,184,0.1)');
+          const dayLbl = (d0.day || d0.Day || '').toString().slice(5);
+          return `<div class="day-cell" style="background:${bg}" title="${d0.day || ''}: ${n >= 0 ? '+' : ''}${AB.fmt(n, 2)} USDT">
+            <div class="muted" style="font-size:10px">${dayLbl}</div>
             <div class="mono ${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}" style="font-size:12px;font-weight:600">${n >= 0 ? '+' : ''}${AB.fmt(n, 1)}</div>
-            <div class="muted" style="font-size:10px">${d.trades}t</div>
+            <div class="muted" style="font-size:10px">${d0.trades || d0.Trades || 0}t</div>
           </div>`;
         }).join('') : '<div class="empty">No daily data</div>';
       }
+
+      const tc = AB.$('tableCount');
+      if (tc) tc.textContent = (Array.isArray(trades) ? trades.length : 0) + ' trades';
 
       // Trades table
       const box  = AB.$('perfTrades');
@@ -460,11 +452,108 @@ AB.pages.reports = {
     }
   },
 
+
+  _drawEquityCanvas(pts) {
+    const canvas = document.getElementById('perfCurveCanvas');
+    if (!canvas) return;
+    const tip = document.getElementById('repTip');
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 640;
+    const h = canvas.clientHeight || 220;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!pts || !pts.length) {
+      ctx.fillStyle = '#8b9cb3';
+      ctx.font = '12px system-ui,sans-serif';
+      ctx.fillText('No closed trades in range', 16, h / 2);
+      canvas.onmousemove = null;
+      return;
+    }
+    const ys = pts.map(x => Number(x.equity) || 0);
+    let minY = Math.min(0, ...ys), maxY = Math.max(0, ...ys);
+    if (minY === maxY) { minY -= 1; maxY += 1; }
+    const span = maxY - minY;
+    const pad = { t: 14, r: 10, b: 26, l: 48 };
+    const plotW = w - pad.l - pad.r, plotH = h - pad.t - pad.b;
+    const xAt = i => pad.l + (pts.length === 1 ? plotW / 2 : (i / (pts.length - 1)) * plotW);
+    const yAt = v => pad.t + plotH - ((v - minY) / span) * plotH;
+
+    ctx.strokeStyle = 'rgba(148,163,184,0.15)';
+    ctx.fillStyle = '#8b9cb3';
+    ctx.font = '10px system-ui,sans-serif';
+    ctx.textAlign = 'right';
+    for (let g = 0; g <= 4; g++) {
+      const v = minY + (span * g) / 4;
+      const y = yAt(v);
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+      ctx.fillText((v >= 0 ? '+' : '') + v.toFixed(1), pad.l - 4, y + 3);
+    }
+    const zeroY = yAt(0);
+    ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(pad.l, zeroY); ctx.lineTo(w - pad.r, zeroY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    pts.forEach((pt, i) => {
+      const x = xAt(i), y = yAt(Number(pt.equity) || 0);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = '#2dd4bf';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.lineTo(xAt(pts.length - 1), pad.t + plotH);
+    ctx.lineTo(xAt(0), pad.t + plotH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(45,212,191,0.12)';
+    ctx.fill();
+
+    ctx.fillStyle = '#2dd4bf';
+    const step = Math.max(1, Math.floor(pts.length / 20));
+    pts.forEach((pt, i) => {
+      if (i % step && i !== pts.length - 1) return;
+      ctx.beginPath();
+      ctx.arc(xAt(i), yAt(Number(pt.equity) || 0), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    canvas._hits = pts.map((pt, i) => ({
+      x: xAt(i),
+      equity: Number(pt.equity) || 0,
+      label: pt.t || pt.time || pt.day || ('#' + (i + 1))
+    }));
+    canvas.onmousemove = (e) => {
+      const hits = canvas._hits || [];
+      if (!hits.length || !tip) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      let best = null, bd = 1e9;
+      hits.forEach(h => { const d0 = Math.abs(h.x - x); if (d0 < bd) { bd = d0; best = h; } });
+      if (!best || bd > 28) { tip.classList.remove('show'); return; }
+      tip.innerHTML = '<strong>' + best.label + '</strong>Equity: ' +
+        (best.equity >= 0 ? '+' : '') + best.equity.toFixed(2) + ' USDT';
+      tip.classList.add('show');
+      tip.style.left = (e.clientX + 12) + 'px';
+      tip.style.top = (e.clientY + 12) + 'px';
+    };
+    canvas.onmouseleave = () => { if (tip) tip.classList.remove('show'); };
+  },
+
   onShow(d) {
     if (d) this.render(d);
     this.loadDays();
     this.loadPerformance(this._perfDays || 7);
     this.loadLiveBalances();
+    if (!this._resizeBound) {
+      this._resizeBound = true;
+      window.addEventListener('resize', () => {
+        clearTimeout(this._rz);
+        this._rz = setTimeout(() => this.loadPerformance(this._perfDays || 7), 200);
+      });
+    }
   }
 };
 

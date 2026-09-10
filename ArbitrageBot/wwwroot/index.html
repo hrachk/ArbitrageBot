@@ -465,145 +465,72 @@
 
       <!-- REPORTS -->
       <section class="page" data-page="reports">
-
-        <!-- ══ LIVE SECTION ══════════════════════════════════════════════ -->
-        <div id="rep_liveSection">
-
-          <!-- Live balances & positions -->
-          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.4)">
-            <div class="panel-hd">
-              <h2 class="panel-title">🔴 Live balances &amp; positions</h2>
-              <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Refresh</button>
-            </div>
-            <div class="muted" style="font-size:12px;margin-bottom:10px">REST read-only · USDT-M futures · реальные данные с бирж</div>
-            <div class="g3" id="r_liveBal"><div class="empty">Loading…</div></div>
+        <div class="rep-hd">
+          <div>
+            <h1 class="rep-title">Reports</h1>
+            <p class="rep-sub muted">Paper &amp; Live analytics · данные бота в реальном времени</p>
           </div>
-
-          <!-- Live open hedges (ledger) -->
-          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.25)">
-            <div class="panel-hd">
-              <h2 class="panel-title">Open hedges</h2><span class="panel-sub" style="margin-left:8px">paper + live ledger + exchange</span>
-              <span class="panel-sub" id="r_liveOpenCount">—</span>
+          <div class="rep-filters">
+            <div class="btn-row" id="perfRangeBtns">
+              <button type="button" class="chip" data-perf-days="1">1D</button>
+              <button type="button" class="chip active" data-perf-days="7">7D</button>
+              <button type="button" class="chip" data-perf-days="30">30D</button>
+              <button type="button" class="chip" data-perf-days="90">90D</button>
             </div>
-            <!-- Hold decisions with funding PnL -->
-            <div class="g2" id="r_holdDecisions" style="margin-bottom:10px"></div>
-            <div class="scroll">
-              <table class="data">
-                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Opened</th></tr></thead>
-                <tbody id="r_posBody"></tbody>
-              </table>
-            </div>
+            <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Live balances</button>
           </div>
-
-          <!-- Funding rates table -->
-          <div class="panel" style="margin-bottom:12px;border-color:rgba(45,212,191,0.3)">
-            <div class="panel-hd">
-              <h2 class="panel-title">📊 Funding rates — все пары</h2>
-              <span class="panel-sub">delta = получаем на шорте − платим на лонге · обновляется каждые 5 мин</span>
-            </div>
-            <div id="r_fundingRates"><div class="empty">Loading…</div></div>
-          </div>
-
-          <!-- Live trade ledger -->
-          <div class="panel" style="margin-bottom:12px;border-color:rgba(248,113,113,0.25)">
-            <div class="panel-hd">
-              <h2 class="panel-title">🔴 Live trade ledger</h2>
-              <span class="panel-sub" id="r_liveLedgerCount">—</span>
-            </div>
-            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
-              <div class="kpi" style="margin:0;flex:1;min-width:120px">
-                <div class="kpi-l">Realized PnL</div>
-                <div class="kpi-v" id="r_realized">—</div>
-              </div>
-              <div class="kpi" style="margin:0;flex:1;min-width:120px">
-                <div class="kpi-l">Open hedges</div>
-                <div class="kpi-v" id="r_open">—</div>
-              </div>
-              <div class="kpi" style="margin:0;flex:1;min-width:120px">
-                <div class="kpi-l">Total closes</div>
-                <div class="kpi-v" id="r_attempts">—</div>
-              </div>
-            </div>
-            <div class="scroll" style="max-height:380px">
-              <table class="data">
-                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
-                <tbody id="r_tradeBody"></tbody>
-              </table>
-            </div>
-          </div>
-
         </div>
 
-        <!-- ══ PAPER / DEMO SECTION ══════════════════════════════════════ -->
+        <!-- PAPER KPI -->
         <div id="rep_paperSection">
-          <div class="banner info" style="margin-bottom:12px">
-            📄 <b>PAPER / DEMO</b> — симуляция без реальных ордеров · файлы в <code class="mono">data/paper/</code>
+          <div class="kpi-grid rep-kpi" id="repPaperKpi">
+            <div class="kpi"><div class="kpi-l">Paper realized</div><div class="kpi-v" id="r_paper_realized">—</div></div>
+            <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
+            <div class="kpi"><div class="kpi-l">Closes</div><div class="kpi-v" id="r_paper_closes">—</div></div>
+            <div class="kpi"><div class="kpi-l">Open · Lev · Stop</div><div class="kpi-v" style="font-size:1.1rem"><span id="r_paper_open">—</span> · <span id="r_lev">—</span> · <span id="r_stop">—</span></div></div>
           </div>
 
-          <!-- Performance KPIs + curve -->
-          <div class="panel" style="margin-bottom:12px">
+          <!-- Performance analytics (API) -->
+          <div class="panel rep-panel" style="margin-bottom:14px">
             <div class="panel-hd">
               <h2 class="panel-title">Performance</h2>
-              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                <button type="button" class="btn sm" data-perf-days="1">1D</button>
-                <button type="button" class="btn sm active" data-perf-days="7">7D</button>
-                <button type="button" class="btn sm" data-perf-days="30">30D</button>
-                <button type="button" class="btn sm" data-perf-days="90">90D</button>
+              <span class="panel-sub">ledger · выбран /api/analytics</span>
+            </div>
+            <div class="kpi-grid rep-kpi" id="perfKpis"></div>
+            <div class="kpi-grid rep-kpi" id="perfKpis2" style="margin-top:10px"></div>
+            <div class="rep-charts">
+              <div class="rep-chart-card">
+                <div class="panel-hd" style="margin-bottom:6px"><h2 class="panel-title" style="font-size:0.9rem">PnL curve</h2><span class="panel-sub" id="perfCurveSub">по дням</span></div>
+                <div class="rep-chart-box"><canvas id="perfCurveCanvas"></canvas></div>
+                <div id="perfCurve" class="hidden"></div>
+              </div>
+              <div class="rep-chart-card">
+                <div class="panel-hd" style="margin-bottom:6px"><h2 class="panel-title" style="font-size:0.9rem">Daily calendar</h2><span class="panel-sub">realized / day</span></div>
+                <div id="perfCalendar" class="rep-calendar"></div>
               </div>
             </div>
-            <div class="g4" id="perfKpis"></div>
-            <div class="g4" id="perfKpis2" style="margin-top:10px"></div>
-            <div style="margin-top:14px">
-              <div class="muted" style="font-size:11px;margin-bottom:6px">CUMULATIVE PNL</div>
-              <svg id="perfCurve" viewBox="0 0 640 160" width="100%" height="160" style="background:rgba(0,0,0,0.25);border-radius:10px"></svg>
-            </div>
-            <div style="margin-top:14px">
-              <div class="muted" style="font-size:11px;margin-bottom:6px">DAILY PNL</div>
-              <div id="perfCalendar" class="g7" style="gap:6px"></div>
-            </div>
-            <div style="margin-top:14px">
-              <div class="muted" style="font-size:11px;margin-bottom:6px">TRADE DETAILS</div>
-              <div id="perfTrades" style="max-height:320px;overflow:auto"></div>
-            </div>
+            <div class="panel-hd" style="margin-top:14px"><h2 class="panel-title" style="font-size:0.9rem">Trade details</h2><span class="panel-sub" id="tableCount">—</span></div>
+            <div class="scroll" style="max-height:280px" id="perfTrades"></div>
           </div>
 
-          <!-- Paper KPIs row -->
-          <div class="kpi-row" style="margin-bottom:12px">
-            <div class="kpi"><div class="kpi-l">Realized (net fees)</div><div class="kpi-v" id="r_paper_realized">—</div></div>
-            <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="r_day">—</div></div>
-            <div class="kpi"><div class="kpi-l">Closes</div><div class="kpi-v" id="r_paper_closes">0</div></div>
-            <div class="kpi"><div class="kpi-l">Open</div><div class="kpi-v" id="r_paper_open">0</div></div>
-            <div class="kpi"><div class="kpi-l">Leverage</div><div class="kpi-v" id="r_lev">—</div></div>
-            <div class="kpi"><div class="kpi-l">Stop</div><div class="kpi-v" id="r_stop">—</div></div>
-          </div>
-
-          <!-- Day summary + Skip reasons -->
-          <div class="g2" style="margin-bottom:12px">
-            <div class="panel">
+          <div class="rep-split">
+            <div class="panel rep-panel">
               <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
-              <div id="r_daySummary" class="mono muted" style="font-size:12px;line-height:1.7">—</div>
+              <div id="r_daySummary" class="rep-day-summary"></div>
             </div>
-            <div class="panel">
+            <div class="panel rep-panel">
               <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
-              <div id="r_skipReasons">—</div>
+              <div id="r_skipReasons"></div>
+              <div class="scroll" style="max-height:140px;margin-top:8px">
+                <table class="data"><thead><tr><th>Time</th><th>Reason</th><th>Symbol</th></tr></thead>
+                <tbody id="r_skipBody"></tbody></table>
+              </div>
             </div>
           </div>
 
-          <!-- Recent skips -->
-          <div class="panel" style="margin-bottom:12px">
-            <div class="panel-hd"><h2 class="panel-title">Recent skips</h2></div>
-            <div class="scroll" style="max-height:200px">
-              <table class="data">
-                <thead><tr><th>UTC</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
-                <tbody id="r_skipBody"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Multi-day history -->
-          <div class="panel" style="margin-bottom:12px">
-            <div class="panel-hd"><h2 class="panel-title">Multi-day history</h2><span class="panel-sub">по дням · paper engine</span></div>
-            <div class="scroll" style="max-height:160px">
+          <div class="panel rep-panel" style="margin-bottom:14px">
+            <div class="panel-hd"><h2 class="panel-title">Multi-day history</h2><span class="panel-sub">paper engine daily files</span></div>
+            <div class="scroll" style="max-height:180px">
               <table class="data">
                 <thead><tr><th>Day</th><th>Scans</th><th>Opens</th><th>Closes</th><th>Skips</th><th>PnL</th><th>Best</th></tr></thead>
                 <tbody id="r_daysBody"></tbody>
@@ -611,42 +538,89 @@
             </div>
           </div>
 
-          <!-- Margin by venue (paper only) -->
-          <div class="panel" style="margin-bottom:12px">
+          <div class="panel rep-panel" style="margin-bottom:14px">
             <div class="panel-hd">
               <h2 class="panel-title">Margin by venue</h2>
-              <span class="panel-sub">equity = free + locked · paper simulation</span>
+              <span class="panel-sub">paper equity = free + locked</span>
             </div>
             <div class="g3" id="r_margin"></div>
           </div>
 
-          <!-- Paper open positions -->
-          <div class="panel" style="margin-bottom:12px">
-            <div class="panel-hd"><h2 class="panel-title">Paper open positions</h2></div>
-            <div class="scroll">
-              <table class="data">
-                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
-                <tbody id="r_paperPosBody"></tbody>
-              </table>
+          <div class="rep-split">
+            <div class="panel rep-panel">
+              <div class="panel-hd"><h2 class="panel-title">Paper open positions</h2></div>
+              <div class="scroll" style="max-height:220px">
+                <table class="data">
+                  <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Width</th><th>Opened</th></tr></thead>
+                  <tbody id="r_paperPosBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="panel rep-panel">
+              <div class="panel-hd"><h2 class="panel-title">Paper trade history</h2></div>
+              <div class="scroll" style="max-height:220px">
+                <table class="data">
+                  <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
+                  <tbody id="r_paperTradeBody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
-
-          <!-- Paper trade history -->
-          <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Paper trade history</h2></div>
-            <div class="scroll" style="max-height:400px">
-              <table class="data">
-                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Status</th><th>Note</th></tr></thead>
-                <tbody id="r_paperTradeBody"></tbody>
-              </table>
-            </div>
-          </div>
-
         </div>
-      </section>
 
-      <!-- SETTINGS -->
-            <section class="page" data-page="settings">
+        <!-- LIVE -->
+        <div id="rep_liveSection" style="margin-top:20px">
+          <div class="rep-section-label">Live</div>
+          <div class="kpi-grid rep-kpi" style="margin-bottom:14px">
+            <div class="kpi"><div class="kpi-l">Live realized</div><div class="kpi-v" id="r_realized">—</div></div>
+            <div class="kpi"><div class="kpi-l">Open hedges</div><div class="kpi-v" id="r_open">—</div></div>
+            <div class="kpi"><div class="kpi-l">Closed attempts</div><div class="kpi-v" id="r_attempts">—</div></div>
+            <div class="kpi"><div class="kpi-l">Ledger</div><div class="kpi-v" style="font-size:0.95rem" id="r_liveLedgerCount">—</div></div>
+          </div>
+
+          <div class="panel rep-panel" style="margin-bottom:14px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Live balances &amp; positions</h2>
+              <span class="panel-sub">REST read-only · USDT-M</span>
+            </div>
+            <div class="g3" id="r_liveBal"><div class="empty">Loading…</div></div>
+          </div>
+
+          <div class="panel rep-panel" style="margin-bottom:14px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Open hedges</h2>
+              <span class="panel-sub" id="r_liveOpenCount">paper + live + exchange</span>
+            </div>
+            <div class="g2" id="r_holdDecisions" style="margin-bottom:10px"></div>
+            <div class="scroll" style="max-height:200px">
+              <table class="data">
+                <thead><tr><th>Symbol</th><th>Route</th><th>Qty</th><th>uPnL</th><th>Opened</th></tr></thead>
+                <tbody id="r_posBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel rep-panel" style="margin-bottom:14px">
+            <div class="panel-hd">
+              <h2 class="panel-title">Funding rates</h2>
+              <span class="panel-sub">delta short − long · ~5 min</span>
+            </div>
+            <div id="r_fundingRates"><div class="empty">Loading…</div></div>
+          </div>
+
+          <div class="panel rep-panel">
+            <div class="panel-hd">
+              <h2 class="panel-title">Live trade ledger</h2>
+            </div>
+            <div class="scroll" style="max-height:260px">
+              <table class="data">
+                <thead><tr><th>Status</th><th>Symbol</th><th>Route</th><th>PnL</th><th>Opened</th><th>Note</th></tr></thead>
+                <tbody id="r_tradeBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section><section class="page" data-page="settings">
         <div id="s_msg" class="banner info hidden"></div>
         <div class="banner warn">Ключи → <span class="mono">data/local-settings.json</span> (не в git). Live-ордера выключены, пока paper не подтверждён.</div>
 
@@ -1233,5 +1207,6 @@
 <script src="/assets/js/pages/reports.js"></script>
 <script src="/assets/js/pages/settings.js"></script>
 <script src="/assets/js/pages/help.js"></script>
+<div id="repTip"></div>
 </body>
 </html>
