@@ -237,23 +237,53 @@ AB.pages.reports = {
       ].join('');
     }
 
-    // Skip reasons
+    // Skip reasons (aggregated, readable bars)
     const reasons = an.skipReasons || [];
+    const totalSkips = reasons.reduce((s, r) => s + (Number(r.count) || 0), 0)
+      || Number(an.skips) || 0;
+    if (el('r_skipAggSub')) {
+      el('r_skipAggSub').textContent = reasons.length
+        ? (reasons.length + ' типов · ' + totalSkips.toLocaleString() + ' skips · клик свернуть')
+        : 'нет данных';
+    }
     if (el('r_skipReasons')) {
-      el('r_skipReasons').innerHTML = reasons.length
-        ? reasons.map(r => `<div class="mono" style="margin:4px 0"><span class="muted">${r.reason}</span> × <b>${r.count}</b></div>`).join('')
-        : '<span class="muted">No skips recorded yet</span>';
+      if (!reasons.length) {
+        el('r_skipReasons').innerHTML = '<div class="muted" style="padding:8px 0">No skips recorded yet</div>';
+      } else {
+        const maxC = Math.max(...reasons.map(r => Number(r.count) || 0), 1);
+        const sorted = reasons.slice().sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0));
+        const top = sorted.slice(0, 12);
+        el('r_skipReasons').innerHTML = top.map(r => {
+          const c = Number(r.count) || 0;
+          const pct = Math.round(c / maxC * 100);
+          const reason = (r.reason || '—').toString();
+          return `<div class="skip-row" title="${reason.replace(/"/g, '&quot;')} × ${c}">
+            <div class="skip-reason">${reason}</div>
+            <div class="skip-count">×${c.toLocaleString()}</div>
+            <div class="skip-bar-track"><div class="skip-bar-fill" style="width:${pct}%"></div></div>
+          </div>`;
+        }).join('') + (sorted.length > 12
+          ? `<div class="muted" style="font-size:11px;padding:6px 0">+ ещё ${sorted.length - 12} типов (см. recent)</div>`
+          : '');
+      }
     }
 
-    // Recent skips
+    // Recent skips (table, default collapsed)
     const skips = data.paperRecentSkips || [];
+    if (el('r_skipRecentSub')) {
+      el('r_skipRecentSub').textContent = skips.length
+        ? (skips.length + ' последних · клик открыть')
+        : 'пусто';
+    }
     if (el('r_skipBody')) {
       el('r_skipBody').innerHTML = skips.length
-        ? skips.map(s => {
+        ? skips.slice(0, 40).map(s => {
             const t = s.utc ? new Date(s.utc).toISOString().slice(11, 19) : '—';
-            return `<tr>
+            const reason = (s.reason || '').toString();
+            const short = reason.length > 64 ? reason.slice(0, 62) + '…' : reason;
+            return `<tr title="${reason.replace(/"/g, '&quot;')}">
               <td class="muted mono">${t}</td>
-              <td style="font-size:11px">${s.reason || ''}</td>
+              <td style="font-size:11px">${short}</td>
               <td class="mono" style="color:var(--cyan)">${s.symbol || '—'}</td>
               <td class="mono">${s.openNet != null ? Number(s.openNet).toFixed(3) : '—'}</td>
               <td class="mono">${s.rtNet  != null ? Number(s.rtNet).toFixed(3)  : '—'}</td>
@@ -558,6 +588,24 @@ AB.pages.reports = {
 };
 
 // ── Event listeners ─────────────────────────────────────────────────────────
+
+// Skip reasons collapse toggles
+(function bindSkipToggles() {
+  const bind = (toggleId, bodyId, chevId, openLabel, closedLabel) => {
+    const t = document.getElementById(toggleId);
+    const b = document.getElementById(bodyId);
+    const c = document.getElementById(chevId);
+    if (!t || !b || t._skipBound) return;
+    t._skipBound = true;
+    t.addEventListener('click', () => {
+      const collapsed = b.classList.toggle('skip-collapsed');
+      if (c) c.textContent = collapsed ? '▸' : '▾';
+    });
+  };
+  bind('skipAggToggle', 'skipAggBody', 'skipAggChev');
+  bind('skipRecentToggle', 'skipRecentBody', 'skipRecentChev');
+})();
+
 document.getElementById('btnRefreshLiveBal')
   ?.addEventListener('click', () => AB.pages.reports.loadLiveBalances());
 

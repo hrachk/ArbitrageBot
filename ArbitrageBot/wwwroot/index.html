@@ -519,12 +519,25 @@
               <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
               <div id="r_daySummary" class="rep-day-summary"></div>
             </div>
-            <div class="panel rep-panel">
-              <div class="panel-hd"><h2 class="panel-title">Skip reasons</h2></div>
-              <div id="r_skipReasons"></div>
-              <div class="scroll" style="max-height:140px;margin-top:8px">
-                <table class="data"><thead><tr><th>Time</th><th>Reason</th><th>Symbol</th></tr></thead>
-                <tbody id="r_skipBody"></tbody></table>
+            <div class="panel rep-panel skip-panel">
+              <div class="panel-hd" style="cursor:pointer;user-select:none" id="skipAggToggle" title="Свернуть / развернуть">
+                <h2 class="panel-title">Skip reasons <span class="skip-chevron" id="skipAggChev">▾</span></h2>
+                <span class="panel-sub" id="r_skipAggSub">топ причин · клик свернуть</span>
+              </div>
+              <div id="skipAggBody">
+                <div id="r_skipReasons" class="skip-agg-list"></div>
+              </div>
+              <div class="panel-hd" style="cursor:pointer;user-select:none;margin-top:4px;border-top:1px solid rgba(148,163,184,0.1);padding-top:10px" id="skipRecentToggle">
+                <h2 class="panel-title" style="font-size:0.85rem">Recent skips <span class="skip-chevron" id="skipRecentChev">▸</span></h2>
+                <span class="panel-sub" id="r_skipRecentSub">свернуто</span>
+              </div>
+              <div id="skipRecentBody" class="skip-collapsed">
+                <div class="scroll" style="max-height:160px">
+                  <table class="data">
+                    <thead><tr><th>Time</th><th>Reason</th><th>Symbol</th><th>Open%</th><th>RT%</th></tr></thead>
+                    <tbody id="r_skipBody"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
