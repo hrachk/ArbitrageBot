@@ -207,6 +207,26 @@ AB.pages.settings = {
     if (AB.$('s_fullFill')) AB.$('s_fullFill').checked = t.paperRequireFullFill !== false;
     if (AB.$('s_reqRt')) AB.$('s_reqRt').checked = t.requireRoundTripEdge !== false;
     if (AB.$('s_funding')) AB.$('s_funding').checked = t.includeFunding !== false;
+    if (AB.$('s_holdSec') && t.futuresMaxHoldSeconds != null) AB.$('s_holdSec').value = t.futuresMaxHoldSeconds;
+    if (AB.$('s_minGross') && t.minGrossSpreadPercent != null) AB.$('s_minGross').value = t.minGrossSpreadPercent;
+    if (AB.$('s_minTp') && t.minTakeProfitUsd != null) AB.$('s_minTp').value = t.minTakeProfitUsd;
+    if (AB.$('s_persistMs') && t.minSpreadPersistMs != null) AB.$('s_persistMs').value = t.minSpreadPersistMs;
+    if (AB.$('s_bookAge') && t.maxBookAgeMs != null) AB.$('s_bookAge').value = t.maxBookAgeMs;
+    if (AB.$('s_scanMs') && t.scanIntervalMs != null) AB.$('s_scanMs').value = t.scanIntervalMs;
+    if (AB.$('s_edgeBuffer') && t.openEdgeBufferPercent != null) AB.$('s_edgeBuffer').value = t.openEdgeBufferPercent;
+    if (AB.$('s_closeFee') && t.paperCloseFeeFactor != null) AB.$('s_closeFee').value = t.paperCloseFeeFactor;
+    if (AB.$('s_depthScore') && t.minDepthScoreForUniverse != null) AB.$('s_depthScore').value = t.minDepthScoreForUniverse;
+    if (AB.$('s_maxLegs') && t.maxLegsPerVenue != null) AB.$('s_maxLegs').value = t.maxLegsPerVenue;
+    if (AB.$('s_maxWidthExp') && t.maxWidthExpansionPercent != null) AB.$('s_maxWidthExp').value = t.maxWidthExpansionPercent;
+    if (AB.$('s_dynTopN') && t.dynamicTopN != null) AB.$('s_dynTopN').value = t.dynamicTopN;
+    if (AB.$('s_dynMinVol') && t.dynamicMinQuoteVolumeUsd != null) AB.$('s_dynMinVol').value = t.dynamicMinQuoteVolumeUsd;
+    if (AB.$('s_dynMaxVol') && t.dynamicMaxQuoteVolumeUsd != null) AB.$('s_dynMaxVol').value = t.dynamicMaxQuoteVolumeUsd;
+    if (AB.$('s_dynRefresh') && t.dynamicRefreshMinutes != null) AB.$('s_dynRefresh').value = t.dynamicRefreshMinutes;
+    if (AB.$('s_paperStart') && t.paperStartingQuote != null) AB.$('s_paperStart').value = t.paperStartingQuote;
+    if (AB.$('s_scalp')) AB.$('s_scalp').checked = !!t.spatialScalpMode;
+    if (AB.$('s_spreadEdge')) AB.$('s_spreadEdge').checked = !!t.requireSpreadingEdge;
+    if (AB.$('s_depthFill')) AB.$('s_depthFill').checked = t.requireDepthFullFill !== false;
+    if (AB.$('s_dynOn')) AB.$('s_dynOn').checked = t.dynamicSymbols !== false;
 
     const conns = s.connections || {};
     AB.$('s_exchanges').innerHTML = Object.entries(conns).map(([name, c]) => {
@@ -372,7 +392,6 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
   };
   try {
     const res = await AB.api.post('/api/settings/trading', trading);
-    await AB.api.post('/api/settings/risk', risk);
     const eff = (res && res.effective) || {};
     const qs = eff.quoteSize != null ? eff.quoteSize : trading.quoteSize;
     const mn = eff.maxNotionalUsd != null ? eff.maxNotionalUsd : trading.maxNotionalUsd;

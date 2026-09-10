@@ -231,59 +231,11 @@ try
         });
     });
 
-    app.MapPost("/api/settings/risk", async (RiskUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
+        app.MapPost("/api/settings/risk", async (RiskUiSettings body, ISettingsStore store, RuntimeRiskConfig risk) =>
     {
+        // Partial risk update for runtime only. Full persistence is /api/settings/trading (Save all).
         risk.ApplyRisk(body);
-        var s = risk.Snapshot;
-        var prev = store.GetTrading();
-        // Merge: never drop fields that risk UI does not send (paper start, gross, scalp, …)
-        await store.SaveTradingAsync(new TradingUiSettings
-        {
-            StrategyMode = s.StrategyMode,
-            PaperTrading = s.PaperTrading,
-            PaperAutoExecute = s.PaperAutoExecute,
-            MinProfitPercent = s.MinProfitPercent,
-            QuoteSize = s.QuoteSize > 0 ? s.QuoteSize : prev.QuoteSize,
-            FuturesPaperLeverage = s.FuturesPaperLeverage,
-            FuturesMaxOpenPositions = s.FuturesMaxOpenPositions,
-            FuturesStopLossUsd = s.FuturesStopLossUsd,
-            FuturesDailyLossLimitUsd = s.FuturesDailyLossLimitUsd,
-            MaxHoldMinutes = s.FuturesMaxHoldMinutes,
-            CloseBelowNetPercent = s.FuturesCloseBelowNetPercent,
-            MaxMarginUsagePercent = s.FuturesMaxMarginUsagePercent,
-            MaxNotionalUsd = s.FuturesMaxNotionalUsd > 0 ? s.FuturesMaxNotionalUsd : prev.MaxNotionalUsd,
-            PaperCooldownMs = s.PaperCooldownMs,
-            PaperRequireFullFill = s.PaperRequireFullFill,
-            RequireRoundTripEdge = s.FuturesRequireRoundTripEdge,
-            IncludeFunding = s.FuturesIncludeFunding,
-            LiveEquityPerExchangeUsd = body.LiveEquityPerExchangeUsd > 0 ? body.LiveEquityPerExchangeUsd : prev.LiveEquityPerExchangeUsd,
-            LiveMarginUsageFraction = body.LiveMarginUsageFraction > 0 ? body.LiveMarginUsageFraction : prev.LiveMarginUsageFraction,
-            LiveMaxNotionalUsd = body.LiveMaxNotionalUsd > 0 ? body.LiveMaxNotionalUsd : prev.LiveMaxNotionalUsd,
-            LiveMaxOpenPositions = body.LiveMaxOpenPositions > 0 ? body.LiveMaxOpenPositions : prev.LiveMaxOpenPositions,
-            LiveStopLossUsd = body.LiveStopLossUsd != 0 ? body.LiveStopLossUsd : prev.LiveStopLossUsd,
-            LiveDailyLossLimitUsd = prev.LiveDailyLossLimitUsd,
-            PaperStartingQuote = s.PaperStartingQuote > 0 ? s.PaperStartingQuote : prev.PaperStartingQuote,
-            MinGrossSpreadPercent = s.MinGrossSpreadPercent > 0 ? s.MinGrossSpreadPercent : prev.MinGrossSpreadPercent,
-            MinTakeProfitUsd = s.MinTakeProfitUsd > 0 ? s.MinTakeProfitUsd : prev.MinTakeProfitUsd,
-            MinSpreadPersistMs = s.MinSpreadPersistMs > 0 ? s.MinSpreadPersistMs : prev.MinSpreadPersistMs,
-            MaxBookAgeMs = s.MaxBookAgeMs > 0 ? s.MaxBookAgeMs : prev.MaxBookAgeMs,
-            ScanIntervalMs = s.ScanIntervalMs >= 100 ? s.ScanIntervalMs : prev.ScanIntervalMs,
-            FuturesMaxHoldSeconds = s.FuturesMaxHoldSeconds,
-            SpatialScalpMode = s.SpatialScalpMode,
-            RequireSpreadingEdge = s.RequireSpreadingEdge,
-            PaperCloseFeeFactor = s.PaperCloseFeeFactor > 0 ? s.PaperCloseFeeFactor : prev.PaperCloseFeeFactor,
-            OpenEdgeBufferPercent = s.OpenEdgeBufferPercent,
-            RequireDepthFullFill = s.RequireDepthFullFill,
-            MinDepthScoreForUniverse = s.MinDepthScoreForUniverse > 0 ? s.MinDepthScoreForUniverse : prev.MinDepthScoreForUniverse,
-            MaxLegsPerVenue = s.MaxLegsPerVenue > 0 ? s.MaxLegsPerVenue : prev.MaxLegsPerVenue,
-            MaxWidthExpansionPercent = s.MaxWidthExpansionPercent > 0 ? s.MaxWidthExpansionPercent : prev.MaxWidthExpansionPercent,
-            DynamicSymbols = s.DynamicSymbols,
-            DynamicTopN = s.DynamicTopN > 0 ? s.DynamicTopN : prev.DynamicTopN,
-            DynamicMinQuoteVolumeUsd = s.DynamicMinQuoteVolumeUsd > 0 ? s.DynamicMinQuoteVolumeUsd : prev.DynamicMinQuoteVolumeUsd,
-            DynamicMaxQuoteVolumeUsd = s.DynamicMaxQuoteVolumeUsd > 0 ? s.DynamicMaxQuoteVolumeUsd : prev.DynamicMaxQuoteVolumeUsd,
-            DynamicRefreshMinutes = s.DynamicRefreshMinutes > 0 ? s.DynamicRefreshMinutes : prev.DynamicRefreshMinutes
-        });
-        return Results.Ok(new { saved = true, appliedRuntime = true, risk = risk.Snapshot });
+        return Results.Ok(new { saved = false, appliedRuntime = true, note = "Use Save all (trading) to persist local-settings.json", risk = risk.Snapshot });
     });
 
     app.MapGet("/api/settings/risk", (RuntimeRiskConfig risk) => Results.Json(new

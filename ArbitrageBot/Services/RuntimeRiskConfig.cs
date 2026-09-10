@@ -39,7 +39,7 @@ public sealed class RuntimeRiskConfig
             _opts.FuturesStopLossUsd = t.FuturesStopLossUsd;
             _opts.FuturesDailyLossLimitUsd = t.FuturesDailyLossLimitUsd;
 
-            if (t.MaxHoldMinutes > 0) _opts.FuturesMaxHoldMinutes = t.MaxHoldMinutes;
+            if (t.MaxHoldMinutes >= 0) _opts.FuturesMaxHoldMinutes = t.MaxHoldMinutes;
             if (t.CloseBelowNetPercent >= 0) _opts.FuturesCloseBelowNetPercent = t.CloseBelowNetPercent;
             if (t.MaxMarginUsagePercent > 0)
                 _opts.FuturesMaxMarginUsagePercent = Math.Clamp(t.MaxMarginUsagePercent, 0.05m, 0.9m);
