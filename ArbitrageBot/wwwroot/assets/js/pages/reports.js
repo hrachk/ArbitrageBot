@@ -144,7 +144,12 @@ AB.pages.reports = {
     const el = (id) => AB.$(id);
     if (el('r_paper_realized')) el('r_paper_realized').innerHTML = AB.fmtUsd(fp.realizedPnlUsd ?? fp.realizedPnl);
     if (el('r_day'))            el('r_day').innerHTML            = AB.fmtUsd(fp.dailyRealizedPnlUsd);
-    if (el('r_paper_closes'))   el('r_paper_closes').textContent = fp.tradeCount ?? fp.tradeAttempts ?? 0;
+    if (el('r_paper_closes')) {
+      const closedN = Array.isArray(trades)
+        ? trades.filter(t => /clos/i.test(String(t.status || t.Status || ''))).length
+        : 0;
+      el('r_paper_closes').textContent = closedN || fp.closedCount || fp.tradeCount || 0;
+    }
     if (el('r_paper_open'))     el('r_paper_open').textContent   = pos.length;
     if (el('r_lev'))            el('r_lev').textContent          = (fp.leverage || 5) + 'x';
     if (el('r_stop'))           el('r_stop').textContent         = fp.stopLossUsd ?? '—';
@@ -296,7 +301,7 @@ AB.pages.reports = {
   // ── Multi-day table ──────────────────────────────────────────────────────
   async loadDays() {
     try {
-      const days = await AB.api.get('/api/analytics/days?maxDays=10');
+      const days = await AB.api.get('/api/analytics/days?maxDays=60');
       const body = AB.$('r_daysBody');
       if (!body) return;
       body.innerHTML = (days || []).map(d => {
@@ -324,7 +329,7 @@ AB.pages.reports = {
     k1.innerHTML = '<div class="empty">Loading…</div>';
     try {
       const p      = await AB.api.get('/api/analytics/performance?days=' + d);
-      const trades = await AB.api.get('/api/analytics/trades?take=60');
+      const trades = await AB.api.get('/api/analytics/trades?take=250');
       const kpi = (label, val, cls) =>
         `<div class="kpi" style="margin:0"><div class="kpi-l">${label}</div>
          <div class="mono ${cls||''}" style="font-size:18px;font-weight:700;margin-top:6px">${val}</div></div>`;
@@ -366,18 +371,43 @@ AB.pages.reports = {
         const daily = p.daily || [];
         cal.innerHTML = daily.length ? daily.map(d0 => {
           const n  = Number(d0.pnl) || 0;
-          const bg = n > 0 ? 'rgba(34,197,94,0.18)' : (n < 0 ? 'rgba(239,68,68,0.18)' : 'rgba(148,163,184,0.1)');
+          const tr = Number(d0.trades || d0.Trades || 0);
+          const sc = Number(d0.scans || 0);
+          const active = d0.hasActivity || tr > 0 || sc > 0;
+          const bg = n > 0 ? 'rgba(34,197,94,0.18)' : (n < 0 ? 'rgba(239,68,68,0.18)' : (active ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.05)'));
           const dayLbl = (d0.day || d0.Day || '').toString().slice(5);
-          return `<div class="day-cell" style="background:${bg}" title="${d0.day || ''}: ${n >= 0 ? '+' : ''}${AB.fmt(n, 2)} USDT">
+          const tip = (d0.day || '') + ': PnL ' + (n >= 0 ? '+' : '') + AB.fmt(n, 2) +
+            ' · closes ' + tr + ' · scans ' + sc + ' · opens ' + (d0.opens || 0);
+          return `<div class="day-cell" style="background:${bg};opacity:${active ? 1 : 0.55}" title="${tip}">
             <div class="muted" style="font-size:10px">${dayLbl}</div>
-            <div class="mono ${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}" style="font-size:12px;font-weight:600">${n >= 0 ? '+' : ''}${AB.fmt(n, 1)}</div>
-            <div class="muted" style="font-size:10px">${d0.trades || d0.Trades || 0}t</div>
+            <div class="mono ${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}" style="font-size:12px;font-weight:600">${active ? ((n >= 0 ? '+' : '') + AB.fmt(n, 1)) : '·'}</div>
+            <div class="muted" style="font-size:9px">${tr ? tr + 't' : (sc ? sc + 's' : '—')}</div>
           </div>`;
         }).join('') : '<div class="empty">No daily data</div>';
+        if (p.fromUtc) {
+          const sub = AB.$('perfCurveSub');
+          if (sub) sub.textContent = (p.equityCurve && p.equityCurve.length ? p.equityCurve.length + ' pts · ' : '') +
+            p.fromUtc + ' → ' + (p.toUtc || '') + ' · ' + d + 'D';
+        }
       }
 
       const tc = AB.$('tableCount');
-      if (tc) tc.textContent = (Array.isArray(trades) ? trades.length : 0) + ' trades';
+      if (tc) tc.textContent = (Array.isArray(trades) ? trades.length : 0) + ' trades (ledger)';
+      let note = AB.$('perfDataNote');
+      if (!note) {
+        const box = AB.$('perfTrades');
+        if (box && box.parentElement) {
+          note = document.createElement('div');
+          note.id = 'perfDataNote';
+          note.className = 'muted';
+          note.style.cssText = 'font-size:11px;margin:8px 0 4px;line-height:1.4';
+          box.parentElement.insertBefore(note, box);
+        }
+      }
+      if (note) {
+        note.innerHTML = 'Журнал: <code>data/paper/trades-ledger.json</code> · дни: <code>daily-YYYY-MM-DD.json</code><br>' +
+          (p.note || '') + (p.fromUtc ? ' · окно ' + p.fromUtc + ' → ' + p.toUtc : '');
+      }
 
       // Trades table
       const box  = AB.$('perfTrades');

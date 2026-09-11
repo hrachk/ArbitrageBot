@@ -321,6 +321,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
 
     public IReadOnlyList<object> GetDaySummaries(int maxDays = 14)
     {
+        maxDays = Math.Clamp(maxDays, 1, 90);
         var list = new List<object>();
         if (!Directory.Exists(_dir)) return list;
         foreach (var file in Directory.GetFiles(_dir, "daily-*.json").OrderByDescending(f => f).Take(maxDays))
@@ -485,18 +486,81 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             else { consecW = 0; consecL = 0; }
         }
 
-        // daily calendar
-        var byDay = pnls.GroupBy(x => x.closedAt.Date)
-            .Select(g => new
+        // daily calendar — every UTC day in [since..today], merge ledger + daily-*.json
+        var ledgerByDay = pnls.GroupBy(x => x.closedAt.Date)
+            .ToDictionary(
+                g => g.Key,
+                g => (
+                    pnl: Math.Round(g.Sum(x => x.pnl), 4),
+                    trades: g.Count(),
+                    wins: g.Count(x => x.pnl > 0),
+                    losses: g.Count(x => x.pnl < 0)
+                ));
+
+        var fileByDay = new Dictionary<DateTime, (int scans, int opens, int closes, int skips, decimal filePnl)>();
+        try
+        {
+            if (Directory.Exists(_dir))
             {
-                day = g.Key.ToString("yyyy-MM-dd"),
-                pnl = Math.Round(g.Sum(x => x.pnl), 4),
-                trades = g.Count(),
-                wins = g.Count(x => x.pnl > 0),
-                losses = g.Count(x => x.pnl < 0)
-            })
-            .OrderBy(x => x.day)
-            .ToList();
+                foreach (var file in Directory.GetFiles(_dir, "daily-*.json"))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                        var root = doc.RootElement;
+                        string? dayStr = null;
+                        if (root.TryGetProperty("dayUtc", out var du) && du.ValueKind == JsonValueKind.String)
+                            dayStr = du.GetString();
+                        else if (root.TryGetProperty("DayUtc", out var du2) && du2.ValueKind == JsonValueKind.String)
+                            dayStr = du2.GetString();
+                        else
+                            dayStr = Path.GetFileNameWithoutExtension(file).Replace("daily-", "");
+                        if (!DateTime.TryParse(dayStr, out var dayDt)) continue;
+                        dayDt = DateTime.SpecifyKind(dayDt.Date, DateTimeKind.Utc);
+                        if (dayDt < since) continue;
+
+                        int scans = 0, opens = 0, closesF = 0, skips = 0;
+                        if (root.TryGetProperty("scans", out var sc) && sc.TryGetInt32(out var sci)) scans = sci;
+                        else if (root.TryGetProperty("Scans", out var sc2) && sc2.TryGetInt32(out var sci2)) scans = sci2;
+                        if (root.TryGetProperty("opens", out var op) && op.TryGetInt32(out var opi)) opens = opi;
+                        else if (root.TryGetProperty("Opens", out var op2) && op2.TryGetInt32(out var opi2)) opens = opi2;
+                        if (root.TryGetProperty("closes", out var cl) && cl.TryGetInt32(out var cli)) closesF = cli;
+                        else if (root.TryGetProperty("Closes", out var cl2) && cl2.TryGetInt32(out var cli2)) closesF = cli2;
+                        if (root.TryGetProperty("skips", out var sk) && sk.TryGetInt32(out var ski)) skips = ski;
+                        else if (root.TryGetProperty("Skips", out var sk2) && sk2.TryGetInt32(out var ski2)) skips = ski2;
+                        decimal filePnl = 0;
+                        if (root.TryGetProperty("realizedPnlUsd", out var rp) && rp.TryGetDecimal(out var rpd)) filePnl = rpd;
+                        else if (root.TryGetProperty("RealizedPnlUsd", out var rp2) && rp2.TryGetDecimal(out var rpd2)) filePnl = rpd2;
+                        fileByDay[dayDt] = (scans, opens, closesF, skips, filePnl);
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+
+        var byDayList = new List<object>();
+        for (var d = since.Date; d <= DateTime.UtcNow.Date; d = d.AddDays(1))
+        {
+            ledgerByDay.TryGetValue(d, out var lg);
+            fileByDay.TryGetValue(d, out var ff);
+            var pnl = lg.trades > 0 ? lg.pnl : Math.Round(ff.filePnl, 4);
+            var trades = lg.trades > 0 ? lg.trades : ff.closes;
+            byDayList.Add(new
+            {
+                day = d.ToString("yyyy-MM-dd"),
+                pnl,
+                trades,
+                wins = lg.wins,
+                losses = lg.losses,
+                scans = ff.scans,
+                opens = ff.opens,
+                closes = lg.trades > 0 ? lg.trades : ff.closes,
+                skips = ff.skips,
+                hasActivity = lg.trades > 0 || ff.scans > 0 || ff.opens > 0 || ff.closes > 0
+            });
+        }
+        var byDay = byDayList;
 
         var best = pnls.OrderByDescending(x => x.pnl).FirstOrDefault();
         var worst = pnls.OrderBy(x => x.pnl).FirstOrDefault();
@@ -526,7 +590,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             consecLoss = maxCL,
             equityCurve = curve,
             daily = byDay,
-            note = "Built from data/paper/trades-ledger.json closed rows. Equity curve = cumulative realized (not mark-to-market)."
+            note = "Journal: data/paper/trades-ledger.json · daily-YYYY-MM-DD.json · Calendar = every day in range. Equity = cumulative realized closes."
         };
     }
 

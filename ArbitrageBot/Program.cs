@@ -390,8 +390,8 @@ try
     app.MapGet("/api/analytics/events", (IPaperAnalyticsStore a, int take = 80) => Results.Json(a.GetRecentEvents(take)));
     app.MapGet("/api/analytics/skips", (IPaperAnalyticsStore a, int take = 40) => Results.Json(a.GetRecentSkips(take)));
     app.MapGet("/api/analytics/performance", (IPaperAnalyticsStore a, int days = 7) => Results.Json(a.GetPerformanceReport(days)));
-    app.MapGet("/api/analytics/trades", (IPaperAnalyticsStore a, int take = 80) => Results.Json(a.GetTradeDetails(take)));
-    app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 14) => Results.Json(a.GetDaySummaries(maxDays)));
+    app.MapGet("/api/analytics/trades", (IPaperAnalyticsStore a, int take = 200) => Results.Json(a.GetTradeDetails(take)));
+    app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 60) => Results.Json(a.GetDaySummaries(maxDays)));
 
 // ─── Live trading control (Phase 1: gate + verify, no orders) ───
     app.MapGet("/api/live/status", (LiveTradingGuard guard) => Results.Ok(guard.Status()));
