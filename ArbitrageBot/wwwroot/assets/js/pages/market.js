@@ -16,6 +16,8 @@ AB.pages.market = {
   _chartSeries: {},    // ex → LineSeries
   _tvContainer: null,
   _lastFundingLoad: 0,
+  obDepth: 15,
+  _obMaxH: 380,
 
   // ── Entry point from SignalR ──────────────────────────────────────────────
   render(data) {
@@ -195,7 +197,7 @@ AB.pages.market = {
 
     const asksEl = document.getElementById('ob-asks');
     if (asksEl) {
-      const rows = asks.slice(0, 10).reverse();
+      const rows = asks.slice(0, this.obDepth).reverse();
       asksEl.innerHTML = rows.length ? rows.map(r => {
         const pct = Math.min(95, (r.q / maxQ) * 100);
         return `<div class="ob-row">
@@ -209,7 +211,7 @@ AB.pages.market = {
 
     const bidsEl = document.getElementById('ob-bids');
     if (bidsEl) {
-      bidsEl.innerHTML = bids.slice(0, 10).length ? bids.slice(0, 10).map(r => {
+      bidsEl.innerHTML = bids.slice(0, this.obDepth).length ? bids.slice(0, this.obDepth).map(r => {
         const pct = Math.min(95, (r.q / maxQ) * 100);
         return `<div class="ob-row">
           <div class="ob-bar bid-bar" style="width:${pct.toFixed(0)}%"></div>
@@ -869,13 +871,90 @@ AB.pages.market = {
     this._chromeBound = true;
     const layout = document.getElementById('m_layout');
     if (!layout) return;
-    // restore widths
+    // restore widths / depth / heights
     try {
       const L = localStorage.getItem('ab_m_left');
       const R = localStorage.getItem('ab_m_right');
+      const D = localStorage.getItem('ab_ob_depth');
+      const H = localStorage.getItem('ab_ob_max_h');
       if (L) document.documentElement.style.setProperty('--m-left', L + 'px');
       if (R) document.documentElement.style.setProperty('--m-right', R + 'px');
+      if (D) this.obDepth = Math.min(25, Math.max(5, parseInt(D, 10) || 15));
+      if (H) {
+        this._obMaxH = Math.min(560, Math.max(120, parseInt(H, 10) || 380));
+        document.documentElement.style.setProperty('--ob-max-h', this._obMaxH + 'px');
+      } else {
+        document.documentElement.style.setProperty('--ob-max-h', '380px');
+      }
     } catch (_) {}
+    document.querySelectorAll('.ob-d-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.getAttribute('data-depth'), 10) === this.obDepth);
+      btn.addEventListener('click', () => {
+        this.obDepth = parseInt(btn.getAttribute('data-depth'), 10) || 15;
+        document.querySelectorAll('.ob-d-btn').forEach(b =>
+          b.classList.toggle('active', parseInt(b.getAttribute('data-depth'), 10) === this.obDepth));
+        try { localStorage.setItem('ab_ob_depth', String(this.obDepth)); } catch (_) {}
+        this.renderOrderBook(AB.state && AB.state.snapshot || {});
+      });
+    });
+    // vertical resize order book
+    const obRes = document.getElementById('obVResizer');
+    if (obRes && !obRes._bound) {
+      obRes._bound = true;
+      obRes.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        obRes.classList.add('dragging');
+        const startY = e.clientY;
+        const startH = this._obMaxH || 380;
+        const onMove = (ev) => {
+          const h = Math.min(560, Math.max(120, startH + (ev.clientY - startY)));
+          this._obMaxH = h;
+          document.documentElement.style.setProperty('--ob-max-h', h + 'px');
+        };
+        const onUp = () => {
+          obRes.classList.remove('dragging');
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          try { localStorage.setItem('ab_ob_max_h', String(this._obMaxH)); } catch (_) {}
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
+    // vertical resize chart / bottom
+    const rowRes = document.getElementById('m_rowResizer');
+    if (rowRes && !rowRes._bound) {
+      rowRes._bound = true;
+      rowRes.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        rowRes.classList.add('dragging');
+        const center = document.getElementById('m_centerCol');
+        if (!center) return;
+        const startY = e.clientY;
+        const rect = center.getBoundingClientRect();
+        const onMove = (ev) => {
+          const y = ev.clientY - rect.top;
+          const pct = Math.min(0.75, Math.max(0.28, y / rect.height));
+          center.style.gridTemplateRows =
+            `minmax(120px, ${pct}fr) 6px minmax(120px, ${1 - pct}fr)`;
+        };
+        const onUp = () => {
+          rowRes.classList.remove('dragging');
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          try {
+            localStorage.setItem('ab_m_chart_split', center.style.gridTemplateRows || '');
+          } catch (_) {}
+          try { this.paintOverlayChart(AB.state && AB.state.snapshot || {}); } catch (_) {}
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      try {
+        const saved = localStorage.getItem('ab_m_chart_split');
+        if (saved) document.getElementById('m_centerCol').style.gridTemplateRows = saved;
+      } catch (_) {}
+    }
 
     document.querySelectorAll('.col-resizer').forEach(handle => {
       handle.addEventListener('mousedown', (e) => {

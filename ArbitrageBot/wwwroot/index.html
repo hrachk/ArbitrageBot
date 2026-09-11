@@ -208,22 +208,31 @@
             <!-- LEFT: Order book -->
             <div class="left-col" id="m_leftCol">
               <div class="panel-hd">
-                <span class="ph-title">📖 Стакан заявок</span>
+                <span class="ph-title">📖 Стакан</span>
                 <span class="ph-sub" id="obSym">—</span>
+              </div>
+              <div class="ob-depth-bar">
+                <span class="ob-depth-lbl">Глубина</span>
+                <div class="ob-depth-btns" id="obDepthBtns">
+                  <button type="button" class="ob-d-btn" data-depth="5">5</button>
+                  <button type="button" class="ob-d-btn" data-depth="10">10</button>
+                  <button type="button" class="ob-d-btn active" data-depth="15">15</button>
+                  <button type="button" class="ob-d-btn" data-depth="20">20</button>
+                  <button type="button" class="ob-d-btn" data-depth="25">25</button>
+                </div>
               </div>
               <!-- Exchange tabs -->
               <div class="ex-tabs" id="m_exTabs"></div>
-              <!-- Asks -->
-              <div class="ob-wrap">
+              <!-- Asks / mid / bids — height limited so footer stays on screen -->
+              <div class="ob-wrap" id="obWrap">
                 <div class="ob-asks" id="ob-asks"></div>
-                <!-- Mid price -->
                 <div class="ob-mid">
                   <span class="ob-price" id="ob-mid-price">—</span>
                   <span class="ob-spread" id="ob-spread">спред —</span>
                 </div>
-                <!-- Bids -->
                 <div class="ob-bids" id="ob-bids"></div>
               </div>
+              <div class="ob-v-resizer" id="obVResizer" title="Потяни — высота стакана"></div>
               <!-- Bid/Ask imbalance bar -->
               <div class="ob-imbalance" style="padding:6px 10px;border-top:1px solid var(--b);flex-shrink:0">
                 <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-bottom:3px">
@@ -267,8 +276,9 @@
                 </div>
               </div>
 
+              <div class="row-resizer" id="m_rowResizer" title="Потяни — высота графика / панелей"></div>
               <!-- Bottom 3 panels -->
-              <div class="bottom-area">
+              <div class="bottom-area" id="m_bottomArea">
 
                 <!-- Arb scanner -->
                 <div class="bottom-panel">
