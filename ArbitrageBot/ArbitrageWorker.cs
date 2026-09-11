@@ -144,9 +144,13 @@ public class ArbitrageWorker : BackgroundService
                         pairs);
                 }
 
-                // Periodic symbol universe refresh (config DynamicRefreshMinutes)
-                var refreshMin = _runtime.Snapshot.DynamicRefreshMinutes > 0 ? _runtime.Snapshot.DynamicRefreshMinutes : (_options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0);
-                if (_options.DynamicSymbols && refreshMin > 0 &&
+                // Periodic symbol universe refresh — interval from Settings (runtime)
+                var snap = _runtime.Snapshot;
+                var dynamicOn = snap.DynamicSymbols || _options.DynamicSymbols;
+                var refreshMin = snap.DynamicRefreshMinutes > 0
+                    ? snap.DynamicRefreshMinutes
+                    : (_options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0);
+                if (dynamicOn && refreshMin > 0 &&
                     (DateTime.UtcNow - _lastSymbolRefreshUtc).TotalMinutes >= refreshMin)
                 {
                     await TryRefreshUniverseAsync(stoppingToken);
@@ -594,7 +598,8 @@ public class ArbitrageWorker : BackgroundService
     private async Task RefreshSymbolsAsync(CancellationToken ct)
     {
         IReadOnlyList<DiscoveredSymbol> discovered;
-        if (_options.DynamicSymbols)
+        var useDynamic = _runtime.Snapshot.DynamicSymbols || _options.DynamicSymbols;
+        if (useDynamic)
         {
             var discResult = await _discovery.DiscoverAsync(_markets.Exchanges, ct);
             discovered = discResult.Symbols;
