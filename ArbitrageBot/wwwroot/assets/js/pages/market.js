@@ -59,6 +59,7 @@ AB.pages.market = {
     }
 
     this.bindOnce(data);
+    this.initLayoutChrome();
   },
 
   // ── Symbol tabs ───────────────────────────────────────────────────────────
@@ -862,6 +863,68 @@ AB.pages.market = {
   },
 
   // ── Bind events once ──────────────────────────────────────────────────────
+
+  initLayoutChrome() {
+    if (this._chromeBound) return;
+    this._chromeBound = true;
+    const layout = document.getElementById('m_layout');
+    if (!layout) return;
+    // restore widths
+    try {
+      const L = localStorage.getItem('ab_m_left');
+      const R = localStorage.getItem('ab_m_right');
+      if (L) document.documentElement.style.setProperty('--m-left', L + 'px');
+      if (R) document.documentElement.style.setProperty('--m-right', R + 'px');
+    } catch (_) {}
+
+    document.querySelectorAll('.col-resizer').forEach(handle => {
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const side = handle.getAttribute('data-resize');
+        handle.classList.add('dragging');
+        const startX = e.clientX;
+        const left0 = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--m-left')) || 260;
+        const right0 = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--m-right')) || 260;
+        const onMove = (ev) => {
+          if (side === 'left') {
+            const w = Math.min(420, Math.max(180, left0 + (ev.clientX - startX)));
+            document.documentElement.style.setProperty('--m-left', w + 'px');
+          } else {
+            const w = Math.min(420, Math.max(180, right0 - (ev.clientX - startX)));
+            document.documentElement.style.setProperty('--m-right', w + 'px');
+          }
+        };
+        const onUp = () => {
+          handle.classList.remove('dragging');
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          try {
+            localStorage.setItem('ab_m_left', parseInt(getComputedStyle(document.documentElement).getPropertyValue('--m-left')) || 260);
+            localStorage.setItem('ab_m_right', parseInt(getComputedStyle(document.documentElement).getPropertyValue('--m-right')) || 260);
+          } catch (_) {}
+          // redraw chart
+          try { this.paintOverlayChart(AB.state.snapshot || {}); } catch (_) {}
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
+
+    document.querySelectorAll('.m-mob-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.m-mob-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tab = btn.getAttribute('data-mtab') || 'chart';
+        layout.classList.remove('mtab-book', 'mtab-chart', 'mtab-trade', 'mtab-panels');
+        layout.classList.add('mtab-' + tab);
+      });
+    });
+    // default mobile tab
+    if (window.matchMedia('(max-width:800px)').matches) {
+      layout.classList.add('mtab-chart');
+    }
+  },
+
   bindOnce(data) {
     if (this._bound) return;
     this._bound = true;

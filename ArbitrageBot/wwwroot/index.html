@@ -197,10 +197,16 @@
           </div>
 
           <!-- ══ MAIN LAYOUT ══ -->
-          <div class="layout">
+          <div class="m-mobile-tabs" id="m_mobileTabs">
+            <button type="button" class="m-mob-tab active" data-mtab="book">Стакан</button>
+            <button type="button" class="m-mob-tab" data-mtab="chart">График</button>
+            <button type="button" class="m-mob-tab" data-mtab="trade">Сделка</button>
+            <button type="button" class="m-mob-tab" data-mtab="panels">Панели</button>
+          </div>
+          <div class="layout" id="m_layout">
 
             <!-- LEFT: Order book -->
-            <div class="left-col">
+            <div class="left-col" id="m_leftCol">
               <div class="panel-hd">
                 <span class="ph-title">📖 Стакан заявок</span>
                 <span class="ph-sub" id="obSym">—</span>
@@ -219,7 +225,7 @@
                 <div class="ob-bids" id="ob-bids"></div>
               </div>
               <!-- Bid/Ask imbalance bar -->
-              <div style="padding:6px 10px;border-top:1px solid var(--b)">
+              <div class="ob-imbalance" style="padding:6px 10px;border-top:1px solid var(--b);flex-shrink:0">
                 <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--t3);margin-bottom:3px">
                   <span>🟢 Покупатели</span><span>Продавцы 🔴</span>
                 </div>
@@ -228,20 +234,21 @@
                 </div>
                 <div style="font-size:9px;color:var(--t3);margin-top:2px;text-align:center" id="m_depthLbl">—</div>
               </div>
-              <!-- Best arb for this symbol -->
-              <div style="padding:10px;border-top:1px solid var(--b)">
-                <div style="font-size:10px;font-weight:700;color:var(--t2);margin-bottom:6px">⚡ Лучший арбитраж</div>
-                <div style="font-size:11px;color:var(--t2);margin-bottom:2px" id="m_liveRoute">Нет данных</div>
-                <div style="font-family:var(--mono);font-size:18px;font-weight:800;color:var(--green);margin-bottom:8px" id="liveEdge">—</div>
-                <button type="button" class="arb-exec" id="m_oneClick" disabled
-                  style="width:100%;padding:7px;font-size:12px;font-weight:700">
-                  ⚡ Открыть хедж одним кликом
+              <!-- Best arb + one-click — always visible footer -->
+              <div class="left-footer">
+                <div class="left-footer-label">⚡ Лучший арбитраж</div>
+                <div class="left-footer-route" id="m_liveRoute">Нет данных</div>
+                <div class="left-footer-edge" id="liveEdge">—</div>
+                <button type="button" class="btn-one-click" id="m_oneClick" disabled title="Открыть хедж по лучшему route">
+                  ⚡ Одним кликом
                 </button>
               </div>
             </div>
 
+            <div class="col-resizer" data-resize="left" title="Drag to resize"></div>
+
             <!-- CENTER: Chart + panels -->
-            <div class="center-col">
+            <div class="center-col" id="m_centerCol">
               <!-- Chart area -->
               <div class="chart-area" style="position:relative;overflow:hidden">
                 <div class="chart-hd">
@@ -304,8 +311,10 @@
               </div>
             </div>
 
+            <div class="col-resizer" data-resize="right" title="Drag to resize"></div>
+
             <!-- RIGHT: Trade panel -->
-            <div class="right-col">
+            <div class="right-col" id="m_rightCol">
               <div style="padding:10px 12px;border-bottom:1px solid var(--b)">
                 <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px">📋 Открыть хедж вручную</div>
                 <div style="font-size:10px;color:var(--t3)">Хедж = LONG на одной бирже + SHORT на другой одновременно</div>
