@@ -226,7 +226,9 @@ try
                 paperStartingQuote = snap.PaperStartingQuote,
                 liveEquity = snap.LiveEquityPerExchangeUsd,
                 minProfitPercent = snap.MinProfitPercent,
-                minGross = snap.MinGrossSpreadPercent
+                minGross = snap.MinGrossSpreadPercent,
+                dynamicTopN = snap.DynamicTopN,
+                dynamicMinVol = snap.DynamicMinQuoteVolumeUsd
             }
         });
     });

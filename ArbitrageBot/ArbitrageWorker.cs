@@ -145,7 +145,7 @@ public class ArbitrageWorker : BackgroundService
                 }
 
                 // Periodic symbol universe refresh (config DynamicRefreshMinutes)
-                var refreshMin = _options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0;
+                var refreshMin = _runtime.Snapshot.DynamicRefreshMinutes > 0 ? _runtime.Snapshot.DynamicRefreshMinutes : (_options.DynamicRefreshMinutes > 0 ? _options.DynamicRefreshMinutes : 0);
                 if (_options.DynamicSymbols && refreshMin > 0 &&
                     (DateTime.UtcNow - _lastSymbolRefreshUtc).TotalMinutes >= refreshMin)
                 {
@@ -620,9 +620,11 @@ public class ArbitrageWorker : BackgroundService
         if (symbols.Count == 0)
             symbols = ["DOGEUSDT", "ADAUSDT", "SUIUSDT", "NEARUSDT"];
 
-        // Futures: prefer fewer highly liquid names
-        if (_options.IsFuturesCross && symbols.Count > _options.DynamicTopN)
-            symbols = symbols.Take(_options.DynamicTopN).ToList();
+        // Futures: Top N from runtime Settings (local-settings), not frozen appsettings
+        var topN = _runtime.Snapshot.DynamicTopN > 0 ? _runtime.Snapshot.DynamicTopN : _options.DynamicTopN;
+        if (topN <= 0) topN = 12;
+        if (_options.IsFuturesCross && symbols.Count > topN)
+            symbols = symbols.Take(topN).ToList();
 
         // Pin open hedge symbols so discovery churn does not ForceClose them at a fee loss
         try
@@ -648,6 +650,12 @@ public class ArbitrageWorker : BackgroundService
 
         _markets.SetSymbols(symbols, discovered);
         _state.Symbols = _markets.Symbols;
+        var snapRt = _runtime.Snapshot;
+        var minV = snapRt.DynamicMinQuoteVolumeUsd > 0 ? snapRt.DynamicMinQuoteVolumeUsd : 8_000_000m;
+        var maxV = snapRt.DynamicMaxQuoteVolumeUsd > 0 ? snapRt.DynamicMaxQuoteVolumeUsd : 500_000_000m;
+        _state.StrategyNote = snapRt.IsFuturesCross
+            ? $"REALISTIC PAPER (= live gates): LONG cheap / SHORT rich. Min open {snapRt.MinProfitPercent:0.##}%, require RT edge, full fill, lev {snapRt.FuturesPaperLeverage:0.#}x, size {snapRt.QuoteSize:0}. Sparse signals expected. Stats valid for live decision.\nhttp-tickers+depth — band {minV/1_000_000m:0}M–{maxV/1_000_000m:0}M; ≥2 venues; depth≥trade size; top-{topN}"
+            : _state.StrategyNote;
         try
         {
             // Only prune if symbol still missing after pin (should be rare)

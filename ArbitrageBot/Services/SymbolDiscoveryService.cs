@@ -16,6 +16,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
 {
     private readonly IExchangeRestClient _rest;
     private readonly ArbitrageOptions _options;
+    private readonly RuntimeRiskConfig _runtime;
     private readonly ILogger<SymbolDiscoveryService> _logger;
     private readonly HttpClient _http;
 
@@ -44,11 +45,13 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
     public SymbolDiscoveryService(
         IExchangeRestClient rest,
         IOptions<ArbitrageOptions> options,
+        RuntimeRiskConfig runtime,
         ILogger<SymbolDiscoveryService> logger,
         IHttpClientFactory? httpFactory = null)
     {
         _rest = rest;
         _options = options.Value;
+        _runtime = runtime;
         _logger = logger;
         _http = httpFactory?.CreateClient("discovery") ?? new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
         if (!_http.DefaultRequestHeaders.UserAgent.Any())
@@ -68,6 +71,15 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         }
     }
 
+
+    private ArbitrageOptions Eff => _runtime?.Snapshot ?? _options;
+
+    private int EffectiveTopN()
+    {
+        var n = Eff.DynamicTopN;
+        return n > 0 ? n : 12;
+    }
+
     public async Task<DiscoveryResult> DiscoverAsync(
         IReadOnlyList<string> exchanges,
         CancellationToken ct = default)
@@ -78,9 +90,9 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         ExchangeParameters.SetStaticParameter("GateIo", "SettleAsset", "usdt");
         ExchangeParameters.SetStaticParameter("GateIO", "SettleAsset", "usdt");
 
-        var topN = _options.DynamicTopN > 0 ? _options.DynamicTopN : 10;
-        var minVol = _options.DynamicMinQuoteVolumeUsd > 0 ? _options.DynamicMinQuoteVolumeUsd : 3_000_000m;
-        var maxVol = _options.DynamicMaxQuoteVolumeUsd > 0 ? _options.DynamicMaxQuoteVolumeUsd : 600_000_000m;
+        var topN = EffectiveTopN();
+        var minVol = Eff.DynamicMinQuoteVolumeUsd > 0 ? Eff.DynamicMinQuoteVolumeUsd : 3_000_000m;
+        var maxVol = Eff.DynamicMaxQuoteVolumeUsd > 0 ? Eff.DynamicMaxQuoteVolumeUsd : 600_000_000m;
         var excluded = ExcludedBases;
 
         _logger.LogInformation(
@@ -126,7 +138,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             return RotatingFallback("rank empty after filters — rotating arb pool", topN);
 
         // Depth score on trade size (Binance public book) — prefer pairs that actually fill
-        var target = _options.QuoteSize > 0 ? _options.QuoteSize : 180m;
+        var target = Eff.QuoteSize > 0 ? Eff.QuoteSize : 180m;
         ranked = await EnrichAndRankByDepthAsync(ranked, target, topN, ct);
         ranked = MergeCoreArbWatchlist(ranked, volumes, topN);
 
@@ -170,7 +182,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
         var have = new HashSet<string>(result.Select(r => r.Symbol), StringComparer.OrdinalIgnoreCase);
         foreach (var sym in CoreArbWatchlist)
         {
-            if (result.Count >= Math.Max(topN, 12)) break;
+            if (result.Count >= topN) break;
             if (have.Contains(sym)) continue;
             if (!volumes.TryGetValue(sym, out var byEx) || byEx.Count < 2) continue;
             var vols = byEx.Values.OrderBy(v => v).ToList();
@@ -194,7 +206,7 @@ public class SymbolDiscoveryService : ISymbolDiscoveryService
             .OrderByDescending(x => x.ExchangeCount)
             .ThenByDescending(x => x.DepthScore)
             .ThenByDescending(x => x.MedianQuoteVolume)
-            .Take(Math.Max(topN, 12))
+            .Take(topN)
             .ToList();
     }
 
