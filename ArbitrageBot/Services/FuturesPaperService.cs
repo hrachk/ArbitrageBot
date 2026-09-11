@@ -24,7 +24,6 @@ public class FuturesPaperService : IFuturesPaperService
     private readonly List<FuturesPaperTrade> _trades = [];
     private DateTime _lastOpenUtc;
     private DateTime _lastCloseUtc = DateTime.MinValue;
-    private readonly Dictionary<string, DateTime> _symbolCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
 
     public decimal RealizedPnlUsd { get; private set; }
     public decimal UnrealizedHintUsd { get; set; }
@@ -115,17 +114,6 @@ public class FuturesPaperService : IFuturesPaperService
     {
         lock (_lock)
         {
-            // Symbol cooldown after recent close — stops BZ-style sticky re-entry loops
-            if (_symbolCooldownUntil.TryGetValue(opp.Symbol, out var until) && until > DateTime.UtcNow)
-            {
-                _logger.LogDebug("Skip {Sym}: cooldown until {Until:HH:mm:ss} UTC", opp.Symbol, until);
-                return null;
-            }
-            // Purge expired
-            foreach (var k in _symbolCooldownUntil.Where(kv => kv.Value <= DateTime.UtcNow).Select(kv => kv.Key).ToList())
-                _symbolCooldownUntil.Remove(k);
-
-
             TradeAttempts++;
             if (!R.PaperTrading) return Fail(opp, "Paper disabled");
             if (R.IsExcludedSymbol(opp.Symbol))
@@ -325,9 +313,6 @@ public class FuturesPaperService : IFuturesPaperService
             RealizedPnlUsd += pnl;
             if (DateTime.UtcNow.Date != _dayUtc) { _dayUtc = DateTime.UtcNow.Date; DailyRealizedPnlUsd = 0; }
             DailyRealizedPnlUsd += pnl;
-            _lastCloseUtc = DateTime.UtcNow;
-            var cdMinFc = R.SpatialScalpMode ? 12 : 8;
-            _symbolCooldownUntil[pos.Symbol] = DateTime.UtcNow.AddMinutes(cdMinFc);
             _positions.Remove(pos);
 
             FuturesPaperTrade? closedTrade = null;
@@ -470,40 +455,29 @@ public class FuturesPaperService : IFuturesPaperService
                 var convergeProfit = widthConverged && pnl >= minTpScaled * 0.85m;
                 var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.55m;
 
-                var holdSec = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds;
                 var timedOut = false;
                 if (R.FuturesMaxHoldSeconds > 0)
-                    timedOut = holdSec >= R.FuturesMaxHoldSeconds;
+                    timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds >= R.FuturesMaxHoldSeconds;
                 else if (R.FuturesMaxHoldMinutes > 0)
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesMaxHoldMinutes;
 
-                // Soft harvest: timeout + already green enough
+                // Soft clock: only exit if already at real TP — never "timeout at 0"
                 var timeoutHarvest = timedOut && pnl >= minTpScaled;
 
-                // Scalp / max-hold: do NOT glue to sticky basis (e.g. GateIo BZ premium).
-                // After MaxHoldSeconds exit if not deep red (allow small loss ≤ 35% of min TP).
-                var scalpMode = R.SpatialScalpMode || R.FuturesMaxHoldSeconds > 0;
-                var maxHoldExit = timedOut && scalpMode && pnl >= -minTpScaled * 0.35m;
-
-                // Stale sticky: 3× max hold still open and not at stop → flatten (basis never converged)
-                var staleHold = R.FuturesMaxHoldSeconds > 0
-                    && holdSec >= R.FuturesMaxHoldSeconds * 3
-                    && !stopHit;
-
+                // Hard clock: off by default (0). If set, still require not worse than -tiny fee dust
+                // unless stop already hit. We do NOT force red exits.
                 var hardTimedOut = R.FuturesHardMaxHoldMinutes > 0
                     && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesHardMaxHoldMinutes;
+                // Even hard hold only flattens if flat-or-green OR stop — never forced red dump
                 var hardExit = hardTimedOut && pnl >= 0m;
 
-                if (!stopHit && !convergeProfit && !earlyTp && !timeoutHarvest && !maxHoldExit && !staleHold && !hardExit)
+                if (!stopHit && !convergeProfit && !earlyTp && !timeoutHarvest && !hardExit)
                     continue;
 
                 var reason = stopHit ? "stop-loss"
                     : earlyTp || (takeProfit && widthConverged) ? "take-profit"
                     : convergeProfit ? "converge"
-                    : timeoutHarvest ? "timeout-harvest"
-                    : maxHoldExit ? "timeout-scalp"
-                    : staleHold ? "timeout-stale"
-                    : hardExit ? "timeout-hard"
+                    : timeoutHarvest || hardExit ? "timeout-harvest"
                     : "converge";
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd
@@ -524,9 +498,6 @@ public class FuturesPaperService : IFuturesPaperService
                 }
                 DailyRealizedPnlUsd += pnl;
                 _lastCloseUtc = DateTime.UtcNow;
-            // Avoid immediately re-opening the same sticky symbol (esp. GateIo basis names)
-            var cdMin = R.SpatialScalpMode ? 12 : 8;
-            _symbolCooldownUntil[pos.Symbol] = DateTime.UtcNow.AddMinutes(cdMin);
                 _positions.Remove(pos);
 
                 var trade = _trades.FirstOrDefault(t => t.Id == pos.TradeId);
@@ -548,8 +519,6 @@ public class FuturesPaperService : IFuturesPaperService
                             "timeout-hard" => "Closed(timeout-hard)",
                             "timeout" => "Closed(timeout)",
                             "timeout-harvest" => "Closed(timeout-harvest)",
-                            "timeout-scalp" => "Closed(timeout-scalp)",
-                            "timeout-stale" => "Closed(timeout-stale)",
                             _ => "Closed(converge)"
                         },
                         Message = $"PnL {pnl:F4} (legs-fees) openFee={openFees:F2} closeFee={closeFees:F2} | {reason}"
