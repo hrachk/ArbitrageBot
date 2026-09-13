@@ -1129,3 +1129,25 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
   font-size:12px;line-height:1.5;color:var(--t2);
 }
 .scr-brush-box b{color:var(--text)}
+
+
+/* Market — Ёршик chip on chart */
+.m-brush-wrap {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 4px 10px; border-radius: 8px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148,163,184,0.12);
+  font-size: 11px; max-width: 280px;
+}
+.m-brush-ico { font-size: 13px; }
+.m-brush-reg {
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 7px; border-radius: 5px; font-size: 10px;
+  background: rgba(100,116,139,0.25); color: #94a3b8;
+}
+.m-brush-reg.brush { background: rgba(45,212,191,0.18); color: #2dd4bf; }
+.m-brush-reg.watch { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.m-brush-reg.trend { background: rgba(248,113,113,0.15); color: #f87171; }
+.m-brush-reg.cold  { background: rgba(100,116,139,0.2); color: #64748b; }
+.m-brush-score { font-variant-numeric: tabular-nums; color: #e2e8f0; font-weight: 600; }
+.m-brush-range { color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 10px; }

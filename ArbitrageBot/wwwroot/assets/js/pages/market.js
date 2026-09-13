@@ -52,6 +52,7 @@ AB.pages.market = {
     this.renderPositions(data);
     this.renderCompare(data);
     this.paintOverlayChart(data);
+    this.updateBrushChip(data);
     this.updateTradePanel(data);
 
     // Funding: load once per minute max
@@ -729,6 +730,88 @@ AB.pages.market = {
     }
   },
 
+
+  // ── Ёршик (MM range) chip + levels on chart ─────────────────────────────
+  _brushMidHist: {},
+  _brushMax: 180,
+
+  pushBrushMid(sym, mid) {
+    if (!sym || !(mid > 0)) return;
+    const h = this._brushMidHist[sym] || (this._brushMidHist[sym] = []);
+    const now = Date.now();
+    const last = h[h.length - 1];
+    if (!last || now - last.t >= 250) {
+      h.push({ t: now, m: mid });
+      while (h.length > this._brushMax) h.shift();
+    } else last.m = mid;
+  },
+
+  scoreBrushLocal(sym) {
+    // Reuse Screener engine if loaded
+    if (AB.pages.screener && typeof AB.pages.screener.scoreBrush === 'function') {
+      const scr = AB.pages.screener;
+      const h = this._brushMidHist[sym] || [];
+      // sync samples into screener hist for consistent score
+      h.forEach(p => { if (scr.pushMidSample) scr.pushMidSample(sym, p.m); });
+      return scr.scoreBrush(sym);
+    }
+    const h = this._brushMidHist[sym] || [];
+    const ms = h.map(x => x.m).filter(m => m > 0);
+    const n = ms.length;
+    if (n < 12) return { score: 0, rangePct: 0, regime: 'cold', note: 'копим…', hi: 0, lo: 0, mid: 0 };
+    let hi = ms[0], lo = ms[0];
+    for (const m of ms) { if (m > hi) hi = m; if (m < lo) lo = m; }
+    const mid = (hi + lo) / 2;
+    const rangePct = mid > 0 ? ((hi - lo) / mid) * 100 : 0;
+    let osc = 0;
+    for (let i = 2; i < n; i++) {
+      const d0 = ms[i - 1] - ms[i - 2], d1 = ms[i] - ms[i - 1];
+      if (d0 && d1 && d0 * d1 < 0) osc++;
+    }
+    const trend = (hi - lo) > 0 ? Math.abs(ms[n - 1] - ms[0]) / (hi - lo) : 1;
+    let score = Math.min(100, Math.round(
+      (rangePct >= 0.08 && rangePct <= 1.2 ? 30 : rangePct <= 2.5 ? 18 : 6) +
+      Math.min(35, (osc / Math.max(1, n - 2)) * 120) +
+      Math.max(0, 15 * (1 - Math.min(1, trend)))
+    ));
+    if (n < 30) score = Math.round(score * (0.55 + 0.45 * (n / 30)));
+    let regime = 'cold';
+    if (score >= 70 && trend < 0.55 && rangePct >= 0.1) regime = 'brush';
+    else if (score >= 55) regime = 'watch';
+    else if (trend > 0.75 && rangePct > 0.3) regime = 'trend';
+    return { score, rangePct, regime, hi, lo, mid };
+  },
+
+  updateBrushChip(data) {
+    const sym = this.selected;
+    if (!sym) return;
+    const books = this.booksFor(data, sym);
+    const mids = Object.keys(books).map(ex => {
+      const b = books[ex] || {};
+      const bid = Number(b.bestBid), ask = Number(b.bestAsk);
+      return (bid > 0 && ask > 0) ? (bid + ask) / 2 : 0;
+    }).filter(m => m > 0);
+    if (mids.length) {
+      const avg = mids.reduce((a, b) => a + b, 0) / mids.length;
+      this.pushBrushMid(sym, avg);
+    }
+    const b = this.scoreBrushLocal(sym);
+    this._lastBrush = b;
+    const reg = document.getElementById('m_brushReg');
+    const sc = document.getElementById('m_brushScore');
+    const rg = document.getElementById('m_brushRange');
+    if (reg) {
+      reg.textContent = b.regime || '—';
+      reg.className = 'm-brush-reg ' + (b.regime || 'cold');
+    }
+    if (sc) sc.textContent = (b.score != null ? b.score : '—') + (b.score != null ? ' pts' : '');
+    if (rg) {
+      rg.textContent = b.rangePct > 0
+        ? ('range ' + b.rangePct.toFixed(2) + '%')
+        : 'wait data';
+    }
+  },
+
   // ── Multi-venue overlay chart (canvas) ────────────────────────────────────
   paintOverlayChart(data) {
     const canvas = document.getElementById('mainChart');
@@ -830,6 +913,26 @@ AB.pages.market = {
       ctx.font = '9px JetBrains Mono,monospace';
       ctx.fillText(s.ex.slice(0, 2).toUpperCase() + ' ' + this.fmtP(last.mid), 8, 14 + i * 11);
     });
+
+    // Ёршик range levels (hi / lo / mid of corridor)
+    const br = this._lastBrush;
+    if (br && br.hi > 0 && br.lo > 0 && br.hi > br.lo) {
+      const drawLvl = (price, label, col) => {
+        const y = yOf(price);
+        if (y < 4 || y > h - 4) return;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col;
+        ctx.font = '9px JetBrains Mono,monospace';
+        ctx.fillText(label + ' ' + this.fmtP(price), w - 88, y - 3);
+      };
+      drawLvl(br.hi, 'Hi', 'rgba(248,113,113,0.75)');
+      drawLvl(br.lo, 'Lo', 'rgba(52,211,153,0.75)');
+      if (br.mid > 0) drawLvl(br.mid, 'Mid', 'rgba(148,163,184,0.45)');
+    }
 
     // Cross-venue delta top-right
     if (series.length >= 2) {
