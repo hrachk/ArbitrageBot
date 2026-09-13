@@ -415,15 +415,18 @@
 
       <!-- SCREENER -->
       <section class="page" data-page="screener">
-        <div class="banner info">
-          <b>Market screener</b> — pairs ranked by activity intensity (volume, cross-venue gap, depth, arb signal).
-          Select a row for live mid chart and venue breakdown.
+        <div class="banner info" id="scr_banner">
+          <b>Market screener</b> — <span id="scr_bannerText">intensity / cross-Δ / arb. Переключите режим «Ёршик» для поиска пилы MM в коридоре.</span>
+        </div>
+        <div class="scr-mode-row" id="scr_modeRow">
+          <button type="button" class="scr-mode-btn active" data-mode="intensity">⚡ Intensity / Arb</button>
+          <button type="button" class="scr-mode-btn" data-mode="brush">🪥 Ёршик (MM range)</button>
         </div>
         <div class="scr-kpi-row">
           <div class="kpi"><div class="kpi-l">Tracked</div><div class="kpi-v" id="scr_n">0</div></div>
-          <div class="kpi"><div class="kpi-l">Hot (≥70)</div><div class="kpi-v" id="scr_hot" style="color:#fbbf24">0</div></div>
-          <div class="kpi"><div class="kpi-l">Max cross Δ</div><div class="kpi-v" id="scr_maxDelta">—</div></div>
-          <div class="kpi"><div class="kpi-l">With arb signal</div><div class="kpi-v pos" id="scr_arbN">0</div></div>
+          <div class="kpi"><div class="kpi-l" id="scr_hotLbl">Hot (≥70)</div><div class="kpi-v" id="scr_hot" style="color:#fbbf24">0</div></div>
+          <div class="kpi"><div class="kpi-l" id="scr_kpi3l">Max cross Δ</div><div class="kpi-v" id="scr_maxDelta">—</div></div>
+          <div class="kpi"><div class="kpi-l" id="scr_kpi4l">With arb signal</div><div class="kpi-v pos" id="scr_arbN">0</div></div>
         </div>
         <div class="scr-filters">
           <input type="search" id="scr_q" placeholder="Filter symbol…" style="min-width:140px"/>
@@ -433,12 +436,18 @@
           <label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center">
             <input type="checkbox" id="scr_depth"/> Depth ≥ 1×
           </label>
+          <label class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center" id="scr_brushOnlyWrap" hidden>
+            <input type="checkbox" id="scr_brushOnly"/> Только brush ≥ 55
+          </label>
           <select id="scr_sort">
             <option value="intensity">Sort: Intensity</option>
+            <option value="brush">Sort: Brush score</option>
             <option value="delta">Sort: Cross Δ</option>
             <option value="vol">Sort: Volume</option>
             <option value="net">Sort: Arb net</option>
             <option value="depth">Sort: Depth</option>
+            <option value="range">Sort: Range %</option>
+            <option value="osc">Sort: Oscillations</option>
           </select>
           <span class="muted mono" id="scr_hint" style="margin-left:auto;font-size:11px"></span>
         </div>
@@ -448,18 +457,22 @@
             <div class="scr-table-wrap">
               <table class="scr-table">
                 <thead>
-                  <tr>
-                    <th data-k="intensity">Intensity</th>
+                  <tr id="scr_thead">
+                    <th data-k="intensity">Score</th>
                     <th data-k="symbol">Symbol</th>
                     <th data-k="venues">Venues</th>
                     <th data-k="vol">Vol 24h</th>
                     <th data-k="depth">Depth×</th>
                     <th data-k="delta">Cross Δ</th>
                     <th data-k="net">Arb net</th>
+                    <th data-k="brush" class="scr-col-brush" hidden>Brush</th>
+                    <th data-k="range" class="scr-col-brush" hidden>Range%</th>
+                    <th data-k="osc" class="scr-col-brush" hidden>Osc</th>
+                    <th data-k="regime" class="scr-col-brush" hidden>Regime</th>
                   </tr>
                 </thead>
                 <tbody id="scr_body">
-                  <tr><td colspan="7" class="empty">Waiting for market data…</td></tr>
+                  <tr><td colspan="11" class="empty">Waiting for market data…</td></tr>
                 </tbody>
               </table>
             </div>
@@ -474,8 +487,9 @@
               <canvas id="scr_chart" width="480" height="200" style="width:100%;height:200px;display:block"></canvas>
             </div>
             <div id="scr_meta" class="muted" style="margin-top:12px;font-size:13px;line-height:1.55">
-              Click a row to plot live mids across exchanges and see intensity breakdown.
+              Click a row to plot live mids. Режим <b>Ёршик</b> — score пилы MM (коридор, развороты, без тренда).
             </div>
+            <div id="scr_brushBox" class="scr-brush-box" hidden></div>
             <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
               <button type="button" class="btn primary" id="scr_toMarket" disabled>Open in Market</button>
             </div>

@@ -2,9 +2,85 @@ AB.pages = AB.pages || {};
 AB.pages.screener = {
   selected: '',
   sortKey: 'intensity',
+  mode: 'intensity',
+  _midHist: {},
+  _maxHist: 180,
   hist: {},
   colors: ['#2dd4bf', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#34d399'],
   rows: [],
+
+
+  /** Push mid sample for brush detector (call every snapshot). */
+  pushMidSample(symbol, mid) {
+    if (!symbol || !(mid > 0)) return;
+    const h = this._midHist[symbol] || (this._midHist[symbol] = []);
+    h.push({ t: Date.now(), m: mid });
+    const max = this._maxHist || 180;
+    if (h.length > max) h.splice(0, h.length - max);
+  },
+
+  /**
+   * Ёршик / MM-range score 0–100 from mid path.
+   * High score = tight corridor + many reversals + weak net trend (пила).
+   */
+  scoreBrush(symbol) {
+    const h = this._midHist[symbol] || [];
+    const ms = h.map(x => x.m).filter(m => m > 0);
+    const n = ms.length;
+    if (n < 12) {
+      return { score: 0, rangePct: 0, osc: 0, cross: 0, trend: 1, samples: n, regime: 'cold', note: 'мало точек — копим историю mid' };
+    }
+    let hi = ms[0], lo = ms[0];
+    for (const m of ms) { if (m > hi) hi = m; if (m < lo) lo = m; }
+    const mid = (hi + lo) / 2;
+    const range = hi - lo;
+    const rangePct = mid > 0 ? (range / mid) * 100 : 0;
+    let osc = 0;
+    for (let i = 2; i < n; i++) {
+      const d0 = ms[i - 1] - ms[i - 2];
+      const d1 = ms[i] - ms[i - 1];
+      if (d0 === 0 || d1 === 0) continue;
+      if (d0 * d1 < 0) osc++;
+    }
+    let cross = 0;
+    for (let i = 1; i < n; i++) {
+      if ((ms[i - 1] - mid) * (ms[i] - mid) < 0) cross++;
+    }
+    const trend = range > 0 ? Math.abs(ms[n - 1] - ms[0]) / range : 1;
+
+    // Ideal brush: range ~0.12%–2.0%, high osc/cross density, low trend
+    let rangeScore = 0;
+    if (rangePct >= 0.08 && rangePct <= 2.5) {
+      rangeScore = rangePct <= 1.2 ? 30 : 22;
+    } else if (rangePct > 2.5 && rangePct <= 4) rangeScore = 10;
+    else if (rangePct > 0 && rangePct < 0.08) rangeScore = 6;
+
+    const dens = osc / Math.max(1, n - 2);
+    const oscScore = Math.min(35, dens * 120);
+    const crossScore = Math.min(20, (cross / Math.max(1, n - 1)) * 80);
+    const trendScore = Math.max(0, 15 * (1 - Math.min(1, trend)));
+
+    let score = Math.round(Math.min(100, rangeScore + oscScore + crossScore + trendScore));
+    // penalty tiny history
+    if (n < 30) score = Math.round(score * (0.55 + 0.45 * (n / 30)));
+
+    let regime = 'cold';
+    let note = '';
+    if (score >= 70 && trend < 0.55 && rangePct >= 0.1) {
+      regime = 'brush';
+      note = 'пила в коридоре — кандидат на ёршик (лимиты у краёв диапазона)';
+    } else if (score >= 55) {
+      regime = 'watch';
+      note = 'похож на range — наблюдайте стакан / подтвердите глазом';
+    } else if (trend > 0.75 && rangePct > 0.3) {
+      regime = 'trend';
+      note = 'скорее тренд/импульс, не классический ёршик';
+    } else {
+      regime = 'cold';
+      note = 'слабо выраженный коридор или мало движения';
+    }
+    return { score, rangePct, osc, cross, trend, samples: n, regime, note, hi, lo, mid };
+  },
 
   render(data) {
     if (!data) return;
@@ -83,6 +159,13 @@ AB.pages.screener = {
       const arbScore = Math.min(15, Math.max(0, net) * 25);
       const intensity = Math.round(Math.min(100, volScore + deltaScore + depthScore + arbScore));
 
+      // mid for brush path: average of venue mids
+      const avgMid = mids.length
+        ? mids.reduce((s, x) => s + x.mid, 0) / mids.length
+        : 0;
+      this.pushMidSample(S, avgMid);
+      const brush = this.scoreBrush(S);
+
       return {
         symbol: S,
         intensity,
@@ -93,7 +176,18 @@ AB.pages.screener = {
         crossDelta,
         net,
         route: arb ? arb.route : '',
-        mids
+        mids,
+        brush: brush.score,
+        rangePct: brush.rangePct,
+        osc: brush.osc,
+        crossN: brush.cross,
+        trend: brush.trend,
+        regime: brush.regime,
+        brushNote: brush.note,
+        brushSamples: brush.samples,
+        rangeHi: brush.hi,
+        rangeLo: brush.lo,
+        rangeMid: brush.mid
       };
     });
   },
@@ -106,12 +200,18 @@ AB.pages.screener = {
     if (q) rows = rows.filter(r => r.symbol.includes(q));
     if (multi) rows = rows.filter(r => r.venues >= 2);
     if (depthOnly) rows = rows.filter(r => r.depth >= 1);
+    const brushOnly = AB.$('scr_brushOnly')?.checked;
+    if (this.mode === 'brush' && brushOnly) rows = rows.filter(r => (r.brush || 0) >= 55);
     const sk = AB.$('scr_sort')?.value || this.sortKey;
     this.sortKey = sk;
     const dir = -1;
     rows.sort((a, b) => {
-      const keys = { intensity: 'intensity', delta: 'crossDelta', vol: 'vol', net: 'net', depth: 'depth', symbol: 'symbol' };
-      const k = keys[sk] || 'intensity';
+      const keys = {
+        intensity: 'intensity', brush: 'brush', delta: 'crossDelta', vol: 'vol',
+        net: 'net', depth: 'depth', range: 'rangePct', osc: 'osc', symbol: 'symbol'
+      };
+      let k = keys[sk] || 'intensity';
+      if (this.mode === 'brush' && sk === 'intensity') k = 'brush';
       if (k === 'symbol') return a.symbol.localeCompare(b.symbol);
       return (Number(a[k]) - Number(b[k])) * dir;
     });
@@ -121,29 +221,83 @@ AB.pages.screener = {
   paintKpis() {
     const rows = this._view || [];
     if (AB.$('scr_n')) AB.$('scr_n').textContent = String(rows.length);
-    if (AB.$('scr_hot')) AB.$('scr_hot').textContent = String(rows.filter(r => r.intensity >= 70).length);
-    const maxD = rows.reduce((m, r) => Math.max(m, r.crossDelta || 0), 0);
-    if (AB.$('scr_maxDelta')) AB.$('scr_maxDelta').textContent = maxD ? maxD.toFixed(3) + '%' : '—';
-    if (AB.$('scr_arbN')) AB.$('scr_arbN').textContent = String(rows.filter(r => r.net > 0).length);
-    if (AB.$('scr_hint')) {
-      AB.$('scr_hint').textContent = (this._data && this._data.discoverySource)
-        ? ('discovery: ' + this._data.discoverySource)
-        : '';
+    if (this.mode === 'brush') {
+      if (AB.$('scr_hotLbl')) AB.$('scr_hotLbl').textContent = 'Brush ≥70';
+      if (AB.$('scr_kpi3l')) AB.$('scr_kpi3l').textContent = 'Best brush';
+      if (AB.$('scr_kpi4l')) AB.$('scr_kpi4l').textContent = 'Watch ≥55';
+      if (AB.$('scr_hot')) AB.$('scr_hot').textContent = String(rows.filter(r => (r.brush || 0) >= 70).length);
+      const best = rows.reduce((m, r) => Math.max(m, r.brush || 0), 0);
+      if (AB.$('scr_maxDelta')) AB.$('scr_maxDelta').textContent = best ? String(best) : '—';
+      if (AB.$('scr_arbN')) AB.$('scr_arbN').textContent = String(rows.filter(r => (r.brush || 0) >= 55).length);
+      if (AB.$('scr_bannerText')) AB.$('scr_bannerText').textContent =
+        'ёршик: коридор + развороты mid (live). Не автоторговля — только детекция. Откройте в Market и смотрите стакан.';
+    } else {
+      if (AB.$('scr_hotLbl')) AB.$('scr_hotLbl').textContent = 'Hot (≥70)';
+      if (AB.$('scr_kpi3l')) AB.$('scr_kpi3l').textContent = 'Max cross Δ';
+      if (AB.$('scr_kpi4l')) AB.$('scr_kpi4l').textContent = 'With arb signal';
+      if (AB.$('scr_hot')) AB.$('scr_hot').textContent = String(rows.filter(r => r.intensity >= 70).length);
+      const maxD = rows.reduce((m, r) => Math.max(m, r.crossDelta || 0), 0);
+      if (AB.$('scr_maxDelta')) AB.$('scr_maxDelta').textContent = maxD ? maxD.toFixed(3) + '%' : '—';
+      if (AB.$('scr_arbN')) AB.$('scr_arbN').textContent = String(rows.filter(r => r.net > 0).length);
+      if (AB.$('scr_bannerText')) AB.$('scr_bannerText').textContent =
+        'intensity / cross-Δ / arb. Режим «Ёршик» — поиск пилы MM в коридоре.';
     }
+    if (AB.$('scr_hint')) {
+      const nHist = Object.keys(this._midHist || {}).length;
+      AB.$('scr_hint').textContent = ((this._data && this._data.discoverySource)
+        ? ('discovery: ' + this._data.discoverySource + ' · ') : '') +
+        'mid hist ' + nHist + ' sym · mode ' + this.mode;
+    }
+    // column visibility
+    document.querySelectorAll('.scr-col-brush').forEach(el => {
+      el.hidden = this.mode !== 'brush';
+    });
+    const bow = AB.$('scr_brushOnlyWrap');
+    if (bow) bow.hidden = this.mode !== 'brush';
   },
 
+
+  paintBrushDetail(r) {
+    const box = AB.$('scr_brushBox');
+    if (!box) return;
+    if (this.mode !== 'brush' || !r) {
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    box.hidden = false;
+    const lo = r.rangeLo != null ? Number(r.rangeLo) : 0;
+    const hi = r.rangeHi != null ? Number(r.rangeHi) : 0;
+    const mid = r.rangeMid != null ? Number(r.rangeMid) : 0;
+    const levels = (hi > 0 && lo > 0)
+      ? ('<div class="mono" style="margin-top:6px">Lo ' + lo.toPrecision(6) +
+         ' · Mid ' + mid.toPrecision(6) + ' · Hi ' + hi.toPrecision(6) + '</div>')
+      : '';
+    box.innerHTML =
+      '<div style="font-weight:700;margin-bottom:6px;color:var(--accent)">Ёршик / MM range</div>' +
+      '<div><b>Score</b> ' + (r.brush || 0) + ' · <span class="scr-regime ' + (r.regime || '') + '">' +
+      (r.regime || '') + '</span></div>' +
+      '<div><b>Range</b> ' + (r.rangePct != null ? r.rangePct.toFixed(3) + '%' : '—') +
+      ' · osc ' + (r.osc || 0) + ' · cross mid ' + (r.crossN || 0) +
+      ' · trend ' + (r.trend != null ? r.trend.toFixed(2) : '—') +
+      ' · samples ' + (r.brushSamples || 0) + '</div>' + levels +
+      '<div style="margin-top:8px">' + (r.brushNote || '') + '</div>' +
+      '<div class="muted" style="margin-top:8px;font-size:11px">Как MetaScalp: Market → стакан → лимиты у краёв. Авто-ёршик пока не торгует.</div>';
+  },
   paintTable() {
     const body = AB.$('scr_body');
     if (!body) return;
     const rows = this._view || [];
+    const brushMode = this.mode === 'brush';
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty">No pairs match filters / waiting for books…</td></tr>';
+      body.innerHTML = '<tr><td colspan="11" class="empty">No pairs match filters / waiting for books…</td></tr>';
       return;
     }
-    const maxInt = Math.max(...rows.map(r => r.intensity), 1);
+    const maxInt = Math.max(...rows.map(r => brushMode ? (r.brush || 0) : r.intensity), 1);
     body.innerHTML = rows.map(r => {
-      const heat = r.intensity >= 70 ? 'hot' : (r.intensity >= 40 ? 'warm' : 'cool');
-      const w = Math.max(4, (r.intensity / maxInt) * 100);
+      const score = brushMode ? (r.brush || 0) : r.intensity;
+      const heat = score >= 70 ? 'hot' : (score >= 40 ? 'warm' : 'cool');
+      const w = Math.max(4, (score / maxInt) * 100);
       const act = r.symbol === this.selected ? ' active' : '';
       const dlt = r.crossDelta > 0
         ? '<span class="pos mono">+' + r.crossDelta.toFixed(3) + '%</span>'
@@ -153,15 +307,21 @@ AB.pages.screener = {
         : '<span class="muted">—</span>';
       const vol = r.vol >= 1e6 ? (r.vol / 1e6).toFixed(1) + 'M'
         : (r.vol >= 1e3 ? (r.vol / 1e3).toFixed(0) + 'K' : (r.vol ? r.vol.toFixed(0) : '—'));
+      const brushCols = brushMode
+        ? ('<td class="mono">' + (r.brush || 0) + '</td>' +
+           '<td class="mono">' + (r.rangePct != null ? r.rangePct.toFixed(2) + '%' : '—') + '</td>' +
+           '<td class="mono">' + (r.osc != null ? r.osc : '—') + '</td>' +
+           '<td><span class="scr-regime ' + (r.regime || 'cold') + '">' + (r.regime || 'cold') + '</span></td>')
+        : '';
       return '<tr class="scr-row' + act + '" data-sym="' + r.symbol + '">' +
-        '<td><div class="scr-heat ' + heat + '">' + r.intensity +
+        '<td><div class="scr-heat ' + heat + '">' + score +
         '</div><div class="scr-int-bar" style="margin-top:4px"><i style="width:' + w + '%"></i></div></td>' +
         '<td class="mono" style="font-weight:700;color:var(--blue)">' + r.symbol + '</td>' +
         '<td class="mono">' + r.venues + '</td>' +
         '<td class="mono">' + vol + '</td>' +
         '<td class="mono">' + (r.depth ? r.depth.toFixed(1) + '×' : '—') + '</td>' +
         '<td>' + dlt + '</td>' +
-        '<td>' + net + '</td></tr>';
+        '<td>' + net + '</td>' + brushCols + '</tr>';
     }).join('');
 
     body.querySelectorAll('tr.scr-row').forEach(tr => {
@@ -181,7 +341,13 @@ AB.pages.screener = {
     const meta = AB.$('scr_meta');
     const btn = AB.$('scr_toMarket');
     if (title) title.textContent = sym || 'Select a pair';
-    if (sub) sub.textContent = row ? ('intensity ' + row.intensity + ' · ' + row.venues + ' venues') : 'detail';
+    if (sub) {
+      if (!row) sub.textContent = 'detail';
+      else if (this.mode === 'brush')
+        sub.textContent = 'brush ' + (row.brush || 0) + ' · ' + (row.regime || '') + ' · ' + row.venues + ' venues';
+      else
+        sub.textContent = 'intensity ' + row.intensity + ' · ' + row.venues + ' venues';
+    }
     if (btn) {
       btn.disabled = !sym;
       btn.onclick = () => {
@@ -200,6 +366,7 @@ AB.pages.screener = {
     if (!row) {
       if (chips) chips.innerHTML = '';
       if (meta) meta.textContent = 'No data for this symbol.';
+      this.paintBrushDetail(null);
       this.drawChart(sym, []);
       return;
     }
@@ -220,6 +387,7 @@ AB.pages.screener = {
         (row.vol >= 1e6 ? (row.vol / 1e6).toFixed(1) + 'M' : row.vol || '—') + '</b>';
     }
     this.drawChart(sym, row.mids || []);
+    this.paintBrushDetail(row);
   },
 
   drawChart(sym, mids) {
@@ -302,7 +470,22 @@ AB.pages.screener = {
 
 document.addEventListener('DOMContentLoaded', () => {
   const bind = () => {
-    ['scr_q', 'scr_multi', 'scr_depth', 'scr_sort'].forEach(id => {
+    document.querySelectorAll('.scr-mode-btn').forEach(btn => {
+      if (btn._scrBound) return;
+      btn._scrBound = true;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.scr-mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        AB.pages.screener.mode = btn.getAttribute('data-mode') || 'intensity';
+        if (AB.pages.screener.mode === 'brush') {
+          const sel = document.getElementById('scr_sort');
+          if (sel) sel.value = 'brush';
+          AB.pages.screener.sortKey = 'brush';
+        }
+        if (AB.pages.screener._data) AB.pages.screener.render(AB.pages.screener._data);
+      });
+    });
+    ['scr_q', 'scr_multi', 'scr_depth', 'scr_brushOnly', 'scr_sort'].forEach(id => {
       const el = document.getElementById(id);
       if (!el || el._scrBound) return;
       el._scrBound = true;

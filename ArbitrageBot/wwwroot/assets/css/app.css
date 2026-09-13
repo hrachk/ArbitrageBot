@@ -1104,3 +1104,28 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 }
 .left-col .left-footer{ flex-shrink:0 !important; }
 .left-col .ob-imbalance{ flex-shrink:0 !important; }
+
+
+/* Screener modes + brush */
+.scr-mode-row{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.scr-mode-btn{
+  padding:8px 14px;border-radius:9px;border:1px solid var(--b);
+  background:var(--s1);color:var(--t2);font-size:12px;font-weight:700;cursor:pointer;
+}
+.scr-mode-btn:hover{border-color:var(--accent);color:var(--text)}
+.scr-mode-btn.active{
+  background:rgba(45,212,191,.12);border-color:rgba(45,212,191,.45);color:var(--accent);
+}
+.scr-regime{
+  display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:700;
+}
+.scr-regime.brush{background:rgba(45,212,191,.18);color:#2dd4bf}
+.scr-regime.watch{background:rgba(251,191,36,.15);color:#fbbf24}
+.scr-regime.trend{background:rgba(248,113,113,.15);color:#f87171}
+.scr-regime.cold{background:rgba(148,163,184,.12);color:#94a3b8}
+.scr-brush-box{
+  margin-top:12px;padding:12px;border-radius:10px;
+  border:1px solid rgba(45,212,191,.25);background:rgba(45,212,191,.06);
+  font-size:12px;line-height:1.5;color:var(--t2);
+}
+.scr-brush-box b{color:var(--text)}
