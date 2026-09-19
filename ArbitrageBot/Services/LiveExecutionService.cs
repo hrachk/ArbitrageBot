@@ -702,6 +702,112 @@ public sealed class LiveExecutionService : ILiveExecutionService
                     (lastErr ?? "Unauthorized") + " | tried: " + summary + hint50119 + " | usingKey=" + finger,
                     lastDetail, "OKX");
             }
+
+            // KuCoin Futures account overview (native). Needs API key + secret + passphrase.
+            if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+                || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+            {
+                var cred = _settings.GetCredential("Kucoin") ?? _settings.GetCredential("KuCoin");
+                var key = (cred?.ApiKey ?? "").Trim();
+                var secret = (cred?.ApiSecret ?? "").Trim();
+                var pass = (cred?.Passphrase ?? "").Trim();
+                if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(secret))
+                    return (false, [], "Kucoin key/secret missing — Settings → Exchange API keys → Save Kucoin", null, "Kucoin");
+                if (string.IsNullOrEmpty(pass))
+                    return (false, [], "Kucoin passphrase required (set when creating API key on kucoin.com, not account password)", null, "Kucoin");
+
+                string? lastErr = null, lastDetail = null;
+
+                // 1) Futures USDT overview
+                try
+                {
+                    var r = await rest.Kucoin.FuturesApi.Account.GetAccountOverviewAsync(asset: "USDT", ct: ct)
+                        .ConfigureAwait(false);
+                    if (r.Success && r.Data != null)
+                    {
+                        var d = r.Data;
+                        var asset = string.IsNullOrWhiteSpace(d.Asset) ? "USDT" : d.Asset;
+                        var avail = d.AvailableBalance != 0 ? d.AvailableBalance : (d.AvailableMargin ?? 0);
+                        var total = d.AccountEquity != 0 ? d.AccountEquity
+                            : (d.MarginBalance != 0 ? d.MarginBalance : avail);
+                        var list = new List<(string, decimal, decimal)>();
+                        if (total != 0 || avail != 0)
+                            list.Add((asset, avail, total));
+                        // Success even with zero — empty futures wallet is valid
+                        return (true, list, null, null, "Kucoin.Futures.AccountOverview");
+                    }
+                    lastErr = FormatErr(r.Error, r.OriginalData);
+                    lastDetail = Truncate(r.OriginalData);
+                    _logger.LogWarning("Kucoin futures overview fail: {E}", lastErr);
+                }
+                catch (Exception ex)
+                {
+                    lastErr = "FuturesOverview: " + ex.Message;
+                    _logger.LogWarning(ex, "Kucoin futures overview exception");
+                }
+
+                // 2) Spot accounts as supplemental (trade/main)
+                try
+                {
+                    var spot = await rest.Kucoin.SpotApi.Account.GetAccountsAsync(ct: ct).ConfigureAwait(false);
+                    if (spot.Success && spot.Data != null)
+                    {
+                        var list = spot.Data
+                            .Where(a => a.Available != 0 || a.Holds != 0 || a.Total != 0)
+                            .Select(a =>
+                            {
+                                var avail = a.Available;
+                                var total = a.Total != 0 ? a.Total : avail + a.Holds;
+                                return (a.Asset ?? "?", avail, total);
+                            })
+                            .OrderByDescending(x => x.Item3)
+                            .Take(40)
+                            .ToList();
+                        if (list.Count > 0)
+                            return (true, list, null, null, "Kucoin.Spot.Accounts");
+                    }
+                    else if (!spot.Success)
+                    {
+                        lastErr ??= FormatErr(spot.Error, spot.OriginalData);
+                        lastDetail ??= Truncate(spot.OriginalData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastErr = (lastErr ?? "") + " | SpotAccounts: " + ex.Message;
+                }
+
+                return (false, [],
+                    lastErr ?? "Kucoin balances failed",
+                    lastDetail,
+                    "Kucoin needs Futures read + passphrase; IP whitelist on kucoin.com API settings");
+            }
+
+            // Gate.io USDT-M futures balances (settle=usdt)
+            if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+                || exchange.Equals("GateIO", StringComparison.OrdinalIgnoreCase)
+                || exchange.Equals("Gate", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var r = await rest.GateIo.PerpetualFuturesApi.Account.GetAccountAsync("usdt", ct).ConfigureAwait(false);
+                    if (r.Success && r.Data != null)
+                    {
+                        var d = r.Data;
+                        var avail = d.Available;
+                        var total = d.Total != 0 ? d.Total : avail;
+                        var list = new List<(string, decimal, decimal)>();
+                        if (total != 0 || avail != 0)
+                            list.Add(("USDT", avail, total));
+                        return (true, list, null, null, "GateIo.PerpetualFutures");
+                    }
+                    return (false, [], FormatErr(r.Error, r.OriginalData), Truncate(r.OriginalData), "GateIo.PerpetualFutures");
+                }
+                catch (Exception ex)
+                {
+                    return (false, [], "GateIo native: " + ex.Message, null, "GateIo");
+                }
+            }
         }
         catch (Exception ex)
         {
