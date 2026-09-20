@@ -20,6 +20,13 @@ try
     Log.Information("Starting ArbitrageBot Web (WS order books + SignalR realtime)...");
 
     var builder = WebApplication.CreateBuilder(args);
+    // Published .exe ignores launchSettings.json — pin UI URL for console & double-click start.
+    // Override: set env ASPNETCORE_URLS or pass --urls http://0.0.0.0:5050
+    var listenUrl = builder.Configuration["Urls"]
+        ?? Environment.GetEnvironmentVariable("ASPNETCORE_URLS")
+        ?? "http://localhost:5050";
+    builder.WebHost.UseUrls(listenUrl.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
 
     builder.Host.UseSerilog((ctx, services, lc) => lc
         .ReadFrom.Configuration(ctx.Configuration)
@@ -570,7 +577,36 @@ try
     // Blazor terminal UI — root "/" = Dashboard
     //app.MapRazorComponents<ArbitrageBot.Components.App>()
     //    .AddInteractiveServerRenderMode();
+    // SPA fallback so refresh on /market etc. still serves index.html
+    app.MapFallbackToFile("index.html");
 
+    var openBrowser = app.Configuration.GetValue("OpenBrowserOnStart", true);
+    var uiUrl = listenUrl.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(u => u.Trim())
+        .FirstOrDefault(u => u.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        ?? "http://localhost:5050";
+    // Prefer localhost for browser even if listening on 0.0.0.0
+    if (uiUrl.Contains("0.0.0.0", StringComparison.OrdinalIgnoreCase))
+        uiUrl = uiUrl.Replace("0.0.0.0", "localhost", StringComparison.OrdinalIgnoreCase);
+
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        app.Logger.LogInformation("Web UI: {Url}  (open this in browser if it did not auto-launch)", uiUrl);
+        if (!openBrowser) return;
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = uiUrl,
+                UseShellExecute = true
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(ex, "Could not auto-open browser — open {Url} manually", uiUrl);
+        }
+    });
     await app.RunAsync();
 }
 catch (Exception ex)
