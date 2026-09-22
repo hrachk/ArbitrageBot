@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ArbitrageBot.Models;
 
 namespace ArbitrageBot.Services;
@@ -222,6 +224,8 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 longEntry = trade.LongEntry,
                 shortEntry = trade.ShortEntry,
                 realizedPnlUsd = pnl,
+                openFeesUsd = trade.OpenFeesUsd,
+                closeFeesUsd = trade.CloseFeesUsd ?? 0m,
                 holdMin,
                 message = trade.Message
             });
@@ -424,7 +428,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             }
         }
 
-        var pnls = new List<(DateTime closedAt, decimal pnl, double holdMin, string symbol, string status, string message)>();
+        var pnls = new List<(DateTime closedAt, decimal pnl, double holdMin, string symbol, string status, string message, decimal fees, decimal notional)>();
         foreach (var el in closed)
         {
             var pnl = el.TryGetProperty("realizedPnlUsd", out var p) && p.TryGetDecimal(out var pd) ? pd : 0m;
@@ -447,7 +451,32 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             var status = el.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";
             var msg = el.TryGetProperty("message", out var m) ? m.GetString() ?? "" :
                       (el.TryGetProperty("Message", out var m2) ? m2.GetString() ?? "" : "");
-            pnls.Add((closedAt, pnl, hold, sym, status, msg));
+
+            decimal openFee = 0, closeFee = 0;
+            if (el.TryGetProperty("openFeesUsd", out var of) && of.TryGetDecimal(out var ofd)) openFee = ofd;
+            else if (el.TryGetProperty("OpenFeesUsd", out var of2) && of2.TryGetDecimal(out var ofd2)) openFee = ofd2;
+            if (el.TryGetProperty("closeFeesUsd", out var cf) && cf.TryGetDecimal(out var cfd)) closeFee = cfd;
+            else if (el.TryGetProperty("CloseFeesUsd", out var cf2) && cf2.TryGetDecimal(out var cfd2)) closeFee = cfd2;
+            if (openFee == 0 && closeFee == 0 && !string.IsNullOrEmpty(msg))
+            {
+                var mo = Regex.Match(msg, @"openFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)", RegexOptions.IgnoreCase);
+                var mc = Regex.Match(msg, @"closeFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)", RegexOptions.IgnoreCase);
+                if (mo.Success && decimal.TryParse(mo.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var po))
+                    openFee = po;
+                if (mc.Success && decimal.TryParse(mc.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var pc))
+                    closeFee = pc;
+            }
+            var fees = openFee + closeFee;
+
+            decimal notional = 0;
+            if (el.TryGetProperty("baseQty", out var bq) && bq.TryGetDecimal(out var bqd)
+                && el.TryGetProperty("longEntry", out var le) && le.TryGetDecimal(out var led))
+                notional = Math.Abs(bqd * led);
+            else if (el.TryGetProperty("BaseQty", out var bq2) && bq2.TryGetDecimal(out var bqd2)
+                     && el.TryGetProperty("LongEntry", out var le2) && le2.TryGetDecimal(out var led2))
+                notional = Math.Abs(bqd2 * led2);
+
+            pnls.Add((closedAt, pnl, hold, sym, status, msg, fees, notional));
         }
 
         pnls = pnls.OrderBy(x => x.closedAt).ToList();
@@ -455,6 +484,12 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         var losses = pnls.Where(x => x.pnl < 0).ToList();
         var flats = pnls.Where(x => x.pnl == 0).ToList();
         var net = pnls.Sum(x => x.pnl);
+        var totalFees = pnls.Sum(x => x.fees);
+        // Gross ≈ legs price Δ before fees (Net = Gross − Fees ± Funding). Funding not stored → 0.
+        var grossPnl = net + totalFees;
+        var totalFunding = 0m;
+        // PaperStartingQuote default 10k × typical 4 venues; UI also shows % of this base.
+        const decimal equityBase = 40_000m;
         var grossWin = wins.Sum(x => x.pnl);
         var grossLoss = Math.Abs(losses.Sum(x => x.pnl));
         var winRate = pnls.Count > 0 ? (decimal)wins.Count / pnls.Count * 100m : 0;
@@ -565,6 +600,9 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         var best = pnls.OrderByDescending(x => x.pnl).FirstOrDefault();
         var worst = pnls.OrderBy(x => x.pnl).FirstOrDefault();
 
+        decimal Pct(decimal part, decimal whole) => whole == 0 ? 0 : Math.Round(part / whole * 100m, 4);
+        var avgNotional = pnls.Count > 0 ? pnls.Average(x => x.notional) : 0m;
+
         return new
         {
             mode = "PAPER",
@@ -572,6 +610,17 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             fromUtc = since.ToString("yyyy-MM-dd"),
             toUtc = DateTime.UtcNow.Date.ToString("yyyy-MM-dd"),
             netPnl = Math.Round(net, 4),
+            grossPnl = Math.Round(grossPnl, 4),
+            totalFees = Math.Round(totalFees, 4),
+            totalFunding = Math.Round(totalFunding, 4),
+            equityBase = equityBase,
+            netPctOfEquity = Pct(net, equityBase),
+            grossPctOfEquity = Pct(grossPnl, equityBase),
+            feesPctOfGross = Pct(totalFees, Math.Abs(grossPnl) > 0 ? Math.Abs(grossPnl) : 1),
+            fundingPctOfGross = Pct(totalFunding, Math.Abs(grossPnl) > 0 ? Math.Abs(grossPnl) : 1),
+            netPctOfGross = Pct(net, Math.Abs(grossPnl) > 0 ? Math.Abs(grossPnl) : 1),
+            maxDrawdownPct = Pct(maxDd, equityBase),
+            expectancyPctOfSize = avgNotional > 0 ? Pct(expectancy, avgNotional) : 0m,
             winRate = Math.Round(winRate, 2),
             totalTrades = pnls.Count,
             wins = wins.Count,
@@ -590,7 +639,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             consecLoss = maxCL,
             equityCurve = curve,
             daily = byDay,
-            note = "Journal: data/paper/trades-ledger.json · daily-YYYY-MM-DD.json · Calendar = every day in range. Equity = cumulative realized closes."
+            note = "Journal: data/paper/trades-ledger.json · Gross ≈ Net + Fees (funding not stored). % equity base = PaperStartingQuote×venues (~40k). Calendar = every day in range."
         };
     }
 

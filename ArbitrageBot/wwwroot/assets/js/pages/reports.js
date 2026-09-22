@@ -330,31 +330,59 @@ AB.pages.reports = {
     try {
       const p      = await AB.api.get('/api/analytics/performance?days=' + d);
       const trades = await AB.api.get('/api/analytics/trades?take=250');
-      const kpi = (label, val, cls) =>
+      const pctStr = (v, dig) => {
+        const n = Number(v);
+        if (!isFinite(n)) return '';
+        const s = (n > 0 ? '+' : '') + AB.fmt(n, dig ?? 2) + '%';
+        return s;
+      };
+      const kpi = (label, val, cls, sub) =>
         `<div class="kpi" style="margin:0"><div class="kpi-l">${label}</div>
-         <div class="mono ${cls||''}" style="font-size:18px;font-weight:700;margin-top:6px">${val}</div></div>`;
+         <div class="mono ${cls||''}" style="font-size:18px;font-weight:700;margin-top:6px;line-height:1.15">${val}</div>
+         ${sub ? `<div class="mono muted" style="font-size:11px;margin-top:3px;opacity:0.9">${sub}</div>` : ''}</div>`;
       const pn = (v, dig) => {
         const n = Number(v) || 0;
-        return { s: (n >= 0 ? '+' : '') + AB.fmt(n, dig ?? 2), cls: n > 0 ? 'pos' : (n < 0 ? 'neg' : '') };
+        return { s: (n >= 0 ? '+' : '') + AB.fmt(n, dig ?? 2), cls: n > 0 ? 'pos' : (n < 0 ? 'neg' : ''), n };
       };
       const net = pn(p.netPnl);
+      const gross = pn(p.grossPnl);
+      const fees = pn(-(Math.abs(Number(p.totalFees) || 0)));
+      const fund = pn(p.totalFunding);
+      const eqBase = Number(p.equityBase) || 40000;
+      const netEq = pctStr(p.netPctOfEquity);
+      const feeOfG = (Number(p.feesPctOfGross) || 0).toFixed(1) + '% of gross';
+      const fundOfG = pctStr(p.fundingPctOfGross, 1) + ' of gross';
+      const grossSub = '100% of gross · ' + pctStr(p.grossPctOfEquity) + ' eq';
       k1.innerHTML = [
-        kpi('NET PNL',      net.s + ' USDT', net.cls),
-        kpi('WIN RATE',     AB.fmt(p.winRate, 1) + '%', ''),
+        kpi('NET PNL', net.s + ' USDT', net.cls,
+          (netEq ? netEq + ' of equity' : '') +
+          (p.grossPnl != null
+            ? `<div style="margin-top:6px;font-size:11px;line-height:1.45;font-weight:500">
+                <span>Gross <b class="${gross.cls}">${gross.s}</b> <span class="muted">${grossSub}</span></span><br/>
+                <span>Fees <b class="neg">${fees.s}</b> <span class="muted">${feeOfG}</span></span><br/>
+                <span>Funding <b class="${fund.cls}">${fund.s}</b> <span class="muted">${fundOfG}</span></span>
+              </div>`
+            : '')),
+        kpi('WIN RATE', AB.fmt(p.winRate, 1) + '%', '',
+          (p.wins != null ? (p.wins + ' / ' + (p.totalTrades || 0) + ' closed') : '')),
         kpi('TOTAL TRADES', p.totalTrades, ''),
-        kpi('AVG WIN',      pn(p.avgWin).s, 'pos'),
+        kpi('AVG WIN', pn(p.avgWin).s, 'pos'),
       ].join('');
       k2.innerHTML = [
-        kpi('AVG LOSS',      pn(p.avgLoss).s, 'neg'),
-        kpi('PROFIT FACTOR', AB.fmt(p.profitFactor, 2), ''),
-        kpi('MAX DRAWDOWN',  AB.fmt(p.maxDrawdown, 2), 'neg'),
-        kpi('BEST TRADE',    p.bestTrade  ? pn(p.bestTrade.pnl).s  : '—', 'pos'),
-        kpi('WORST TRADE',   p.worstTrade ? pn(p.worstTrade.pnl).s : '—', 'neg'),
-        kpi('AVG DURATION',  AB.fmt(p.avgDurationMin, 1) + ' m', ''),
-        kpi('EXPECTANCY',    pn(p.expectancy).s, pn(p.expectancy).cls),
-        kpi('AVG R:R',       AB.fmt(p.avgRr, 2), ''),
-        kpi('CONSEC WINS',   p.consecWins, 'pos'),
-        kpi('CONSEC LOSS',   p.consecLoss, 'neg'),
+        kpi('AVG LOSS', pn(p.avgLoss).s, 'neg'),
+        kpi('PROFIT FACTOR', AB.fmt(p.profitFactor, 2), '',
+          p.netPctOfGross != null ? pctStr(p.netPctOfGross, 0) + ' net/gross' : ''),
+        kpi('MAX DRAWDOWN', AB.fmt(p.maxDrawdown, 2), 'neg',
+          p.maxDrawdownPct != null ? pctStr(Math.abs(Number(p.maxDrawdownPct)), 2) + ' of equity' : ''),
+        kpi('BEST TRADE', p.bestTrade ? pn(p.bestTrade.pnl).s : '—', 'pos'),
+        kpi('WORST TRADE', p.worstTrade ? pn(p.worstTrade.pnl).s : '—', 'neg'),
+        kpi('AVG DURATION', AB.fmt(p.avgDurationMin, 1) + ' m', ''),
+        kpi('EXPECTANCY', pn(p.expectancy).s, pn(p.expectancy).cls,
+          p.expectancyPctOfSize != null ? pctStr(p.expectancyPctOfSize) + ' of size' : ''),
+        kpi('AVG R:R', AB.fmt(p.avgRr, 2), ''),
+        kpi('CONSEC WINS', p.consecWins, 'pos'),
+        kpi('CONSEC LOSS', p.consecLoss, 'neg'),
+        kpi('EQUITY BASE', AB.fmt(eqBase, 0) + ' USDT', '', 'PaperStartingQuote × venues'),
       ].join('');
 
       // Equity curve → canvas + optional hidden svg fallback
@@ -369,19 +397,23 @@ AB.pages.reports = {
       const cal = AB.$('perfCalendar');
       if (cal) {
         const daily = p.daily || [];
+        const eqB = Number(p.equityBase) || 40000;
         cal.innerHTML = daily.length ? daily.map(d0 => {
           const n  = Number(d0.pnl) || 0;
           const tr = Number(d0.trades || d0.Trades || 0);
           const sc = Number(d0.scans || 0);
           const active = d0.hasActivity || tr > 0 || sc > 0;
+          const pctEq = eqB > 0 ? (n / eqB * 100) : 0;
+          const pctS = active ? ((pctEq >= 0 ? '+' : '') + pctEq.toFixed(2) + '%') : '';
           const bg = n > 0 ? 'rgba(34,197,94,0.18)' : (n < 0 ? 'rgba(239,68,68,0.18)' : (active ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.05)'));
           const dayLbl = (d0.day || d0.Day || '').toString().slice(5);
           const tip = (d0.day || '') + ': PnL ' + (n >= 0 ? '+' : '') + AB.fmt(n, 2) +
+            (pctS ? ' (' + pctS + ' eq)' : '') +
             ' · closes ' + tr + ' · scans ' + sc + ' · opens ' + (d0.opens || 0);
           return `<div class="day-cell" style="background:${bg};opacity:${active ? 1 : 0.55}" title="${tip}">
             <div class="muted" style="font-size:10px">${dayLbl}</div>
             <div class="mono ${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}" style="font-size:12px;font-weight:600">${active ? ((n >= 0 ? '+' : '') + AB.fmt(n, 1)) : '·'}</div>
-            <div class="muted" style="font-size:9px">${tr ? tr + 't' : (sc ? sc + 's' : '—')}</div>
+            <div class="muted" style="font-size:9px">${tr ? tr + 't' : (sc ? sc + 's' : '—')}${pctS ? ' · ' + pctS : ''}</div>
           </div>`;
         }).join('') : '<div class="empty">No daily data</div>';
         if (p.fromUtc) {
@@ -418,19 +450,35 @@ AB.pages.reports = {
         } else {
           box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
             <thead><tr class="muted" style="text-align:left">
-              <th style="padding:6px">Status</th><th>Symbol</th><th>Route</th><th>Qty</th><th>PnL</th><th>Opened</th><th>Msg</th>
+              <th style="padding:6px">Status</th><th>Symbol</th><th>Route</th><th>Qty</th><th>Net PnL</th><th>Fees</th><th>Opened</th><th>Msg</th>
             </tr></thead>
             <tbody>${rows.map(t => {
               const pnl  = t.realizedPnlUsd;
               const pnlN = pnl != null ? Number(pnl) : null;
               const pnlS = pnlN != null ? ((pnlN >= 0 ? '+' : '') + AB.fmt(pnlN, 2)) : '—';
               const cls  = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : '';
+              const bq = Number(t.baseQty || t.BaseQty || 0);
+              const le = Number(t.longEntry || t.LongEntry || 0);
+              const notional = bq && le ? Math.abs(bq * le) : 0;
+              const pctSz = (pnlN != null && notional > 0)
+                ? ((pnlN / notional * 100 >= 0 ? '+' : '') + (pnlN / notional * 100).toFixed(2) + '%')
+                : '';
+              let fees = Number(t.openFeesUsd || t.OpenFeesUsd || 0) + Number(t.closeFeesUsd || t.CloseFeesUsd || 0);
+              if (!fees && (t.message || t.Message)) {
+                const msg = String(t.message || t.Message);
+                const mo = msg.match(/openFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+                const mc = msg.match(/closeFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+                if (mo) fees += parseFloat(mo[1]) || 0;
+                if (mc) fees += parseFloat(mc[1]) || 0;
+              }
+              const feesS = fees ? AB.fmt(fees, 2) : '—';
               return `<tr style="border-top:1px solid rgba(148,163,184,0.12)">
                 <td style="padding:6px">${t.status||'—'}</td>
                 <td class="mono">${t.symbol||t.Symbol||'—'}</td>
                 <td class="muted">${t.longExchange||t.LongExchange||'?'}→${t.shortExchange||t.ShortExchange||'?'}</td>
-                <td class="mono">${AB.fmt(t.baseQty||t.BaseQty||0, 4)}</td>
-                <td class="mono ${cls}">${pnlS}</td>
+                <td class="mono">${AB.fmt(bq, 4)}</td>
+                <td class="mono ${cls}">${pnlS}${pctSz ? '<div class="muted" style="font-size:10px">' + pctSz + ' size</div>' : ''}</td>
+                <td class="mono muted">${feesS}</td>
                 <td class="muted">${(t.openedAt||t.OpenedAt||'').toString().slice(0,19)}</td>
                 <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${t.message||t.Message||''}</td>
               </tr>`;
