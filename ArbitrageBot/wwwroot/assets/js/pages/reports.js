@@ -385,7 +385,28 @@ AB.pages.reports = {
         kpi('EQUITY BASE', AB.fmt(eqBase, 0) + ' USDT', '', 'PaperStartingQuote × venues'),
       ].join('');
 
-      // Equity curve → canvas + optional hidden svg fallback
+      // Gross vs Net breakdown card (mockup Layer 2)
+      const gnb = AB.$('repGrossNetBody');
+      if (gnb) {
+        gnb.innerHTML =
+          `<div class="row"><span>Gross (leg A/B price Δ)</span><span><b class="${gross.cls}">${gross.s}</b> <span class="muted" style="font-size:10px">100% gross</span></span></div>
+           <div class="row"><span>− Total fees</span><span><b class="neg">${fees.s}</b> <span class="muted" style="font-size:10px">${feeOfG}</span></span></div>
+           <div class="row"><span>± Funding</span><span><b class="${fund.cls}">${fund.s}</b> <span class="muted" style="font-size:10px">${fundOfG}</span></span></div>
+           <div class="row" style="border:0;padding-top:12px"><span style="color:#e8eef4;font-weight:600">= Net PnL</span>
+             <span class="text-right"><b class="${net.cls}" style="font-size:18px">${net.s}</b>
+             <div class="muted mono" style="font-size:11px">${netEq || ''} of equity · ${pctStr(p.netPctOfGross,1)} of gross</div></span></div>`;
+      }
+      const tctx = AB.$('repTimeCtx');
+      if (tctx) {
+        tctx.innerHTML = 'TimeRangeContext = { start: <strong>' + (p.fromUtc || '—') +
+          '</strong>, end: <strong>' + (p.toUtc || '—') + '</strong> } · ' + d + 'D · equity base ' +
+          AB.fmt(eqBase, 0) + ' USDT';
+      }
+      this._lastPerf = p;
+      this._lastTrades = Array.isArray(trades) ? trades : [];
+      this._fillFilterOptions(this._lastTrades);
+
+      // Equity curve
       const pts = (p.equityCurve && p.equityCurve.length) ? p.equityCurve : [];
       const sub = AB.$('perfCurveSub');
       if (sub) sub.textContent = pts.length ? (pts.length + ' points · ' + d + 'D') : 'нет данных';
@@ -393,12 +414,14 @@ AB.pages.reports = {
       const svg = AB.$('perfCurve');
       if (svg) svg.innerHTML = '';
 
-      // Daily calendar
+      // Daily heatmap (click → day filter)
       const cal = AB.$('perfCalendar');
       if (cal) {
         const daily = p.daily || [];
         const eqB = Number(p.equityBase) || 40000;
+        const selDay = this._dayFilter || '';
         cal.innerHTML = daily.length ? daily.map(d0 => {
+          const dayKey = (d0.day || d0.Day || '').toString();
           const n  = Number(d0.pnl) || 0;
           const tr = Number(d0.trades || d0.Trades || 0);
           const sc = Number(d0.scans || 0);
@@ -406,88 +429,159 @@ AB.pages.reports = {
           const pctEq = eqB > 0 ? (n / eqB * 100) : 0;
           const pctS = active ? ((pctEq >= 0 ? '+' : '') + pctEq.toFixed(2) + '%') : '';
           const bg = n > 0 ? 'rgba(34,197,94,0.18)' : (n < 0 ? 'rgba(239,68,68,0.18)' : (active ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.05)'));
-          const dayLbl = (d0.day || d0.Day || '').toString().slice(5);
-          const tip = (d0.day || '') + ': PnL ' + (n >= 0 ? '+' : '') + AB.fmt(n, 2) +
+          const dayLbl = dayKey.slice(5);
+          const sel = selDay && selDay === dayKey ? ' selected' : '';
+          const tip = dayKey + ': PnL ' + (n >= 0 ? '+' : '') + AB.fmt(n, 2) +
             (pctS ? ' (' + pctS + ' eq)' : '') +
-            ' · closes ' + tr + ' · scans ' + sc + ' · opens ' + (d0.opens || 0);
-          return `<div class="day-cell" style="background:${bg};opacity:${active ? 1 : 0.55}" title="${tip}">
-            <div class="muted" style="font-size:10px">${dayLbl}</div>
+            ' · closes ' + tr + ' · scans ' + sc;
+          return `<div class="day-cell${sel}" data-day="${dayKey}" style="background:${bg};opacity:${active ? 1 : 0.55}" title="${tip}">
+            <div class="muted" style="font-size:10px">${dayLbl || '—'}</div>
             <div class="mono ${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}" style="font-size:12px;font-weight:600">${active ? ((n >= 0 ? '+' : '') + AB.fmt(n, 1)) : '·'}</div>
             <div class="muted" style="font-size:9px">${tr ? tr + 't' : (sc ? sc + 's' : '—')}${pctS ? ' · ' + pctS : ''}</div>
           </div>`;
         }).join('') : '<div class="empty">No daily data</div>';
+        cal.querySelectorAll('.day-cell[data-day]').forEach(cell => {
+          cell.addEventListener('click', () => {
+            const day = cell.getAttribute('data-day');
+            this._dayFilter = (this._dayFilter === day) ? null : day;
+            const lbl = AB.$('repDayFilterLbl');
+            if (lbl) lbl.textContent = this._dayFilter
+              ? ('Selected day: ' + this._dayFilter + ' · ledger отфильтрован')
+              : '';
+            this._renderTradeTable(this._filterTrades(this._lastTrades || []));
+            cal.querySelectorAll('.day-cell').forEach(c => c.classList.toggle('selected', c.getAttribute('data-day') === this._dayFilter));
+          });
+        });
         if (p.fromUtc) {
-          const sub = AB.$('perfCurveSub');
           if (sub) sub.textContent = (p.equityCurve && p.equityCurve.length ? p.equityCurve.length + ' pts · ' : '') +
             p.fromUtc + ' → ' + (p.toUtc || '') + ' · ' + d + 'D';
         }
       }
 
-      const tc = AB.$('tableCount');
-      if (tc) tc.textContent = (Array.isArray(trades) ? trades.length : 0) + ' trades (ledger)';
-      let note = AB.$('perfDataNote');
-      if (!note) {
-        const box = AB.$('perfTrades');
-        if (box && box.parentElement) {
-          note = document.createElement('div');
-          note.id = 'perfDataNote';
-          note.className = 'muted';
-          note.style.cssText = 'font-size:11px;margin:8px 0 4px;line-height:1.4';
-          box.parentElement.insertBefore(note, box);
-        }
-      }
-      if (note) {
-        note.innerHTML = 'Журнал: <code>data/paper/trades-ledger.json</code> · дни: <code>daily-YYYY-MM-DD.json</code><br>' +
-          (p.note || '') + (p.fromUtc ? ' · окно ' + p.fromUtc + ' → ' + p.toUtc : '');
-      }
-
-      // Trades table
-      const box  = AB.$('perfTrades');
-      if (box) {
-        const rows = Array.isArray(trades) ? trades : [];
-        if (!rows.length) {
-          box.innerHTML = '<div class="empty">No trades in ledger yet</div>';
-        } else {
-          box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
-            <thead><tr class="muted" style="text-align:left">
-              <th style="padding:6px">Status</th><th>Symbol</th><th>Route</th><th>Qty</th><th>Net PnL</th><th>Fees</th><th>Opened</th><th>Msg</th>
-            </tr></thead>
-            <tbody>${rows.map(t => {
-              const pnl  = t.realizedPnlUsd;
-              const pnlN = pnl != null ? Number(pnl) : null;
-              const pnlS = pnlN != null ? ((pnlN >= 0 ? '+' : '') + AB.fmt(pnlN, 2)) : '—';
-              const cls  = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : '';
-              const bq = Number(t.baseQty || t.BaseQty || 0);
-              const le = Number(t.longEntry || t.LongEntry || 0);
-              const notional = bq && le ? Math.abs(bq * le) : 0;
-              const pctSz = (pnlN != null && notional > 0)
-                ? ((pnlN / notional * 100 >= 0 ? '+' : '') + (pnlN / notional * 100).toFixed(2) + '%')
-                : '';
-              let fees = Number(t.openFeesUsd || t.OpenFeesUsd || 0) + Number(t.closeFeesUsd || t.CloseFeesUsd || 0);
-              if (!fees && (t.message || t.Message)) {
-                const msg = String(t.message || t.Message);
-                const mo = msg.match(/openFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
-                const mc = msg.match(/closeFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
-                if (mo) fees += parseFloat(mo[1]) || 0;
-                if (mc) fees += parseFloat(mc[1]) || 0;
-              }
-              const feesS = fees ? AB.fmt(fees, 2) : '—';
-              return `<tr style="border-top:1px solid rgba(148,163,184,0.12)">
-                <td style="padding:6px">${t.status||'—'}</td>
-                <td class="mono">${t.symbol||t.Symbol||'—'}</td>
-                <td class="muted">${t.longExchange||t.LongExchange||'?'}→${t.shortExchange||t.ShortExchange||'?'}</td>
-                <td class="mono">${AB.fmt(bq, 4)}</td>
-                <td class="mono ${cls}">${pnlS}${pctSz ? '<div class="muted" style="font-size:10px">' + pctSz + ' size</div>' : ''}</td>
-                <td class="mono muted">${feesS}</td>
-                <td class="muted">${(t.openedAt||t.OpenedAt||'').toString().slice(0,19)}</td>
-                <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${t.message||t.Message||''}</td>
-              </tr>`;
-            }).join('')}</tbody></table>`;
-        }
-      }
+      this._renderTradeTable(this._filterTrades(this._lastTrades));
     } catch (e) {
       k1.innerHTML = '<div class="empty neg">' + (e.message || e) + '</div>';
     }
+  },
+
+  _fillFilterOptions(trades) {
+    const routes = new Set(), symbols = new Set();
+    (trades || []).forEach(t => {
+      const r = (t.longExchange || t.LongExchange || '?') + '→' + (t.shortExchange || t.ShortExchange || '?');
+      routes.add(r);
+      symbols.add(t.symbol || t.Symbol || '?');
+    });
+    const fill = (id, values) => {
+      const el = AB.$(id);
+      if (!el) return;
+      const prev = new Set([...el.selectedOptions].map(o => o.value));
+      el.innerHTML = [...values].sort().map(v =>
+        `<option value="${v.replace(/"/g, '')}" ${prev.has(v) ? 'selected' : ''}>${v}</option>`).join('');
+    };
+    fill('repFilterRoute', routes);
+    fill('repFilterSymbol', symbols);
+  },
+
+  _filterTrades(trades) {
+    let rows = Array.isArray(trades) ? trades.slice() : [];
+    if (this._dayFilter) {
+      rows = rows.filter(t => {
+        const op = (t.openedAt || t.OpenedAt || t.closedAt || t.ClosedAt || '').toString();
+        return op.startsWith(this._dayFilter);
+      });
+    }
+    const st = (AB.$('repFilterStatus') || {}).value || 'all';
+    if (st === 'closed') rows = rows.filter(t => /close|tp|sl|stop|manual|converg/i.test(String(t.status || '')));
+    if (st === 'open') rows = rows.filter(t => /^open$/i.test(String(t.status || '').trim()) || t.realizedPnlUsd == null);
+    if (st === 'tp') rows = rows.filter(t => /tp|take/i.test(String(t.status || '') + String(t.message || '')));
+    if (st === 'sl') rows = rows.filter(t => /sl|stop/i.test(String(t.status || '') + String(t.message || '')));
+    const selRoutes = AB.$('repFilterRoute') ? [...AB.$('repFilterRoute').selectedOptions].map(o => o.value) : [];
+    const selSyms = AB.$('repFilterSymbol') ? [...AB.$('repFilterSymbol').selectedOptions].map(o => o.value) : [];
+    if (selRoutes.length) {
+      rows = rows.filter(t => {
+        const r = (t.longExchange || t.LongExchange || '?') + '→' + (t.shortExchange || t.ShortExchange || '?');
+        return selRoutes.includes(r);
+      });
+    }
+    if (selSyms.length) {
+      rows = rows.filter(t => selSyms.includes(t.symbol || t.Symbol || '?'));
+    }
+    return rows;
+  },
+
+  _renderTradeTable(rows) {
+    const box = AB.$('perfTrades');
+    const tc = AB.$('tableCount');
+    if (tc) tc.textContent = (rows ? rows.length : 0) + ' trades (filtered)';
+    if (!box) return;
+    if (!rows || !rows.length) {
+      box.innerHTML = '<div class="empty" style="padding:20px">No trades for current filters</div>';
+      return;
+    }
+    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr class="muted" style="text-align:left">
+        <th style="padding:8px 12px">Status</th><th>Symbol</th><th>Route</th><th>Qty</th><th>Net PnL</th><th>Fees</th><th>Opened</th><th>Msg</th>
+      </tr></thead>
+      <tbody>${rows.map(t => {
+        const pnl  = t.realizedPnlUsd;
+        const pnlN = pnl != null ? Number(pnl) : null;
+        const pnlS = pnlN != null ? ((pnlN >= 0 ? '+' : '') + AB.fmt(pnlN, 2)) : '—';
+        const cls  = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : '';
+        const bq = Number(t.baseQty || t.BaseQty || 0);
+        const le = Number(t.longEntry || t.LongEntry || 0);
+        const notional = bq && le ? Math.abs(bq * le) : 0;
+        const pctSz = (pnlN != null && notional > 0)
+          ? ((pnlN / notional * 100 >= 0 ? '+' : '') + (pnlN / notional * 100).toFixed(2) + '%')
+          : '';
+        let fees = Number(t.openFeesUsd || t.OpenFeesUsd || 0) + Number(t.closeFeesUsd || t.CloseFeesUsd || 0);
+        if (!fees && (t.message || t.Message)) {
+          const msg = String(t.message || t.Message);
+          const mo = msg.match(/openFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+          const mc = msg.match(/closeFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+          if (mo) fees += parseFloat(mo[1]) || 0;
+          if (mc) fees += parseFloat(mc[1]) || 0;
+        }
+        const feesS = fees ? AB.fmt(fees, 2) : '—';
+        return `<tr style="border-top:1px solid rgba(148,163,184,0.12)">
+          <td style="padding:8px 12px"><span class="chip" style="font-size:10px">${t.status||'—'}</span></td>
+          <td class="mono">${t.symbol||t.Symbol||'—'}</td>
+          <td class="muted">${t.longExchange||t.LongExchange||'?'}→${t.shortExchange||t.ShortExchange||'?'}</td>
+          <td class="mono">${AB.fmt(bq, 4)}</td>
+          <td class="mono ${cls}">${pnlS}${pctSz ? '<div class="muted" style="font-size:10px">' + pctSz + ' size</div>' : ''}</td>
+          <td class="mono muted">${feesS}</td>
+          <td class="muted">${(t.openedAt||t.OpenedAt||'').toString().slice(0,19)}</td>
+          <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${t.message||t.Message||''}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  },
+
+  _exportTrades(fmt) {
+    const rows = this._filterTrades(this._lastTrades || []);
+    if (!rows.length) return;
+    if (fmt === 'json') {
+      const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'trades-export.json';
+      a.click();
+      return;
+    }
+    const cols = ['status','symbol','route','qty','netPnl','fees','opened'];
+    const lines = [cols.join(',')];
+    rows.forEach(t => {
+      const route = (t.longExchange||t.LongExchange||'?') + '→' + (t.shortExchange||t.ShortExchange||'?');
+      let fees = Number(t.openFeesUsd || 0) + Number(t.closeFeesUsd || 0);
+      lines.push([
+        t.status||'', t.symbol||t.Symbol||'', route,
+        t.baseQty||t.BaseQty||0, t.realizedPnlUsd ?? '', fees,
+        (t.openedAt||t.OpenedAt||'')
+      ].map(x => '"' + String(x).replace(/"/g,'""') + '"').join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'trades-export.csv';
+    a.click();
   },
 
   // ── Live balances + positions (REST) ─────────────────────────────────────
@@ -691,9 +785,32 @@ document.querySelectorAll('[data-perf-days]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-perf-days]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    AB.pages.reports._dayFilter = null;
+    const lbl = document.getElementById('repDayFilterLbl');
+    if (lbl) lbl.textContent = '';
     AB.pages.reports.loadPerformance(parseInt(btn.getAttribute('data-perf-days'), 10));
   });
 });
+
+document.getElementById('repFilterApply')?.addEventListener('click', () => {
+  const r = AB.pages.reports;
+  r._renderTradeTable(r._filterTrades(r._lastTrades || []));
+});
+document.getElementById('repFilterReset')?.addEventListener('click', () => {
+  const r = AB.pages.reports;
+  r._dayFilter = null;
+  const st = document.getElementById('repFilterStatus');
+  if (st) st.value = 'all';
+  ['repFilterRoute', 'repFilterSymbol'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) [...el.options].forEach(o => { o.selected = false; });
+  });
+  const lbl = document.getElementById('repDayFilterLbl');
+  if (lbl) lbl.textContent = '';
+  r._renderTradeTable(r._filterTrades(r._lastTrades || []));
+});
+document.getElementById('repExportCsv')?.addEventListener('click', () => AB.pages.reports._exportTrades('csv'));
+document.getElementById('repExportJson')?.addEventListener('click', () => AB.pages.reports._exportTrades('json'));
 
 // ── Funding Rates panel (Live mode) ──────────────────────────────────────────
 AB.pages.reports.renderFunding = function (fundingData) {

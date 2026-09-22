@@ -507,20 +507,66 @@
         <div class="rep-hd">
           <div>
             <h1 class="rep-title">Reports</h1>
-            <p class="rep-sub muted">Paper &amp; Live analytics · данные бота в реальном времени</p>
+            <p class="rep-sub muted">TimeRange · Net/Gross/Fees · heatmap · ledger · institutional layout</p>
           </div>
           <div class="rep-filters">
+            <span class="chip ok" id="repModeChip">PAPER</span>
+            <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Live balances</button>
+          </div>
+        </div>
+
+        <div class="rep-time-strip">
+          <div class="rep-time-row">
             <div class="btn-row" id="perfRangeBtns">
               <button type="button" class="chip" data-perf-days="1">1D</button>
               <button type="button" class="chip active" data-perf-days="7">7D</button>
               <button type="button" class="chip" data-perf-days="30">30D</button>
               <button type="button" class="chip" data-perf-days="90">90D</button>
+              <button type="button" class="chip" data-perf-days="365">ALL</button>
             </div>
-            <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Live balances</button>
+            <div class="rep-date-range">
+              <span class="muted" style="font-size:12px">Range</span>
+              <input type="date" id="repStartDate" class="rep-date"/>
+              <span class="muted">→</span>
+              <input type="date" id="repEndDate" class="rep-date"/>
+            </div>
+          </div>
+          <div class="rep-time-ctx mono muted" id="repTimeCtx">TimeRangeContext · KPI / curve / calendar / trades синхронно</div>
+        </div>
+
+        <div class="rep-filter-panel" id="repFilterPanel">
+          <div class="rep-filter-title">Filters · сквозная фильтрация ledger</div>
+          <div class="rep-filter-grid">
+            <label class="rep-field">Route
+              <select id="repFilterRoute" multiple size="3" class="rep-select"></select>
+            </label>
+            <label class="rep-field">Symbol
+              <select id="repFilterSymbol" multiple size="3" class="rep-select"></select>
+            </label>
+            <label class="rep-field">Status
+              <select id="repFilterStatus" class="rep-select">
+                <option value="all">All</option>
+                <option value="closed">Closed only</option>
+                <option value="open">Open only</option>
+                <option value="tp">Closed (TP)</option>
+                <option value="sl">Closed (SL)</option>
+              </select>
+            </label>
+            <label class="rep-field">Mode
+              <select id="repFilterMode" class="rep-select">
+                <option value="paper">Paper / Demo</option>
+                <option value="all">All</option>
+                <option value="live">Live</option>
+              </select>
+            </label>
+          </div>
+          <div class="rep-filter-actions">
+            <button type="button" class="btn primary sm" id="repFilterApply">Apply filters</button>
+            <button type="button" class="btn sm" id="repFilterReset">Reset</button>
+            <span class="muted" style="font-size:11px" id="repFilterHint">фильтр → KPI split + Trade ledger</span>
           </div>
         </div>
 
-        <!-- PAPER KPI -->
         <div id="rep_paperSection">
           <div class="kpi-grid rep-kpi" id="repPaperKpi">
             <div class="kpi"><div class="kpi-l">Paper realized</div><div class="kpi-v" id="r_paper_realized">—</div></div>
@@ -529,27 +575,50 @@
             <div class="kpi"><div class="kpi-l">Open · Lev · Stop</div><div class="kpi-v" style="font-size:1.1rem"><span id="r_paper_open">—</span> · <span id="r_lev">—</span> · <span id="r_stop">—</span></div></div>
           </div>
 
-          <!-- Performance analytics (API) -->
-          <div class="panel rep-panel" style="margin-bottom:14px">
-            <div class="panel-hd">
-              <h2 class="panel-title">Performance</h2>
-              <span class="panel-sub">ledger · выбран /api/analytics</span>
-            </div>
-            <div class="kpi-grid rep-kpi" id="perfKpis"></div>
-            <div class="kpi-grid rep-kpi" id="perfKpis2" style="margin-top:10px"></div>
+          <div class="rep-layer">
+            <div class="rep-layer-hd"><span>Layer 1 · Executive risk &amp; performance</span><span class="muted">Net · Gross / Fees / Funding %</span></div>
+            <div class="kpi-grid rep-kpi rep-kpi-6" id="perfKpis"></div>
+            <div class="kpi-grid rep-kpi rep-kpi-6" id="perfKpis2" style="margin-top:10px"></div>
+          </div>
+
+          <div class="rep-layer">
+            <div class="rep-layer-hd"><span>Layer 2 · Equity &amp; Gross vs Net</span><span class="muted" id="perfCurveSub">по дням</span></div>
             <div class="rep-charts">
               <div class="rep-chart-card">
-                <div class="panel-hd" style="margin-bottom:6px"><h2 class="panel-title" style="font-size:0.9rem">PnL curve</h2><span class="panel-sub" id="perfCurveSub">по дням</span></div>
+                <div class="panel-hd" style="margin-bottom:6px">
+                  <h2 class="panel-title" style="font-size:0.9rem">PnL curve</h2>
+                </div>
                 <div class="rep-chart-box"><canvas id="perfCurveCanvas"></canvas></div>
                 <div id="perfCurve" class="hidden"></div>
               </div>
               <div class="rep-chart-card">
-                <div class="panel-hd" style="margin-bottom:6px"><h2 class="panel-title" style="font-size:0.9rem">Daily calendar</h2><span class="panel-sub">realized / day</span></div>
-                <div id="perfCalendar" class="rep-calendar"></div>
+                <div class="panel-hd" style="margin-bottom:6px"><h2 class="panel-title" style="font-size:0.9rem">Gross vs Net</h2></div>
+                <div id="repGrossNetBody" class="rep-breakdown"></div>
               </div>
             </div>
-            <div class="panel-hd" style="margin-top:14px"><h2 class="panel-title" style="font-size:0.9rem">Trade details</h2><span class="panel-sub" id="tableCount">—</span></div>
-            <div class="scroll" style="max-height:280px" id="perfTrades"></div>
+          </div>
+
+          <div class="rep-layer">
+            <div class="rep-layer-hd"><span>Layer 3 · Daily heatmap</span><span class="muted">клик по дню → фильтр ledger</span></div>
+            <div class="panel rep-panel" style="padding:12px">
+              <div id="perfCalendar" class="rep-calendar rep-heatmap"></div>
+              <div class="muted" style="font-size:11px;margin-top:8px" id="repDayFilterLbl"></div>
+            </div>
+          </div>
+
+          <div class="rep-layer">
+            <div class="rep-layer-hd"><span>Layer 4 · Trade ledger</span><span class="panel-sub" id="tableCount">—</span></div>
+            <div class="panel rep-panel" style="padding:0;overflow:hidden">
+              <div class="scroll" style="max-height:340px" id="perfTrades"></div>
+            </div>
+          </div>
+
+          <div class="rep-export-row">
+            <span class="muted" style="font-size:12px">Export TimeRange + filters</span>
+            <div class="btn-row">
+              <button type="button" class="btn sm" id="repExportCsv">CSV export</button>
+              <button type="button" class="btn sm" id="repExportJson">JSON export</button>
+            </div>
           </div>
 
           <div class="rep-split">
