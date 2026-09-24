@@ -254,22 +254,25 @@ AB.pages.reports = {
     if (el('r_skipReasons')) {
       if (!reasons.length) {
         el('r_skipReasons').innerHTML = '<div class="muted" style="padding:8px 0">No skips recorded yet</div>';
+        if (el('repSkipBars')) el('repSkipBars').innerHTML = '<div class="muted">No skips recorded yet</div>';
       } else {
         const maxC = Math.max(...reasons.map(r => Number(r.count) || 0), 1);
         const sorted = reasons.slice().sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0));
         const top = sorted.slice(0, 12);
-        el('r_skipReasons').innerHTML = top.map(r => {
+        const barsHtml = top.map(r => {
           const c = Number(r.count) || 0;
           const pct = Math.round(c / maxC * 100);
           const reason = (r.reason || '—').toString();
-          return `<div class="skip-row" title="${reason.replace(/"/g, '&quot;')} × ${c}">
-            <div class="skip-reason">${reason}</div>
-            <div class="skip-count">×${c.toLocaleString()}</div>
-            <div class="skip-bar-track"><div class="skip-bar-fill" style="width:${pct}%"></div></div>
+          return `<div class="bar-row" title="${reason.replace(/"/g, '&quot;')} × ${c}">
+            <div>${reason.length > 28 ? reason.slice(0, 26) + '…' : reason}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+            <div class="n">${c >= 1000 ? (c / 1000).toFixed(1) + 'k' : c}</div>
           </div>`;
         }).join('') + (sorted.length > 12
-          ? `<div class="muted" style="font-size:11px;padding:6px 0">+ ещё ${sorted.length - 12} типов (см. recent)</div>`
+          ? `<div class="muted" style="font-size:11px;padding:6px 0">+ ещё ${sorted.length - 12} типов</div>`
           : '');
+        el('r_skipReasons').innerHTML = barsHtml;
+        if (el('repSkipBars')) el('repSkipBars').innerHTML = barsHtml;
       }
     }
 
@@ -357,10 +360,10 @@ AB.pages.reports = {
         kpi('NET PNL', net.s + ' USDT', net.cls,
           (netEq ? netEq + ' of equity' : '') +
           (p.grossPnl != null
-            ? `<div style="margin-top:6px;font-size:11px;line-height:1.45;font-weight:500">
-                <span>Gross <b class="${gross.cls}">${gross.s}</b> <span class="muted">${grossSub}</span></span><br/>
-                <span>Fees <b class="neg">${fees.s}</b> <span class="muted">${feeOfG}</span></span><br/>
-                <span>Funding <b class="${fund.cls}">${fund.s}</b> <span class="muted">${fundOfG}</span></span>
+            ? `<div class="split-pnl">
+                <span>Gross <b class="${gross.cls}">${gross.s}</b></span>
+                <span>Fees <b class="neg">${fees.s}</b></span>
+                <span>Funding <b class="${fund.cls}">${fund.s}</b></span>
               </div>`
             : '')),
         kpi('WIN RATE', AB.fmt(p.winRate, 1) + '%', '',
@@ -420,24 +423,26 @@ AB.pages.reports = {
         const daily = p.daily || [];
         const eqB = Number(p.equityBase) || 40000;
         const selDay = this._dayFilter || '';
+        const absMax = Math.max(...daily.map(x => Math.abs(Number(x.pnl) || 0)), 1);
         cal.innerHTML = daily.length ? daily.map(d0 => {
           const dayKey = (d0.day || d0.Day || '').toString();
           const n  = Number(d0.pnl) || 0;
           const tr = Number(d0.trades || d0.Trades || 0);
           const sc = Number(d0.scans || 0);
-          const active = d0.hasActivity || tr > 0 || sc > 0;
-          const pctEq = eqB > 0 ? (n / eqB * 100) : 0;
-          const pctS = active ? ((pctEq >= 0 ? '+' : '') + pctEq.toFixed(2) + '%') : '';
-          const bg = n > 0 ? 'rgba(34,197,94,0.18)' : (n < 0 ? 'rgba(239,68,68,0.18)' : (active ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.05)'));
-          const dayLbl = dayKey.slice(5);
+          const wr = d0.winRate != null ? Number(d0.winRate) : (d0.wins != null && tr ? (Number(d0.wins) / tr * 100) : null);
+          const active = d0.hasActivity || tr > 0 || sc > 0 || n !== 0;
+          const dayLbl = dayKey.length >= 10 ? dayKey.slice(8, 10) : (dayKey.slice(5) || '—');
           const sel = selDay && selDay === dayKey ? ' selected' : '';
+          let hm = 'hm-empty';
+          if (active && n > 0) hm = n / absMax > 0.66 ? 'hm-pos-3' : (n / absMax > 0.33 ? 'hm-pos-2' : 'hm-pos-1');
+          else if (active && n < 0) hm = Math.abs(n) / absMax > 0.5 ? 'hm-neg-2' : 'hm-neg-1';
+          else if (active) hm = '';
           const tip = dayKey + ': PnL ' + (n >= 0 ? '+' : '') + AB.fmt(n, 2) +
-            (pctS ? ' (' + pctS + ' eq)' : '') +
-            ' · closes ' + tr + ' · scans ' + sc;
-          return `<div class="day-cell${sel}" data-day="${dayKey}" style="background:${bg};opacity:${active ? 1 : 0.55}" title="${tip}">
-            <div class="muted" style="font-size:10px">${dayLbl || '—'}</div>
-            <div class="mono ${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}" style="font-size:12px;font-weight:600">${active ? ((n >= 0 ? '+' : '') + AB.fmt(n, 1)) : '·'}</div>
-            <div class="muted" style="font-size:9px">${tr ? tr + 't' : (sc ? sc + 's' : '—')}${pctS ? ' · ' + pctS : ''}</div>
+            ' · trades ' + tr + (wr != null ? ' · WR ' + wr.toFixed(0) + '%' : '');
+          return `<div class="day-cell hm-cell ${hm}${sel}" data-day="${dayKey}" title="${tip}">
+            <div class="muted" style="font-size:10px">${dayLbl}</div>
+            <div class="p mono" style="font-size:13px;font-weight:700">${active ? ((n >= 0 ? '+' : '') + AB.fmt(n, 1)) : '—'}</div>
+            <div class="muted" style="font-size:9px">${tr ? tr + 'tr' : '0 tr'}${wr != null && tr ? ' · ' + wr.toFixed(0) + '%' : ''}</div>
           </div>`;
         }).join('') : '<div class="empty">No daily data</div>';
         cal.querySelectorAll('.day-cell[data-day]').forEach(cell => {
@@ -509,50 +514,134 @@ AB.pages.reports = {
     return rows;
   },
 
+  _statusBadge(status, msg) {
+    const s = String(status || '') + ' ' + String(msg || '');
+    if (/open/i.test(status) && !/close/i.test(status)) return { cls: 'st-open', label: 'Open' };
+    if (/tp|take.?profit|converg/i.test(s)) return { cls: 'st-tp', label: /converg/i.test(s) ? 'Closed (converge)' : 'Closed (TP)' };
+    if (/sl|stop/i.test(s)) return { cls: 'st-sl', label: 'Closed (SL)' };
+    if (/manual/i.test(s)) return { cls: 'st-manual', label: 'Closed (manual)' };
+    if (/close/i.test(s)) return { cls: 'st-tp', label: status || 'Closed' };
+    return { cls: 'st-open', label: status || '—' };
+  },
+
+  _parseTradeFees(t) {
+    let openF = Number(t.openFeesUsd || t.OpenFeesUsd || 0);
+    let closeF = Number(t.closeFeesUsd || t.CloseFeesUsd || 0);
+    if (!openF && !closeF && (t.message || t.Message)) {
+      const msg = String(t.message || t.Message);
+      const mo = msg.match(/openFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+      const mc = msg.match(/closeFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+      if (mo) openF = parseFloat(mo[1]) || 0;
+      if (mc) closeF = parseFloat(mc[1]) || 0;
+    }
+    return { openF, closeF, total: openF + closeF };
+  },
+
   _renderTradeTable(rows) {
     const box = AB.$('perfTrades');
     const tc = AB.$('tableCount');
-    if (tc) tc.textContent = (rows ? rows.length : 0) + ' trades (filtered)';
+    if (tc) tc.textContent = (rows ? rows.length : 0) + ' trades · click row → legs';
     if (!box) return;
     if (!rows || !rows.length) {
       box.innerHTML = '<div class="empty" style="padding:20px">No trades for current filters</div>';
       return;
     }
-    box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr class="muted" style="text-align:left">
-        <th style="padding:8px 12px">Status</th><th>Symbol</th><th>Route</th><th>Qty</th><th>Net PnL</th><th>Fees</th><th>Opened</th><th>Msg</th>
+    const body = rows.map((t, i) => {
+      const id = 'tracc_' + i;
+      const st = this._statusBadge(t.status, t.message || t.Message);
+      const sym = t.symbol || t.Symbol || '—';
+      const longEx = t.longExchange || t.LongExchange || '?';
+      const shortEx = t.shortExchange || t.ShortExchange || '?';
+      const route = longEx + '→' + shortEx;
+      const bq = Number(t.baseQty || t.BaseQty || 0);
+      const le = Number(t.longEntry || t.LongEntry || 0);
+      const se = Number(t.shortEntry || t.ShortEntry || 0);
+      const lx = Number(t.longExit || t.LongExit || 0);
+      const sx = Number(t.shortExit || t.ShortExit || 0);
+      const notional = bq && le ? Math.abs(bq * le) : (Number(t.notionalUsd || t.sizeUsd) || 0);
+      const sizeS = notional ? ('$' + AB.fmt(notional, 0)) : AB.fmt(bq, 4);
+      const fees = this._parseTradeFees(t);
+      const fund = Number(t.fundingUsd || t.FundingUsd || 0);
+      const pnlN = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
+      const pnlS = pnlN != null ? ((pnlN >= 0 ? '+' : '') + AB.fmt(pnlN, 2)) : '—';
+      const pnlCls = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : '';
+      const grossN = t.grossPnlUsd != null ? Number(t.grossPnlUsd)
+        : (pnlN != null ? pnlN + fees.total - fund : null);
+      const grossS = grossN != null ? ((grossN >= 0 ? '+' : '') + AB.fmt(grossN, 2)) : '—';
+      const opened = (t.openedAt || t.OpenedAt || '').toString().replace('T', ' ').slice(0, 16);
+      let dur = t.durationMin != null ? AB.fmt(t.durationMin, 1) + 'm' : '—';
+      if (dur === '—' && t.openedAt && t.closedAt) {
+        const ms = new Date(t.closedAt) - new Date(t.openedAt);
+        if (isFinite(ms) && ms > 0) dur = AB.fmt(ms / 60000, 1) + 'm';
+      }
+      const msg = String(t.message || t.Message || '');
+      const slipM = msg.match(/slip(?:page)?[^\d]*([0-9]*\.?[0-9]+)/i);
+      const slip = slipM ? slipM[1] + ' bps' : (t.slippageBps != null ? t.slippageBps + ' bps' : '—');
+      const legLongId = t.longOrderId || t.LongOrderId || '—';
+      const legShortId = t.shortOrderId || t.ShortOrderId || '—';
+
+      return `<tr class="rep-tr" data-acc="${id}">
+        <td><span class="st ${st.cls}">${st.label}</span></td>
+        <td class="mono" style="font-weight:600">${sym}</td>
+        <td class="muted">${route}</td>
+        <td class="mono">${sizeS}</td>
+        <td class="mono ${grossN > 0 ? 'pos' : grossN < 0 ? 'neg' : ''}">${grossS}</td>
+        <td class="mono muted">${fees.total ? AB.fmt(fees.total, 2) : '—'}</td>
+        <td class="mono muted">${fund ? ((fund >= 0 ? '+' : '') + AB.fmt(fund, 2)) : '—'}</td>
+        <td class="mono ${pnlCls}" style="font-weight:600">${pnlS}</td>
+        <td class="muted">${dur}</td>
+        <td class="muted mono" style="font-size:11px">${opened}</td>
+      </tr>
+      <tr class="rep-acc" id="${id}">
+        <td colspan="10">
+          <div class="acc-grid">
+            <div>
+              <div class="acc-h">Leg A (Long ${longEx})</div>
+              Entry <code>${le ? AB.fmt(le, 6) : '—'}</code>
+              ${lx ? ' · Exit <code>' + AB.fmt(lx, 6) + '</code>' : ''}
+              <br/>Order <code>${legLongId}</code>
+              <br/>Open fee <code>${fees.openF ? AB.fmt(fees.openF, 2) : '—'}</code> USDT
+            </div>
+            <div>
+              <div class="acc-h">Leg B (Short ${shortEx})</div>
+              Entry <code>${se ? AB.fmt(se, 6) : '—'}</code>
+              ${sx ? ' · Exit <code>' + AB.fmt(sx, 6) + '</code>' : ''}
+              <br/>Order <code>${legShortId}</code>
+              <br/>Close fee <code>${fees.closeF ? AB.fmt(fees.closeF, 2) : '—'}</code> USDT
+            </div>
+            <div style="grid-column:1/-1;margin-top:4px">
+              Slippage est. <code>${slip}</code>
+              · Qty <code>${AB.fmt(bq, 4)}</code>
+              · ${msg ? ('Note: ' + msg.slice(0, 160)) : 'click elsewhere to collapse'}
+            </div>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    box.innerHTML = `<table class="rep-trades">
+      <thead><tr>
+        <th>Status</th><th>Symbol</th><th>Route</th><th>Size</th>
+        <th>Gross</th><th>Fees</th><th>Fund</th><th>Net PnL</th>
+        <th>Duration</th><th>Opened</th>
       </tr></thead>
-      <tbody>${rows.map(t => {
-        const pnl  = t.realizedPnlUsd;
-        const pnlN = pnl != null ? Number(pnl) : null;
-        const pnlS = pnlN != null ? ((pnlN >= 0 ? '+' : '') + AB.fmt(pnlN, 2)) : '—';
-        const cls  = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : '';
-        const bq = Number(t.baseQty || t.BaseQty || 0);
-        const le = Number(t.longEntry || t.LongEntry || 0);
-        const notional = bq && le ? Math.abs(bq * le) : 0;
-        const pctSz = (pnlN != null && notional > 0)
-          ? ((pnlN / notional * 100 >= 0 ? '+' : '') + (pnlN / notional * 100).toFixed(2) + '%')
-          : '';
-        let fees = Number(t.openFeesUsd || t.OpenFeesUsd || 0) + Number(t.closeFeesUsd || t.CloseFeesUsd || 0);
-        if (!fees && (t.message || t.Message)) {
-          const msg = String(t.message || t.Message);
-          const mo = msg.match(/openFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
-          const mc = msg.match(/closeFee\s*=\s*([-+]?[0-9]*\.?[0-9]+)/i);
-          if (mo) fees += parseFloat(mo[1]) || 0;
-          if (mc) fees += parseFloat(mc[1]) || 0;
+      <tbody>${body}</tbody>
+    </table>`;
+
+    box.querySelectorAll('tr.rep-tr').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const accId = tr.getAttribute('data-acc');
+        const acc = document.getElementById(accId);
+        if (!acc) return;
+        const open = acc.classList.contains('show');
+        box.querySelectorAll('tr.rep-acc.show').forEach(a => a.classList.remove('show'));
+        box.querySelectorAll('tr.rep-tr.expanded').forEach(r => r.classList.remove('expanded'));
+        if (!open) {
+          acc.classList.add('show');
+          tr.classList.add('expanded');
         }
-        const feesS = fees ? AB.fmt(fees, 2) : '—';
-        return `<tr style="border-top:1px solid rgba(148,163,184,0.12)">
-          <td style="padding:8px 12px"><span class="chip" style="font-size:10px">${t.status||'—'}</span></td>
-          <td class="mono">${t.symbol||t.Symbol||'—'}</td>
-          <td class="muted">${t.longExchange||t.LongExchange||'?'}→${t.shortExchange||t.ShortExchange||'?'}</td>
-          <td class="mono">${AB.fmt(bq, 4)}</td>
-          <td class="mono ${cls}">${pnlS}${pctSz ? '<div class="muted" style="font-size:10px">' + pctSz + ' size</div>' : ''}</td>
-          <td class="mono muted">${feesS}</td>
-          <td class="muted">${(t.openedAt||t.OpenedAt||'').toString().slice(0,19)}</td>
-          <td class="muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${t.message||t.Message||''}</td>
-        </tr>`;
-      }).join('')}</tbody></table>`;
+      });
+    });
   },
 
   _exportTrades(fmt) {
@@ -570,7 +659,7 @@ AB.pages.reports = {
     const lines = [cols.join(',')];
     rows.forEach(t => {
       const route = (t.longExchange||t.LongExchange||'?') + '→' + (t.shortExchange||t.ShortExchange||'?');
-      let fees = Number(t.openFeesUsd || 0) + Number(t.closeFeesUsd || 0);
+      const fees = this._parseTradeFees(t).total;
       lines.push([
         t.status||'', t.symbol||t.Symbol||'', route,
         t.baseQty||t.BaseQty||0, t.realizedPnlUsd ?? '', fees,
@@ -582,6 +671,70 @@ AB.pages.reports = {
     a.href = URL.createObjectURL(blob);
     a.download = 'trades-export.csv';
     a.click();
+  },
+
+  _generatePdf() {
+    const p = this._lastPerf || {};
+    const rows = this._filterTrades(this._lastTrades || []);
+    const fund = (document.getElementById('pdfFund') || {}).value || 'ArbitrageBot';
+    const inv = (document.getElementById('pdfInvestor') || {}).value || '—';
+    const note = (document.getElementById('pdfNote') || {}).value || '';
+    const net = Number(p.netPnl) || 0;
+    const fees = Number(p.totalFees) || 0;
+    const gross = Number(p.grossPnl) || (net + fees);
+    const funding = Number(p.totalFunding) || 0;
+    const eq = Number(p.equityBase) || 0;
+    const tradeRows = rows.slice(0, 80).map(t => {
+      const feesT = this._parseTradeFees(t).total;
+      const pnl = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
+      return `<tr>
+        <td>${(t.status||'').toString().slice(0,18)}</td>
+        <td>${t.symbol||t.Symbol||''}</td>
+        <td>${(t.longExchange||'?')}→${(t.shortExchange||'?')}</td>
+        <td style="text-align:right">${pnl != null ? ((pnl>=0?'+':'')+pnl.toFixed(2)) : '—'}</td>
+        <td style="text-align:right">${feesT ? feesT.toFixed(2) : '—'}</td>
+        <td>${(t.openedAt||t.OpenedAt||'').toString().slice(0,16)}</td>
+      </tr>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Statement — ${fund}</title>
+<style>
+  body{font-family:Inter,system-ui,sans-serif;color:#0f172a;padding:32px;max-width:900px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px} .sub{color:#64748b;font-size:12px;margin-bottom:20px}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0 24px}
+  .kpi div{border:1px solid #e2e8f0;border-radius:10px;padding:12px}
+  .kpi .l{font-size:10px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
+  .kpi .v{font-size:18px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+  .pos{color:#16a34a}.neg{color:#dc2626}
+  table{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+  th{text-align:left;border-bottom:2px solid #e2e8f0;padding:8px 6px;color:#64748b;font-size:10px;text-transform:uppercase}
+  td{border-bottom:1px solid #f1f5f9;padding:7px 6px;font-variant-numeric:tabular-nums}
+  .note{margin-top:28px;padding:12px;background:#f8fafc;border-radius:8px;font-size:11px;color:#475569}
+  @media print{body{padding:12px} .noprint{display:none}}
+</style></head><body>
+  <h1>${fund}</h1>
+  <div class="sub">Investor: ${inv} · Window: ${(p.fromUtc||'—')} → ${(p.toUtc||'—')} · Generated ${new Date().toISOString().slice(0,19)}Z</div>
+  <div class="kpi">
+    <div><div class="l">Net PnL</div><div class="v ${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} USDT</div></div>
+    <div><div class="l">Gross</div><div class="v">${gross>=0?'+':''}${gross.toFixed(2)}</div></div>
+    <div><div class="l">Fees</div><div class="v neg">-${Math.abs(fees).toFixed(2)}</div></div>
+    <div><div class="l">Funding</div><div class="v">${funding>=0?'+':''}${funding.toFixed(2)}</div></div>
+    <div><div class="l">Win rate</div><div class="v">${(Number(p.winRate)||0).toFixed(1)}%</div></div>
+    <div><div class="l">Trades</div><div class="v">${p.totalTrades||rows.length}</div></div>
+    <div><div class="l">Profit factor</div><div class="v">${(Number(p.profitFactor)||0).toFixed(2)}</div></div>
+    <div><div class="l">Equity base</div><div class="v">${eq.toFixed(0)} USDT</div></div>
+  </div>
+  <h2 style="font-size:14px;margin:0 0 6px">Trade ledger (${Math.min(rows.length,80)}${rows.length>80?' of '+rows.length:''})</h2>
+  <table><thead><tr><th>Status</th><th>Symbol</th><th>Route</th><th>Net</th><th>Fees</th><th>Opened</th></tr></thead>
+  <tbody>${tradeRows||'<tr><td colspan="6">No trades</td></tr>'}</tbody></table>
+  <div class="note">${note.replace(/</g,'&lt;')}</div>
+  <p class="noprint" style="margin-top:20px"><button onclick="window.print()">Print / Save as PDF</button></p>
+  <script>setTimeout(()=>window.print(),400)<\/script>
+</body></html>`;
+    const w = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
+    if (!w) { alert('Allow popups to generate PDF'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
   },
 
   // ── Live balances + positions (REST) ─────────────────────────────────────
@@ -811,6 +964,20 @@ document.getElementById('repFilterReset')?.addEventListener('click', () => {
 });
 document.getElementById('repExportCsv')?.addEventListener('click', () => AB.pages.reports._exportTrades('csv'));
 document.getElementById('repExportJson')?.addEventListener('click', () => AB.pages.reports._exportTrades('json'));
+document.getElementById('repExportPdf')?.addEventListener('click', () => {
+  const m = document.getElementById('repPdfModal');
+  if (m) m.classList.add('show');
+});
+document.getElementById('repPdfCancel')?.addEventListener('click', () => {
+  document.getElementById('repPdfModal')?.classList.remove('show');
+});
+document.getElementById('repPdfGo')?.addEventListener('click', () => {
+  document.getElementById('repPdfModal')?.classList.remove('show');
+  AB.pages.reports._generatePdf();
+});
+document.getElementById('repPdfModal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'repPdfModal') e.target.classList.remove('show');
+});
 
 // ── Funding Rates panel (Live mode) ──────────────────────────────────────────
 AB.pages.reports.renderFunding = function (fundingData) {
