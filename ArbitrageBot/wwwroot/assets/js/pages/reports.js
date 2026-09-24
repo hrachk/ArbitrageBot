@@ -469,6 +469,9 @@ AB.pages.reports = {
     }
   },
 
+  _filterRoutes: [],
+  _filterSymbols: [],
+
   _fillFilterOptions(trades) {
     const routes = new Set(), symbols = new Set();
     (trades || []).forEach(t => {
@@ -476,15 +479,47 @@ AB.pages.reports = {
       routes.add(r);
       symbols.add(t.symbol || t.Symbol || '?');
     });
-    const fill = (id, values) => {
+    this._allRoutes = [...routes].sort();
+    this._allSymbols = [...symbols].sort();
+    const fillAdd = (id, values, selected) => {
       const el = AB.$(id);
       if (!el) return;
-      const prev = new Set([...el.selectedOptions].map(o => o.value));
-      el.innerHTML = [...values].sort().map(v =>
-        `<option value="${v.replace(/"/g, '')}" ${prev.has(v) ? 'selected' : ''}>${v}</option>`).join('');
+      const sel = new Set(selected || []);
+      el.innerHTML = '<option value="">+ add…</option>' +
+        values.filter(v => !sel.has(v)).map(v =>
+          `<option value="${String(v).replace(/"/g, '')}">${v}</option>`).join('');
     };
-    fill('repFilterRoute', routes);
-    fill('repFilterSymbol', symbols);
+    fillAdd('repFilterRouteAdd', this._allRoutes, this._filterRoutes);
+    fillAdd('repFilterSymbolAdd', this._allSymbols, this._filterSymbols);
+    this._renderFilterChips();
+  },
+
+  _renderFilterChips() {
+    const mk = (containerId, list, kind) => {
+      const el = AB.$(containerId);
+      if (!el) return;
+      if (!list.length) {
+        el.innerHTML = '<span class="muted" style="font-size:11px">all</span>';
+        return;
+      }
+      el.innerHTML = list.map(v =>
+        `<span class="rep-tag" data-kind="${kind}" data-val="${String(v).replace(/"/g, '')}">${v}<button type="button" aria-label="remove">×</button></span>`
+      ).join('');
+      el.querySelectorAll('.rep-tag button').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const tag = btn.closest('.rep-tag');
+          const val = tag.getAttribute('data-val');
+          const k = tag.getAttribute('data-kind');
+          if (k === 'route') this._filterRoutes = this._filterRoutes.filter(x => x !== val);
+          else this._filterSymbols = this._filterSymbols.filter(x => x !== val);
+          this._fillFilterOptions(this._lastTrades || []);
+          this._renderTradeTable(this._filterTrades(this._lastTrades || []));
+        });
+      });
+    };
+    mk('repRouteChips', this._filterRoutes, 'route');
+    mk('repSymbolChips', this._filterSymbols, 'symbol');
   },
 
   _filterTrades(trades) {
@@ -500,16 +535,14 @@ AB.pages.reports = {
     if (st === 'open') rows = rows.filter(t => /^open$/i.test(String(t.status || '').trim()) || t.realizedPnlUsd == null);
     if (st === 'tp') rows = rows.filter(t => /tp|take/i.test(String(t.status || '') + String(t.message || '')));
     if (st === 'sl') rows = rows.filter(t => /sl|stop/i.test(String(t.status || '') + String(t.message || '')));
-    const selRoutes = AB.$('repFilterRoute') ? [...AB.$('repFilterRoute').selectedOptions].map(o => o.value) : [];
-    const selSyms = AB.$('repFilterSymbol') ? [...AB.$('repFilterSymbol').selectedOptions].map(o => o.value) : [];
-    if (selRoutes.length) {
+    if (this._filterRoutes.length) {
       rows = rows.filter(t => {
         const r = (t.longExchange || t.LongExchange || '?') + '→' + (t.shortExchange || t.ShortExchange || '?');
-        return selRoutes.includes(r);
+        return this._filterRoutes.includes(r);
       });
     }
-    if (selSyms.length) {
-      rows = rows.filter(t => selSyms.includes(t.symbol || t.Symbol || '?'));
+    if (this._filterSymbols.length) {
+      rows = rows.filter(t => this._filterSymbols.includes(t.symbol || t.Symbol || '?'));
     }
     return rows;
   },
@@ -540,14 +573,15 @@ AB.pages.reports = {
   _renderTradeTable(rows) {
     const box = AB.$('perfTrades');
     const tc = AB.$('tableCount');
-    if (tc) tc.textContent = (rows ? rows.length : 0) + ' trades · click row → legs';
+    if (tc) tc.textContent = (rows ? rows.length : 0) + ' trades · click → legs';
     if (!box) return;
     if (!rows || !rows.length) {
       box.innerHTML = '<div class="empty" style="padding:20px">No trades for current filters</div>';
       return;
     }
-    const body = rows.map((t, i) => {
-      const id = 'tracc_' + i;
+
+    const cards = rows.map((t, i) => {
+      const id = 'trcard_' + i;
       const st = this._statusBadge(t.status, t.message || t.Message);
       const sym = t.symbol || t.Symbol || '—';
       const longEx = t.longExchange || t.LongExchange || '?';
@@ -564,7 +598,7 @@ AB.pages.reports = {
       const fund = Number(t.fundingUsd || t.FundingUsd || 0);
       const pnlN = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
       const pnlS = pnlN != null ? ((pnlN >= 0 ? '+' : '') + AB.fmt(pnlN, 2)) : '—';
-      const pnlCls = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : '';
+      const pnlCls = pnlN != null ? (pnlN > 0 ? 'pos' : pnlN < 0 ? 'neg' : '') : 'muted';
       const grossN = t.grossPnlUsd != null ? Number(t.grossPnlUsd)
         : (pnlN != null ? pnlN + fees.total - fund : null);
       const grossS = grossN != null ? ((grossN >= 0 ? '+' : '') + AB.fmt(grossN, 2)) : '—';
@@ -577,76 +611,64 @@ AB.pages.reports = {
       const msg = String(t.message || t.Message || '');
       const slipM = msg.match(/slip(?:page)?[^\d]*([0-9]*\.?[0-9]+)/i);
       const slip = slipM ? slipM[1] + ' bps' : (t.slippageBps != null ? t.slippageBps + ' bps' : '—');
-      const legLongId = t.longOrderId || t.LongOrderId || '—';
-      const legShortId = t.shortOrderId || t.ShortOrderId || '—';
 
-      return `<tr class="rep-tr" data-acc="${id}">
-        <td><span class="st ${st.cls}">${st.label}</span></td>
-        <td class="mono" style="font-weight:600">${sym}</td>
-        <td class="muted">${route}</td>
-        <td class="mono">${sizeS}</td>
-        <td class="mono ${grossN > 0 ? 'pos' : grossN < 0 ? 'neg' : ''}">${grossS}</td>
-        <td class="mono muted">${fees.total ? AB.fmt(fees.total, 2) : '—'}</td>
-        <td class="mono muted">${fund ? ((fund >= 0 ? '+' : '') + AB.fmt(fund, 2)) : '—'}</td>
-        <td class="mono ${pnlCls}" style="font-weight:600">${pnlS}</td>
-        <td class="muted">${dur}</td>
-        <td class="muted mono" style="font-size:11px">${opened}</td>
-      </tr>
-      <tr class="rep-acc" id="${id}" style="display:none" hidden>
-        <td colspan="10">
+      return `<div class="tl-card" data-id="${id}">
+        <div class="tl-row" role="button" tabindex="0">
+          <div class="tl-c st-c"><span class="st ${st.cls}">${st.label}</span></div>
+          <div class="tl-c mono tl-sym">${sym}</div>
+          <div class="tl-c muted tl-route">${route}</div>
+          <div class="tl-c mono">${sizeS}</div>
+          <div class="tl-c mono ${grossN > 0 ? 'pos' : grossN < 0 ? 'neg' : 'muted'}">${grossS}</div>
+          <div class="tl-c mono muted">${fees.total ? AB.fmt(fees.total, 2) : '—'}</div>
+          <div class="tl-c mono muted">${fund ? ((fund >= 0 ? '+' : '') + AB.fmt(fund, 2)) : '—'}</div>
+          <div class="tl-c mono ${pnlCls} tl-pnl">${pnlS}</div>
+          <div class="tl-c muted">${dur}</div>
+          <div class="tl-c muted mono tl-time">${opened}</div>
+          <div class="tl-c tl-chev">▸</div>
+        </div>
+        <div class="tl-detail" id="${id}" hidden>
           <div class="acc-grid">
             <div>
-              <div class="acc-h">Leg A (Long ${longEx})</div>
+              <div class="acc-h">Leg A · Long ${longEx}</div>
               Entry <code>${le ? AB.fmt(le, 6) : '—'}</code>${lx ? ' · Exit <code>' + AB.fmt(lx, 6) + '</code>' : ''}<br/>
-              Order <code>${legLongId}</code><br/>
               Open fee <code>${fees.openF ? AB.fmt(fees.openF, 2) : '—'}</code> USDT
             </div>
             <div>
-              <div class="acc-h">Leg B (Short ${shortEx})</div>
+              <div class="acc-h">Leg B · Short ${shortEx}</div>
               Entry <code>${se ? AB.fmt(se, 6) : '—'}</code>${sx ? ' · Exit <code>' + AB.fmt(sx, 6) + '</code>' : ''}<br/>
-              Order <code>${legShortId}</code><br/>
               Close fee <code>${fees.closeF ? AB.fmt(fees.closeF, 2) : '—'}</code> USDT
             </div>
-            <div style="grid-column:1/-1;margin-top:6px;opacity:.85">
+            <div class="tl-note">
               Slippage <code>${slip}</code> · Qty <code>${AB.fmt(bq, 4)}</code>
-              ${msg ? ' · ' + msg.slice(0, 120) : ''}
+              ${msg ? ' · ' + msg.slice(0, 140) : ''}
             </div>
           </div>
-        </td>
-      </tr>`;
+        </div>
+      </div>`;
     }).join('');
 
-    box.innerHTML = `<table class="rep-trades">
-      <thead><tr>
-        <th>Status</th><th>Symbol</th><th>Route</th><th>Size</th>
-        <th>Gross</th><th>Fees</th><th>Fund</th><th>Net PnL</th>
-        <th>Duration</th><th>Opened</th>
-      </tr></thead>
-      <tbody>${body}</tbody>
-    </table>`;
+    box.innerHTML =
+      `<div class="tl-head">
+        <div class="tl-c">Status</div><div class="tl-c">Symbol</div><div class="tl-c">Route</div>
+        <div class="tl-c">Size</div><div class="tl-c">Gross</div><div class="tl-c">Fees</div>
+        <div class="tl-c">Fund</div><div class="tl-c">Net PnL</div><div class="tl-c">Dur</div>
+        <div class="tl-c">Opened</div><div class="tl-c"></div>
+      </div>
+      <div class="tl-list">${cards}</div>`;
 
-    const closeAll = () => {
-      box.querySelectorAll('tr.rep-acc').forEach(a => {
-        a.style.display = 'none';
-        a.hidden = true;
-        a.classList.remove('show');
-      });
-      box.querySelectorAll('tr.rep-tr.expanded').forEach(r => r.classList.remove('expanded'));
-    };
-
-    box.querySelectorAll('tr.rep-tr').forEach(tr => {
-      tr.addEventListener('click', (e) => {
-        e.preventDefault();
-        const accId = tr.getAttribute('data-acc');
-        const acc = document.getElementById(accId);
-        if (!acc) return;
-        const wasOpen = !acc.hidden && acc.style.display !== 'none';
-        closeAll();
-        if (!wasOpen) {
-          acc.hidden = false;
-          acc.style.display = 'table-row';
-          acc.classList.add('show');
-          tr.classList.add('expanded');
+    box.querySelectorAll('.tl-card .tl-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const card = row.closest('.tl-card');
+        const det = card.querySelector('.tl-detail');
+        const open = !det.hidden;
+        box.querySelectorAll('.tl-detail').forEach(d => { d.hidden = true; });
+        box.querySelectorAll('.tl-card.open').forEach(c => c.classList.remove('open'));
+        box.querySelectorAll('.tl-chev').forEach(c => { c.textContent = '▸'; });
+        if (!open) {
+          det.hidden = false;
+          card.classList.add('open');
+          const chev = row.querySelector('.tl-chev');
+          if (chev) chev.textContent = '▾';
         }
       });
     });
@@ -960,14 +982,37 @@ document.getElementById('repFilterApply')?.addEventListener('click', () => {
 document.getElementById('repFilterReset')?.addEventListener('click', () => {
   const r = AB.pages.reports;
   r._dayFilter = null;
+  r._filterRoutes = [];
+  r._filterSymbols = [];
   const st = document.getElementById('repFilterStatus');
   if (st) st.value = 'all';
-  ['repFilterRoute', 'repFilterSymbol'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) [...el.options].forEach(o => { o.selected = false; });
-  });
+  const mode = document.getElementById('repFilterMode');
+  if (mode) mode.value = 'paper';
   const lbl = document.getElementById('repDayFilterLbl');
   if (lbl) lbl.textContent = '';
+  r._fillFilterOptions(r._lastTrades || []);
+  r._renderTradeTable(r._filterTrades(r._lastTrades || []));
+});
+document.getElementById('repFilterRouteAdd')?.addEventListener('change', (e) => {
+  const v = e.target.value;
+  if (!v) return;
+  const r = AB.pages.reports;
+  if (!r._filterRoutes.includes(v)) r._filterRoutes.push(v);
+  e.target.value = '';
+  r._fillFilterOptions(r._lastTrades || []);
+  r._renderTradeTable(r._filterTrades(r._lastTrades || []));
+});
+document.getElementById('repFilterSymbolAdd')?.addEventListener('change', (e) => {
+  const v = e.target.value;
+  if (!v) return;
+  const r = AB.pages.reports;
+  if (!r._filterSymbols.includes(v)) r._filterSymbols.push(v);
+  e.target.value = '';
+  r._fillFilterOptions(r._lastTrades || []);
+  r._renderTradeTable(r._filterTrades(r._lastTrades || []));
+});
+document.getElementById('repFilterStatus')?.addEventListener('change', () => {
+  const r = AB.pages.reports;
   r._renderTradeTable(r._filterTrades(r._lastTrades || []));
 });
 document.getElementById('repExportCsv')?.addEventListener('click', () => AB.pages.reports._exportTrades('csv'));

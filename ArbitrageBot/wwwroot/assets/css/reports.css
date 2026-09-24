@@ -31,9 +31,11 @@
   background:#0c2a3d!important;border-color:#0ea5e9!important;color:#7dd3fc!important;
 }
 .page[data-page="reports"] .rep-date{
-  background:var(--rb);border:1px solid var(--rl2);color:var(--rt);
-  padding:6px 8px;border-radius:6px;font-size:12px;
+  background:var(--rb)!important;border:1px solid var(--rl2)!important;color:var(--rt)!important;
+  padding:7px 10px;border-radius:8px;font-size:12px;font-family:inherit;
+  color-scheme:dark;min-width:138px;
 }
+.page[data-page="reports"] .rep-date::-webkit-calendar-picker-indicator{filter:invert(.7);cursor:pointer}
 .page[data-page="reports"] .rep-time-ctx{margin-top:10px;font-size:11px;color:var(--rd);font-family:var(--mono)}
 .page[data-page="reports"] .rep-time-ctx strong{color:var(--rc);font-weight:500}
 
@@ -146,59 +148,61 @@
 .page[data-page="reports"] .hm-pos-1 .p,.page[data-page="reports"] .hm-pos-2 .p,.page[data-page="reports"] .hm-pos-3 .p{color:#86efac}
 .page[data-page="reports"] .hm-neg-1 .p,.page[data-page="reports"] .hm-neg-2 .p{color:#fca5a5}
 
-/* Accordion ledger — rows compact; details ONLY on click (inline display:none) */
+/* Trade ledger — CSS grid cards (no table accordion) */
 #perfTrades.rep-table-wrap,
 .page[data-page="reports"] .rep-table-wrap{
-  overflow:auto!important;max-height:420px;border-radius:8px;border:1px solid var(--rl);
+  overflow:auto!important;max-height:440px;border-radius:0 0 12px 12px;border:0;
 }
-#perfTrades table.rep-trades,
-.page[data-page="reports"] table.rep-trades{
-  width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;
+.page[data-page="reports"] .tl-head,
+.page[data-page="reports"] .tl-row{
+  display:grid;
+  grid-template-columns:118px 88px minmax(110px,1.2fr) 64px 72px 56px 56px 72px 52px 118px 28px;
+  gap:0 8px;align-items:center;padding:0 12px;font-size:12px;
 }
-#perfTrades table.rep-trades th,
-.page[data-page="reports"] table.rep-trades th{
-  position:sticky;top:0;background:#0e1520;text-align:left;padding:10px 10px;
-  color:var(--rd);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.04em;
-  border-bottom:1px solid var(--rl);white-space:nowrap;z-index:2;
+.page[data-page="reports"] .tl-head{
+  position:sticky;top:0;z-index:2;background:#0e1520;padding:10px 12px;
+  border-bottom:1px solid var(--rl);color:var(--rd);font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;
 }
-#perfTrades table.rep-trades td,
-.page[data-page="reports"] table.rep-trades td{
-  padding:9px 10px;border-bottom:1px solid rgba(36,48,65,.6);white-space:nowrap;
-  font-variant-numeric:tabular-nums;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;
+.page[data-page="reports"] .tl-card{border-bottom:1px solid rgba(36,48,65,.7)}
+.page[data-page="reports"] .tl-card:last-child{border-bottom:0}
+.page[data-page="reports"] .tl-row{min-height:44px;cursor:pointer;transition:background .12s}
+.page[data-page="reports"] .tl-row:hover{background:rgba(56,189,248,.05)}
+.page[data-page="reports"] .tl-card.open .tl-row{background:#0f1824}
+.page[data-page="reports"] .tl-c{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;
 }
-#perfTrades table.rep-trades tr.rep-tr,
-.page[data-page="reports"] table.rep-trades tr.rep-tr{cursor:pointer}
-#perfTrades table.rep-trades tr.rep-tr:hover td{background:rgba(56,189,248,.05)}
-#perfTrades table.rep-trades tr.rep-tr.expanded td{background:#0f1824}
-/* Force-hide detail rows until JS opens them */
-#perfTrades tr.rep-acc,
-.page[data-page="reports"] tr.rep-acc,
-tr.rep-acc[hidden]{display:none!important}
-#perfTrades tr.rep-acc.show,
-.page[data-page="reports"] tr.rep-acc.show{display:table-row!important}
-#perfTrades tr.rep-acc td,
-.page[data-page="reports"] tr.rep-acc td{
-  padding:14px 16px!important;white-space:normal!important;background:#0a1018;
-  border-bottom:1px solid var(--rl);overflow:visible;text-overflow:clip;
+.page[data-page="reports"] .tl-sym{font-weight:600;color:var(--rt)}
+.page[data-page="reports"] .tl-pnl{font-weight:700}
+.page[data-page="reports"] .tl-chev{color:var(--rd);text-align:center;font-size:11px}
+.page[data-page="reports"] .tl-detail{
+  padding:12px 16px 14px;background:#0a1018;border-top:1px solid rgba(36,48,65,.5);
 }
-#perfTrades .acc-grid,
+.page[data-page="reports"] .tl-detail[hidden]{display:none!important}
+.page[data-page="reports"] .tl-note{
+  grid-column:1/-1;margin-top:4px;font-size:11px;color:var(--rd);line-height:1.45;
+}
 .page[data-page="reports"] .acc-grid{
   display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:12px;color:var(--rm);line-height:1.55;
 }
-#perfTrades .acc-grid code,
 .page[data-page="reports"] .acc-grid code{
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#22d3ee;font-size:11px;
 }
-#perfTrades .acc-h,
 .page[data-page="reports"] .acc-h{color:#e8eef6;font-weight:600;margin-bottom:6px;font-size:12px}
-#perfTrades .st,
 .page[data-page="reports"] .st{
   display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;white-space:nowrap;
 }
-#perfTrades .st-open,.page[data-page="reports"] .st-open{background:#0c2a3d;color:#7dd3fc}
-#perfTrades .st-tp,.page[data-page="reports"] .st-tp{background:#0c1f14;color:#86efac}
-#perfTrades .st-sl,.page[data-page="reports"] .st-sl{background:#2a1212;color:#fca5a5}
-#perfTrades .st-manual,.page[data-page="reports"] .st-manual{background:#1e1b2e;color:#c4b5fd}
+.page[data-page="reports"] .st-open{background:#0c2a3d;color:#7dd3fc}
+.page[data-page="reports"] .st-tp{background:#0c1f14;color:#86efac}
+.page[data-page="reports"] .st-sl{background:#2a1212;color:#fca5a5}
+.page[data-page="reports"] .st-manual{background:#1e1b2e;color:#c4b5fd}
+@media (max-width:1100px){
+  .page[data-page="reports"] .tl-head,
+  .page[data-page="reports"] .tl-row{
+    grid-template-columns:100px 80px 1fr 56px 64px 48px 48px 64px 44px 100px 24px;
+    font-size:11px;
+  }
+}
 
 /* Skip bars — mockup gradient */
 .page[data-page="reports"] .rep-skip-card{margin-top:12px}
