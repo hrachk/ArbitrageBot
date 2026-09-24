@@ -592,27 +592,24 @@ AB.pages.reports = {
         <td class="muted">${dur}</td>
         <td class="muted mono" style="font-size:11px">${opened}</td>
       </tr>
-      <tr class="rep-acc" id="${id}">
+      <tr class="rep-acc" id="${id}" style="display:none" hidden>
         <td colspan="10">
           <div class="acc-grid">
             <div>
               <div class="acc-h">Leg A (Long ${longEx})</div>
-              Entry <code>${le ? AB.fmt(le, 6) : '—'}</code>
-              ${lx ? ' · Exit <code>' + AB.fmt(lx, 6) + '</code>' : ''}
-              <br/>Order <code>${legLongId}</code>
-              <br/>Open fee <code>${fees.openF ? AB.fmt(fees.openF, 2) : '—'}</code> USDT
+              Entry <code>${le ? AB.fmt(le, 6) : '—'}</code>${lx ? ' · Exit <code>' + AB.fmt(lx, 6) + '</code>' : ''}<br/>
+              Order <code>${legLongId}</code><br/>
+              Open fee <code>${fees.openF ? AB.fmt(fees.openF, 2) : '—'}</code> USDT
             </div>
             <div>
               <div class="acc-h">Leg B (Short ${shortEx})</div>
-              Entry <code>${se ? AB.fmt(se, 6) : '—'}</code>
-              ${sx ? ' · Exit <code>' + AB.fmt(sx, 6) + '</code>' : ''}
-              <br/>Order <code>${legShortId}</code>
-              <br/>Close fee <code>${fees.closeF ? AB.fmt(fees.closeF, 2) : '—'}</code> USDT
+              Entry <code>${se ? AB.fmt(se, 6) : '—'}</code>${sx ? ' · Exit <code>' + AB.fmt(sx, 6) + '</code>' : ''}<br/>
+              Order <code>${legShortId}</code><br/>
+              Close fee <code>${fees.closeF ? AB.fmt(fees.closeF, 2) : '—'}</code> USDT
             </div>
-            <div style="grid-column:1/-1;margin-top:4px">
-              Slippage est. <code>${slip}</code>
-              · Qty <code>${AB.fmt(bq, 4)}</code>
-              · ${msg ? ('Note: ' + msg.slice(0, 160)) : 'click elsewhere to collapse'}
+            <div style="grid-column:1/-1;margin-top:6px;opacity:.85">
+              Slippage <code>${slip}</code> · Qty <code>${AB.fmt(bq, 4)}</code>
+              ${msg ? ' · ' + msg.slice(0, 120) : ''}
             </div>
           </div>
         </td>
@@ -628,15 +625,26 @@ AB.pages.reports = {
       <tbody>${body}</tbody>
     </table>`;
 
+    const closeAll = () => {
+      box.querySelectorAll('tr.rep-acc').forEach(a => {
+        a.style.display = 'none';
+        a.hidden = true;
+        a.classList.remove('show');
+      });
+      box.querySelectorAll('tr.rep-tr.expanded').forEach(r => r.classList.remove('expanded'));
+    };
+
     box.querySelectorAll('tr.rep-tr').forEach(tr => {
-      tr.addEventListener('click', () => {
+      tr.addEventListener('click', (e) => {
+        e.preventDefault();
         const accId = tr.getAttribute('data-acc');
         const acc = document.getElementById(accId);
         if (!acc) return;
-        const open = acc.classList.contains('show');
-        box.querySelectorAll('tr.rep-acc.show').forEach(a => a.classList.remove('show'));
-        box.querySelectorAll('tr.rep-tr.expanded').forEach(r => r.classList.remove('expanded'));
-        if (!open) {
+        const wasOpen = !acc.hidden && acc.style.display !== 'none';
+        closeAll();
+        if (!wasOpen) {
+          acc.hidden = false;
+          acc.style.display = 'table-row';
           acc.classList.add('show');
           tr.classList.add('expanded');
         }
