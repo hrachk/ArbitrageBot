@@ -709,59 +709,147 @@ AB.pages.reports = {
     const fund = (document.getElementById('pdfFund') || {}).value || 'ArbitrageBot';
     const inv = (document.getElementById('pdfInvestor') || {}).value || '—';
     const note = (document.getElementById('pdfNote') || {}).value || '';
+    const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const net = Number(p.netPnl) || 0;
     const fees = Number(p.totalFees) || 0;
     const gross = Number(p.grossPnl) || (net + fees);
     const funding = Number(p.totalFunding) || 0;
     const eq = Number(p.equityBase) || 0;
-    const tradeRows = rows.slice(0, 80).map(t => {
-      const feesT = this._parseTradeFees(t).total;
-      const pnl = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
+    const netPctEq = eq > 0 ? (net / eq * 100) : 0;
+    const feesPctG = gross !== 0 ? (Math.abs(fees) / Math.abs(gross) * 100) : 0;
+    const genAt = new Date().toISOString().slice(0, 19) + 'Z';
+    const from = p.fromUtc || '—';
+    const to = p.toUtc || '—';
+
+    const daily = p.daily || [];
+    const dayRows = daily.filter(d => d.hasActivity || Number(d.pnl) || Number(d.trades)).map(d0 => {
+      const n = Number(d0.pnl) || 0;
+      const tr = Number(d0.trades || d0.Trades || 0);
       return `<tr>
-        <td>${(t.status||'').toString().slice(0,18)}</td>
-        <td>${t.symbol||t.Symbol||''}</td>
-        <td>${(t.longExchange||'?')}→${(t.shortExchange||'?')}</td>
-        <td style="text-align:right">${pnl != null ? ((pnl>=0?'+':'')+pnl.toFixed(2)) : '—'}</td>
-        <td style="text-align:right">${feesT ? feesT.toFixed(2) : '—'}</td>
-        <td>${(t.openedAt||t.OpenedAt||'').toString().slice(0,16)}</td>
+        <td>${esc(d0.day || d0.Day || '')}</td>
+        <td class="${n >= 0 ? 'pos' : 'neg'}" style="text-align:right">${n >= 0 ? '+' : ''}${n.toFixed(2)}</td>
+        <td style="text-align:right">${tr}</td>
       </tr>`;
     }).join('');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Statement — ${fund}</title>
+
+    const tradeRows = rows.slice(0, 120).map(t => {
+      const feesT = this._parseTradeFees(t).total;
+      const pnl = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
+      const st = this._statusBadge(t.status, t.message || t.Message).label;
+      const route = (t.longExchange || t.LongExchange || '?') + '→' + (t.shortExchange || t.ShortExchange || '?');
+      const bq = Number(t.baseQty || t.BaseQty || 0);
+      const le = Number(t.longEntry || t.LongEntry || 0);
+      const size = bq && le ? Math.abs(bq * le) : 0;
+      return `<tr>
+        <td>${esc(st)}</td>
+        <td><b>${esc(t.symbol || t.Symbol || '')}</b></td>
+        <td>${esc(route)}</td>
+        <td style="text-align:right">${size ? size.toFixed(0) : '—'}</td>
+        <td class="${pnl != null && pnl >= 0 ? 'pos' : 'neg'}" style="text-align:right">${pnl != null ? ((pnl >= 0 ? '+' : '') + pnl.toFixed(2)) : '—'}</td>
+        <td style="text-align:right">${feesT ? feesT.toFixed(2) : '—'}</td>
+        <td>${esc((t.openedAt || t.OpenedAt || '').toString().replace('T', ' ').slice(0, 16))}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>${esc(fund)} — Performance Statement</title>
 <style>
-  body{font-family:Inter,system-ui,sans-serif;color:#0f172a;padding:32px;max-width:900px;margin:0 auto}
-  h1{font-size:22px;margin:0 0 4px} .sub{color:#64748b;font-size:12px;margin-bottom:20px}
-  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0 24px}
-  .kpi div{border:1px solid #e2e8f0;border-radius:10px;padding:12px}
-  .kpi .l{font-size:10px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
-  .kpi .v{font-size:18px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
-  .pos{color:#16a34a}.neg{color:#dc2626}
-  table{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
-  th{text-align:left;border-bottom:2px solid #e2e8f0;padding:8px 6px;color:#64748b;font-size:10px;text-transform:uppercase}
-  td{border-bottom:1px solid #f1f5f9;padding:7px 6px;font-variant-numeric:tabular-nums}
-  .note{margin-top:28px;padding:12px;background:#f8fafc;border-radius:8px;font-size:11px;color:#475569}
-  @media print{body{padding:12px} .noprint{display:none}}
+  @page{size:A4;margin:16mm}
+  *{box-sizing:border-box}
+  body{font-family:Inter,Segoe UI,system-ui,sans-serif;color:#0f172a;margin:0;padding:28px 32px;background:#fff}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:16px;margin-bottom:20px}
+  .brand{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#64748b;margin-bottom:4px}
+  h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-.02em}
+  .meta{text-align:right;font-size:11px;color:#64748b;line-height:1.55}
+  .meta b{color:#0f172a;font-weight:600}
+  .sec{margin:22px 0 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#334155}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:8px 0 6px}
+  .kpi>div{border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#fafbfc}
+  .kpi .l{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:#64748b}
+  .kpi .v{font-size:17px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+  .kpi .s{font-size:10px;color:#94a3b8;margin-top:2px}
+  .pos{color:#15803d}.neg{color:#b91c1c}
+  .split{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-top:8px}
+  .box{border:1px solid #e2e8f0;border-radius:10px;padding:14px}
+  .box h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+  .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+  .row:last-child{border:0;padding-top:10px;font-weight:700;font-size:14px}
+  table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:6px}
+  th{text-align:left;border-bottom:2px solid #e2e8f0;padding:8px 6px;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:.04em}
+  td{border-bottom:1px solid #f1f5f9;padding:6px;font-variant-numeric:tabular-nums;vertical-align:top}
+  .note{margin-top:24px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:10.5px;color:#475569;line-height:1.5}
+  .foot{margin-top:20px;font-size:9px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
+  .noprint{margin-top:18px}
+  .noprint button{background:#0f172a;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer}
+  @media print{body{padding:0}.noprint{display:none}}
 </style></head><body>
-  <h1>${fund}</h1>
-  <div class="sub">Investor: ${inv} · Window: ${(p.fromUtc||'—')} → ${(p.toUtc||'—')} · Generated ${new Date().toISOString().slice(0,19)}Z</div>
-  <div class="kpi">
-    <div><div class="l">Net PnL</div><div class="v ${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} USDT</div></div>
-    <div><div class="l">Gross</div><div class="v">${gross>=0?'+':''}${gross.toFixed(2)}</div></div>
-    <div><div class="l">Fees</div><div class="v neg">-${Math.abs(fees).toFixed(2)}</div></div>
-    <div><div class="l">Funding</div><div class="v">${funding>=0?'+':''}${funding.toFixed(2)}</div></div>
-    <div><div class="l">Win rate</div><div class="v">${(Number(p.winRate)||0).toFixed(1)}%</div></div>
-    <div><div class="l">Trades</div><div class="v">${p.totalTrades||rows.length}</div></div>
-    <div><div class="l">Profit factor</div><div class="v">${(Number(p.profitFactor)||0).toFixed(2)}</div></div>
-    <div><div class="l">Equity base</div><div class="v">${eq.toFixed(0)} USDT</div></div>
+  <div class="hdr">
+    <div>
+      <div class="brand">Cross-exchange arbitrage · performance statement</div>
+      <h1>${esc(fund)}</h1>
+    </div>
+    <div class="meta">
+      Prepared for: <b>${esc(inv)}</b><br/>
+      Period: <b>${esc(from)}</b> → <b>${esc(to)}</b><br/>
+      Generated: ${esc(genAt)}<br/>
+      Mode: Paper / Demo · filtered ledger
+    </div>
   </div>
-  <h2 style="font-size:14px;margin:0 0 6px">Trade ledger (${Math.min(rows.length,80)}${rows.length>80?' of '+rows.length:''})</h2>
-  <table><thead><tr><th>Status</th><th>Symbol</th><th>Route</th><th>Net</th><th>Fees</th><th>Opened</th></tr></thead>
-  <tbody>${tradeRows||'<tr><td colspan="6">No trades</td></tr>'}</tbody></table>
-  <div class="note">${note.replace(/</g,'&lt;')}</div>
-  <p class="noprint" style="margin-top:20px"><button onclick="window.print()">Print / Save as PDF</button></p>
-  <script>setTimeout(()=>window.print(),400)<\/script>
+
+  <div class="sec">Executive summary</div>
+  <div class="kpi">
+    <div><div class="l">Net PnL</div><div class="v ${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} <span style="font-size:11px">USDT</span></div>
+      <div class="s">${netPctEq>=0?'+':''}${netPctEq.toFixed(2)}% of equity base</div></div>
+    <div><div class="l">Win rate</div><div class="v">${(Number(p.winRate)||0).toFixed(1)}%</div>
+      <div class="s">${p.wins!=null?(p.wins+' / '+(p.totalTrades||0)+' closed'):'—'}</div></div>
+    <div><div class="l">Total trades</div><div class="v">${p.totalTrades||rows.length}</div>
+      <div class="s">in selected window / filters</div></div>
+    <div><div class="l">Profit factor</div><div class="v">${(Number(p.profitFactor)||0).toFixed(2)}</div>
+      <div class="s">max DD ${(Number(p.maxDrawdown)||0).toFixed(2)} USDT</div></div>
+  </div>
+
+  <div class="split">
+    <div class="box">
+      <h3>Gross vs Net breakdown</h3>
+      <div class="row"><span>Gross (leg A/B price Δ)</span><span class="${gross>=0?'pos':'neg'}">${gross>=0?'+':''}${gross.toFixed(2)}</span></div>
+      <div class="row"><span>− Total fees (open+close)</span><span class="neg">−${Math.abs(fees).toFixed(2)} <span style="color:#94a3b8;font-weight:400">(${feesPctG.toFixed(1)}% gross)</span></span></div>
+      <div class="row"><span>± Funding</span><span>${funding>=0?'+':''}${funding.toFixed(2)}</span></div>
+      <div class="row"><span>= Net PnL</span><span class="${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} USDT</span></div>
+    </div>
+    <div class="box">
+      <h3>Risk &amp; expectancy</h3>
+      <div class="row"><span>Equity base</span><span>${eq.toFixed(0)} USDT</span></div>
+      <div class="row"><span>Avg win / avg loss</span><span>${(Number(p.avgWin)||0).toFixed(2)} / ${(Number(p.avgLoss)||0).toFixed(2)}</span></div>
+      <div class="row"><span>Expectancy</span><span>${(Number(p.expectancy)||0)>=0?'+':''}${(Number(p.expectancy)||0).toFixed(2)}</span></div>
+      <div class="row"><span>Avg duration</span><span>${(Number(p.avgDurationMin)||0).toFixed(1)} min</span></div>
+    </div>
+  </div>
+
+  ${dayRows ? `<div class="sec">Daily realized</div>
+  <table><thead><tr><th>Day (UTC)</th><th style="text-align:right">Net PnL</th><th style="text-align:right">Trades</th></tr></thead>
+  <tbody>${dayRows}</tbody></table>` : ''}
+
+  <div class="sec">Trade ledger (${Math.min(rows.length, 120)}${rows.length > 120 ? ' of ' + rows.length : ''})</div>
+  <table>
+    <thead><tr>
+      <th>Status</th><th>Symbol</th><th>Route</th><th style="text-align:right">Size</th>
+      <th style="text-align:right">Net</th><th style="text-align:right">Fees</th><th>Opened</th>
+    </tr></thead>
+    <tbody>${tradeRows || '<tr><td colspan="7">No trades in range</td></tr>'}</tbody>
+  </table>
+
+  <div class="note"><b>Disclaimer / notes</b><br/>${esc(note)}</div>
+  <div class="foot">ArbitrageBot · paper analytics · not investment advice · figures from local ledger for selected TimeRange and filters.</div>
+  <p class="noprint"><button onclick="window.print()">Print / Save as PDF</button>
+    <span style="margin-left:12px;font-size:12px;color:#64748b">In the print dialog choose «Save as PDF».</span></p>
+  <script>setTimeout(function(){try{window.print()}catch(e){}},500)<\/script>
 </body></html>`;
-    const w = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
-    if (!w) { alert('Allow popups to generate PDF'); return; }
+
+    const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=740');
+    if (!w) {
+      alert('Разрешите pop-up для этого сайта — иначе PDF-окно не откроется.');
+      return;
+    }
     w.document.open();
     w.document.write(html);
     w.document.close();
@@ -1015,21 +1103,33 @@ document.getElementById('repFilterStatus')?.addEventListener('change', () => {
   const r = AB.pages.reports;
   r._renderTradeTable(r._filterTrades(r._lastTrades || []));
 });
-document.getElementById('repExportCsv')?.addEventListener('click', () => AB.pages.reports._exportTrades('csv'));
-document.getElementById('repExportJson')?.addEventListener('click', () => AB.pages.reports._exportTrades('json'));
-document.getElementById('repExportPdf')?.addEventListener('click', () => {
+const openPdfModal = () => {
   const m = document.getElementById('repPdfModal');
-  if (m) m.classList.add('show');
-});
-document.getElementById('repPdfCancel')?.addEventListener('click', () => {
-  document.getElementById('repPdfModal')?.classList.remove('show');
-});
+  if (m) {
+    m.classList.add('show');
+    m.style.display = 'flex';
+  }
+};
+const closePdfModal = () => {
+  const m = document.getElementById('repPdfModal');
+  if (m) {
+    m.classList.remove('show');
+    m.style.display = 'none';
+  }
+};
+['repExportCsv', 'repExportCsvTop'].forEach(id =>
+  document.getElementById(id)?.addEventListener('click', () => AB.pages.reports._exportTrades('csv')));
+['repExportJson', 'repExportJsonTop'].forEach(id =>
+  document.getElementById(id)?.addEventListener('click', () => AB.pages.reports._exportTrades('json')));
+['repExportPdf', 'repExportPdfTop'].forEach(id =>
+  document.getElementById(id)?.addEventListener('click', openPdfModal));
+document.getElementById('repPdfCancel')?.addEventListener('click', closePdfModal);
 document.getElementById('repPdfGo')?.addEventListener('click', () => {
-  document.getElementById('repPdfModal')?.classList.remove('show');
+  closePdfModal();
   AB.pages.reports._generatePdf();
 });
 document.getElementById('repPdfModal')?.addEventListener('click', (e) => {
-  if (e.target.id === 'repPdfModal') e.target.classList.remove('show');
+  if (e.target.id === 'repPdfModal') closePdfModal();
 });
 
 // ── Funding Rates panel (Live mode) ──────────────────────────────────────────

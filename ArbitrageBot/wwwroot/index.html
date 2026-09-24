@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="/assets/css/app.css"/>
+  <link rel="stylesheet" href="/assets/css/reports.css"/>
 </head>
 <body>
 <div class="shell">
@@ -512,17 +513,20 @@
           <div class="rep-filters">
             <span class="chip ok" id="repModeChip">PAPER</span>
             <button type="button" class="btn sm" id="btnRefreshLiveBal">↻ Live balances</button>
+            <button type="button" class="btn sm" id="repExportCsvTop" title="CSV">CSV</button>
+            <button type="button" class="btn sm" id="repExportJsonTop" title="JSON">JSON</button>
+            <button type="button" class="btn primary sm" id="repExportPdfTop">📄 PDF report</button>
           </div>
         </div>
 
         <div class="rep-time-strip">
           <div class="rep-time-row">
             <div class="btn-row" id="perfRangeBtns">
-              <button type="button" class="chip" data-perf-days="1">1D</button>
-              <button type="button" class="chip active" data-perf-days="7">7D</button>
-              <button type="button" class="chip" data-perf-days="30">30D</button>
-              <button type="button" class="chip" data-perf-days="90">90D</button>
-              <button type="button" class="chip" data-perf-days="365">ALL</button>
+              <button type="button" class="rep-range-btn" data-perf-days="1">1D</button>
+              <button type="button" class="rep-range-btn active" data-perf-days="7">7D</button>
+              <button type="button" class="rep-range-btn" data-perf-days="30">30D</button>
+              <button type="button" class="rep-range-btn" data-perf-days="90">90D</button>
+              <button type="button" class="rep-range-btn" data-perf-days="365">ALL</button>
             </div>
             <div class="rep-date-range">
               <span class="muted" style="font-size:12px">Range</span>
@@ -538,10 +542,12 @@
           <div class="rep-filter-title">Filters · сквозная фильтрация ledger</div>
           <div class="rep-filter-grid">
             <label class="rep-field">Route
-              <select id="repFilterRoute" multiple size="3" class="rep-select"></select>
+              <div class="rep-multi" id="repRouteChips"></div>
+              <select id="repFilterRouteAdd" class="rep-select"><option value="">+ add route</option></select>
             </label>
             <label class="rep-field">Symbol
-              <select id="repFilterSymbol" multiple size="3" class="rep-select"></select>
+              <div class="rep-multi" id="repSymbolChips"></div>
+              <select id="repFilterSymbolAdd" class="rep-select"><option value="">+ add symbol</option></select>
             </label>
             <label class="rep-field">Status
               <select id="repFilterStatus" class="rep-select">
@@ -607,17 +613,42 @@
           </div>
 
           <div class="rep-layer">
-            <div class="rep-layer-hd"><span>Layer 4 · Trade ledger</span><span class="panel-sub" id="tableCount">—</span></div>
+            <div class="rep-layer-hd">
+              <span>Слой 4 · Trade ledger & skip analysis</span>
+              <span class="muted" id="tableCount">Accordion: click row → legs / fees / ticks</span>
+            </div>
             <div class="panel rep-panel" style="padding:0;overflow:hidden">
-              <div class="scroll" style="max-height:340px" id="perfTrades"></div>
+              <div class="rep-table-wrap" id="perfTrades"></div>
+            </div>
+            <div class="panel rep-panel rep-skip-card">
+              <div class="panel-hd"><h2 class="panel-title">Skip reasons distribution</h2><span class="panel-sub">по текущему дню / окну</span></div>
+              <div id="repSkipBars"></div>
             </div>
           </div>
 
           <div class="rep-export-row">
-            <span class="muted" style="font-size:12px">Export TimeRange + filters</span>
+            <span class="muted" style="font-size:12px">Export текущего TimeRange + фильтров</span>
             <div class="btn-row">
               <button type="button" class="btn sm" id="repExportCsv">CSV export</button>
               <button type="button" class="btn sm" id="repExportJson">JSON export</button>
+              <button type="button" class="btn primary sm" id="repExportPdf">Export PDF report</button>
+            </div>
+          </div>
+
+          <div class="rep-modal-bd" id="repPdfModal">
+            <div class="rep-modal">
+              <h3>White-label PDF statement</h3>
+              <p>Откроется окно печати — Save as PDF. Данные = текущий TimeRange + фильтры.</p>
+              <label>Fund / company</label>
+              <input id="pdfFund" value="ArbitrageBot Paper Desk"/>
+              <label>Investor / client</label>
+              <input id="pdfInvestor" placeholder="Name"/>
+              <label>Comment / disclaimer</label>
+              <textarea id="pdfNote">Paper / demo simulation. Not investment advice. Fees and funding as recorded in the ledger.</textarea>
+              <div class="rep-modal-actions">
+                <button type="button" class="btn sm" id="repPdfCancel">Cancel</button>
+                <button type="button" class="btn primary sm" id="repPdfGo">Generate PDF</button>
+              </div>
             </div>
           </div>
 

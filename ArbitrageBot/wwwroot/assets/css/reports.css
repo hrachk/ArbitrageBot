@@ -219,22 +219,23 @@
 }
 .page[data-page="reports"] .chip.ok{border-color:#166534;background:#0c1f14;color:#86efac}
 
-.page[data-page="reports"] .rep-modal-bd{
-  display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:80;
+/* PDF modal overlay — high z-index, works even if parent clips */
+#repPdfModal{
+  display:none;position:fixed!important;inset:0;background:rgba(0,0,0,.72);z-index:9999!important;
   align-items:center;justify-content:center;padding:20px;
 }
-.page[data-page="reports"] .rep-modal-bd.show{display:flex}
-.page[data-page="reports"] .rep-modal{
-  background:var(--r2);border:1px solid var(--rl2);border-radius:14px;width:min(480px,100%);padding:20px;
-  box-shadow:0 8px 28px rgba(0,0,0,.45);
+#repPdfModal.show{display:flex!important}
+#repPdfModal .rep-modal{
+  background:#111820;border:1px solid #2e3d52;border-radius:14px;width:min(480px,100%);padding:22px;
+  box-shadow:0 16px 48px rgba(0,0,0,.55);color:#e8eef6;
 }
-.page[data-page="reports"] .rep-modal h3{margin:0 0 6px;font-size:16px}
-.page[data-page="reports"] .rep-modal p{font-size:12px;color:var(--rm);margin:0 0 14px}
-.page[data-page="reports"] .rep-modal label{display:block;font-size:11px;color:var(--rm);margin:8px 0 4px}
-.page[data-page="reports"] .rep-modal input,
-.page[data-page="reports"] .rep-modal textarea{
-  width:100%;background:var(--rb);border:1px solid var(--rl2);color:var(--rt);
+#repPdfModal .rep-modal h3{margin:0 0 6px;font-size:16px;color:#e8eef6}
+#repPdfModal .rep-modal p{font-size:12px;color:#8b9bb0;margin:0 0 14px}
+#repPdfModal .rep-modal label{display:block;font-size:11px;color:#8b9bb0;margin:8px 0 4px}
+#repPdfModal .rep-modal input,
+#repPdfModal .rep-modal textarea{
+  width:100%;background:#0b0f14;border:1px solid #2e3d52;color:#e8eef6;
   border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;
 }
-.page[data-page="reports"] .rep-modal textarea{min-height:70px;resize:vertical}
-.page[data-page="reports"] .rep-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+#repPdfModal .rep-modal textarea{min-height:70px;resize:vertical}
+#repPdfModal .rep-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
