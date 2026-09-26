@@ -78,11 +78,18 @@ public class FuturesPaperService : IFuturesPaperService
             if (keys.Count == 0) keys = _margin.Keys.ToList();
             foreach (var ex in keys)
                 _margin[ex] = start;
-            // also ensure any known keys updated
             foreach (var k in _margin.Keys.ToList())
                 _margin[k] = start;
+            // Keep wallet and session PnL aligned: reseed without zeroing Realized caused
+            // Reports (ledger) vs Margin (wallet) desync (e.g. +253 PnL vs +4 Δ equity).
+            RealizedPnlUsd = 0;
+            DailyRealizedPnlUsd = 0;
+            UnrealizedHintUsd = 0;
+            _dayUtc = DateTime.UtcNow.Date;
             SaveOpenState();
-            _logger.LogInformation("Paper balances reseeded to {Start} USDT x {N} venues (from Settings)", start, _margin.Count);
+            _logger.LogInformation(
+                "Paper balances reseeded to {Start} USDT x {N} venues; session Realized PnL reset to 0 (ledger history kept)",
+                start, _margin.Count);
             return true;
         }
     }

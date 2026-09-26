@@ -212,12 +212,19 @@ AB.pages.reports = {
           </div>`;
         }).join('');
         const totalDelta = sumEq - start * Math.max(n, 1);
+        const sessR = Number(fp.realizedPnlUsd ?? fp.realizedPnl ?? 0);
+        const expected = start * Math.max(n, 1) + sessR;
+        const drift = sumEq - expected;
         el('r_margin').innerHTML = `<div class="kpi" style="margin:0;border-color:rgba(45,212,191,0.35)">
           <div class="kpi-l">ALL VENUES</div>
           <div class="mono" style="font-size:20px;font-weight:700;margin-top:6px;color:var(--accent)">${AB.fmt(sumEq, 2)} USDT</div>
           <div class="muted mono" style="font-size:11px;margin-top:6px;line-height:1.5">
             free ${AB.fmt(sumFree, 2)} · locked ${AB.fmt(sumLocked, 2)}<br/>
-            Δ <span class="${totalDelta >= 0 ? 'pos' : 'neg'}">${totalDelta >= 0 ? '+' : ''}${AB.fmt(totalDelta, 2)}</span>
+            start ${AB.fmt(start * Math.max(n, 1), 0)} (${AB.fmt(start, 0)}×${n}) · Δ wallet
+            <span class="${totalDelta >= 0 ? 'pos' : 'neg'}">${totalDelta >= 0 ? '+' : ''}${AB.fmt(totalDelta, 2)}</span><br/>
+            session realized <span class="${sessR >= 0 ? 'pos' : 'neg'}">${sessR >= 0 ? '+' : ''}${AB.fmt(sessR, 2)}</span>
+            · expected ${AB.fmt(expected, 2)}
+            ${Math.abs(drift) > 0.5 ? ' · drift <span class="neg">' + (drift >= 0 ? '+' : '') + AB.fmt(drift, 2) + '</span>' : ''}
           </div>
         </div>` + cards;
       } else if (Object.keys(bal).length) {
@@ -351,7 +358,7 @@ AB.pages.reports = {
       const gross = pn(p.grossPnl);
       const fees = pn(-(Math.abs(Number(p.totalFees) || 0)));
       const fund = pn(p.totalFunding);
-      const eqBase = Number(p.equityBase) || 40000;
+      const eqBase = Number(p.equityBase) || (Number(p.equityBasePerVenue) || 1000) * (Number(p.venueCount) || 6) || 6000;
       const netEq = pctStr(p.netPctOfEquity);
       const feeOfG = (Number(p.feesPctOfGross) || 0).toFixed(1) + '% of gross';
       const fundOfG = pctStr(p.fundingPctOfGross, 1) + ' of gross';

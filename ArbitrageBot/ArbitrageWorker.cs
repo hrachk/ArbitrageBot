@@ -407,7 +407,8 @@ public class ArbitrageWorker : BackgroundService
         var trades = _futPaper.GetTrades(40);
         var positions = _futPaper.GetOpenPositions();
         var margin = _futPaper.GetMarginBalances();
-        var startBal = _options.PaperStartingQuote > 0 ? _options.PaperStartingQuote : 50_000m;
+        var startBal = _options.PaperStartingQuote > 0 ? _options.PaperStartingQuote
+            : (_options.LiveEquityPerExchangeUsd > 0 ? _options.LiveEquityPerExchangeUsd : 1_000m);
 
         // Per-venue: free (wallet) vs locked in open hedges
         var lockedByEx = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);

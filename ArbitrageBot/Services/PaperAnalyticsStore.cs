@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ArbitrageBot.Configuration;
 using ArbitrageBot.Models;
+using Microsoft.Extensions.Options;
 
 namespace ArbitrageBot.Services;
 
@@ -30,6 +32,7 @@ public interface IPaperAnalyticsStore
 public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
 {
     private readonly ILogger<PaperAnalyticsStore> _logger;
+    private readonly IOptionsMonitor<ArbitrageOptions> _optMon;
     private readonly string _dir;
     private readonly object _lock = new();
     private readonly ConcurrentQueue<object> _recent = new();
@@ -49,14 +52,30 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
     /// <summary>Minimum closed rows to keep in hot file when archiving.</summary>
     private const int HotLedgerKeep = 3000;
 
-    public PaperAnalyticsStore(IWebHostEnvironment env, ILogger<PaperAnalyticsStore> logger)
+    public PaperAnalyticsStore(
+        IWebHostEnvironment env,
+        ILogger<PaperAnalyticsStore> logger,
+        IOptionsMonitor<ArbitrageOptions> optMon)
     {
         _logger = logger;
+        _optMon = optMon;
         _dir = Path.Combine(env.ContentRootPath, "data", "paper");
         Directory.CreateDirectory(_dir);
         LoadLedger();
         LoadTodayCounters();
         _logger.LogInformation("Paper analytics store: {Dir} · ledger rows={N}", _dir, _tradeLedger.Count);
+    }
+
+    /// <summary>Starting equity = PaperStartingQuote × active venues (not a hardcoded 40k).</summary>
+    private decimal ResolveEquityBase()
+    {
+        var o = _optMon.CurrentValue;
+        var per = o.PaperStartingQuote > 0 ? o.PaperStartingQuote
+            : (o.LiveEquityPerExchangeUsd > 0 ? o.LiveEquityPerExchangeUsd : 1_000m);
+        var n = o.NormalizedExchanges?.Count ?? 0;
+        if (n <= 0) n = (o.Exchanges?.Count ?? 0);
+        if (n <= 0) n = 6;
+        return per * n;
     }
 
     private string EventsPath(DateTime day) => Path.Combine(_dir, $"events-{day:yyyy-MM-dd}.jsonl");
@@ -499,7 +518,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         var grossPnl = net + totalFees;
         var totalFunding = 0m;
         // PaperStartingQuote default 10k × typical 4 venues; UI also shows % of this base.
-        const decimal equityBase = 40_000m;
+        var equityBase = ResolveEquityBase();
         var grossWin = wins.Sum(x => x.pnl);
         var grossLoss = Math.Abs(losses.Sum(x => x.pnl));
         var winRate = pnls.Count > 0 ? (decimal)wins.Count / pnls.Count * 100m : 0;
@@ -651,7 +670,13 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             consecLoss = maxCL,
             equityCurve = curve,
             daily = byDay,
-            note = "Journal: data/paper/trades-ledger.json · Gross ≈ Net + Fees (funding not stored). % equity base = PaperStartingQuote×venues (~40k). Calendar = every day in range."
+            note = "Journal: data/paper/trades-ledger.json (+ archive). Equity base = PaperStartingQuote × venues. Margin by venue is live paper wallet (reset/reseed independent of ledger history).",
+            equityBasePerVenue = _optMon.CurrentValue.PaperStartingQuote > 0
+                ? _optMon.CurrentValue.PaperStartingQuote
+                : _optMon.CurrentValue.LiveEquityPerExchangeUsd,
+            venueCount = Math.Max(1, (_optMon.CurrentValue.NormalizedExchanges?.Count ?? 0) > 0
+                ? _optMon.CurrentValue.NormalizedExchanges!.Count
+                : (_optMon.CurrentValue.Exchanges?.Count ?? 6))
         };
     }
 
