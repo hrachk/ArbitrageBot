@@ -638,16 +638,17 @@
           <div class="rep-modal-bd" id="repPdfModal">
             <div class="rep-modal">
               <h3>White-label PDF statement</h3>
-              <p>Откроется окно печати — Save as PDF. Данные = текущий TimeRange + фильтры.</p>
+              <p>Без pop-up: скачается HTML-отчёт. Откройте файл → Ctrl+P → «Сохранить как PDF». Данные = TimeRange + фильтры.</p>
               <label>Fund / company</label>
               <input id="pdfFund" value="ArbitrageBot Paper Desk"/>
               <label>Investor / client</label>
               <input id="pdfInvestor" placeholder="Name"/>
               <label>Comment / disclaimer</label>
               <textarea id="pdfNote">Paper / demo simulation. Not investment advice. Fees and funding as recorded in the ledger.</textarea>
+              <div id="repPdfHint" class="muted" style="display:none;font-size:11px;margin-top:8px;line-height:1.4"></div>
               <div class="rep-modal-actions">
                 <button type="button" class="btn sm" id="repPdfCancel">Cancel</button>
-                <button type="button" class="btn primary sm" id="repPdfGo">Generate PDF</button>
+                <button type="button" class="btn primary sm" id="repPdfGo">Download report</button>
               </div>
             </div>
           </div>
