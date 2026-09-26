@@ -336,7 +336,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
 
     public IReadOnlyList<object> GetDaySummaries(int maxDays = 14)
     {
-        maxDays = Math.Clamp(maxDays, 1, 90);
+        maxDays = Math.Clamp(maxDays, 1, 3650);
         var list = new List<object>();
         if (!Directory.Exists(_dir)) return list;
         foreach (var file in Directory.GetFiles(_dir, "daily-*.json").OrderByDescending(f => f).Take(maxDays))
