@@ -840,19 +840,32 @@ AB.pages.reports = {
 
   <div class="note"><b>Disclaimer / notes</b><br/>${esc(note)}</div>
   <div class="foot">ArbitrageBot · paper analytics · not investment advice · figures from local ledger for selected TimeRange and filters.</div>
-  <p class="noprint"><button onclick="window.print()">Print / Save as PDF</button>
-    <span style="margin-left:12px;font-size:12px;color:#64748b">In the print dialog choose «Save as PDF».</span></p>
-  <script>setTimeout(function(){try{window.print()}catch(e){}},500)<\/script>
+  <p class="noprint" style="margin-top:18px;padding:12px;background:#f1f5f9;border-radius:8px;font-size:12px;color:#334155">
+    <b>Как сохранить PDF:</b> откройте этот файл в браузере → Ctrl+P (Cmd+P) → принтер «Save as PDF» / «Сохранить как PDF».
+  </p>
 </body></html>`;
 
-    const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=740');
-    if (!w) {
-      alert('Разрешите pop-up для этого сайта — иначе PDF-окно не откроется.');
-      return;
+    // Download as .html — no pop-up (browser print → Save as PDF)
+    const stamp = genAt.replace(/[:Z]/g, '-').slice(0, 15);
+    const safeName = String(fund).replace(/[^\w\-]+/g, '_').slice(0, 40) || 'ArbitrageBot';
+    const filename = 'statement-' + safeName + '-' + stamp + '.html';
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    // Optional toast in UI
+    const hint = document.getElementById('repPdfHint');
+    if (hint) {
+      hint.textContent = 'Скачан: ' + filename + ' · откройте файл → Ctrl+P → Save as PDF';
+      hint.style.display = 'block';
     }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
   },
 
   // ── Live balances + positions (REST) ─────────────────────────────────────
