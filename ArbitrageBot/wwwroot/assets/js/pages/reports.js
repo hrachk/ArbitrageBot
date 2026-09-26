@@ -428,7 +428,7 @@ AB.pages.reports = {
       const cal = AB.$('perfCalendar');
       if (cal) {
         const daily = p.daily || [];
-        const eqB = Number(p.equityBase) || 40000;
+        const eqB = Number(p.equityBase) || (Number(p.equityBasePerVenue) || 1000) * (Number(p.venueCount) || 6) || 6000;
         const selDay = this._dayFilter || '';
         const absMax = Math.max(...daily.map(x => Math.abs(Number(x.pnl) || 0)), 1);
         cal.innerHTML = daily.length ? daily.map(d0 => {
