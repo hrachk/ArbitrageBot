@@ -332,7 +332,7 @@ AB.pages.reports = {
     k1.innerHTML = '<div class="empty">Loading…</div>';
     try {
       const p      = await AB.api.get('/api/analytics/performance?days=' + d);
-      const trades = await AB.api.get('/api/analytics/trades?take=250');
+      const trades = await AB.api.get('/api/analytics/trades?take=5000&skip=0');
       const pctStr = (v, dig) => {
         const n = Number(v);
         if (!isFinite(n)) return '';

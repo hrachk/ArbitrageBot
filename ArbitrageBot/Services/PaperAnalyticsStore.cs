@@ -16,8 +16,11 @@ public interface IPaperAnalyticsStore
     IReadOnlyList<object> GetRecentEvents(int take = 80);
     IReadOnlyList<object> GetRecentSkips(int take = 40);
     IReadOnlyList<object> GetDaySummaries(int maxDays = 14);
+    /// <param name="days">1..3650 window; days &lt;= 0 means entire ledger history.</param>
     object GetPerformanceReport(int days = 7);
-    IReadOnlyList<object> GetTradeDetails(int take = 100);
+    /// <param name="take">Max rows (1..20000).</param>
+    /// <param name="skip">Offset for pagination.</param>
+    IReadOnlyList<object> GetTradeDetails(int take = 500, int skip = 0);
 }
 
 /// <summary>
@@ -41,6 +44,11 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
     private readonly Dictionary<string, int> _skipReasons = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<object> _tradeLedger = [];
 
+    /// <summary>Hot ledger size before oldest closed rows spill to archive (never deleted).</summary>
+    private const int HotLedgerMax = 5000;
+    /// <summary>Minimum closed rows to keep in hot file when archiving.</summary>
+    private const int HotLedgerKeep = 3000;
+
     public PaperAnalyticsStore(IWebHostEnvironment env, ILogger<PaperAnalyticsStore> logger)
     {
         _logger = logger;
@@ -48,12 +56,14 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         Directory.CreateDirectory(_dir);
         LoadLedger();
         LoadTodayCounters();
-        _logger.LogInformation("Paper analytics store: {Dir}", _dir);
+        _logger.LogInformation("Paper analytics store: {Dir} · ledger rows={N}", _dir, _tradeLedger.Count);
     }
 
     private string EventsPath(DateTime day) => Path.Combine(_dir, $"events-{day:yyyy-MM-dd}.jsonl");
     private string DailyPath(DateTime day) => Path.Combine(_dir, $"daily-{day:yyyy-MM-dd}.json");
     private string LedgerPath => Path.Combine(_dir, "trades-ledger.json");
+    private string LedgerArchivePath => Path.Combine(_dir, "trades-ledger-archive.jsonl");
+    private string LedgerBakPath => Path.Combine(_dir, "trades-ledger.json.bak");
 
     private void EnsureDay()
     {
@@ -167,7 +177,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 realizedPnlUsd = (decimal?)null,
                 trade.Message
             });
-            if (_tradeLedger.Count > 2000) _tradeLedger.RemoveRange(2000, _tradeLedger.Count - 2000);
+            MaybeArchiveHotLedgerUnlocked();
             SaveLedger();
             MaybeFlushDaily();
         }
@@ -229,6 +239,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 holdMin,
                 message = trade.Message
             });
+            MaybeArchiveHotLedgerUnlocked();
             SaveLedger();
             MaybeFlushDaily();
         }
@@ -378,48 +389,47 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
 
     public object GetPerformanceReport(int days = 7)
     {
-        days = Math.Clamp(days, 1, 90);
-        var since = DateTime.UtcNow.Date.AddDays(-(days - 1));
+        // days <= 0 → entire history; positive → up to 10y (UI ALL=365 no longer clipped to 90)
+        DateTime since;
+        if (days <= 0)
+            since = DateTime.MinValue.ToUniversalTime();
+        else
+        {
+            days = Math.Clamp(days, 1, 3650);
+            since = DateTime.UtcNow.Date.AddDays(-(days - 1));
+        }
+
         List<JsonElement> closed = [];
         lock (_lock)
         {
-            // Prefer re-read ledger file for stable shape
             try
             {
-                if (File.Exists(LedgerPath))
+                foreach (var el in EnumerateAllLedgerElements())
                 {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
-                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                    var status = el.TryGetProperty("status", out var st) ? st.GetString() : "";
+                    if (status is null) continue;
+                    if (!status.Contains("Close", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(status, "Closed", StringComparison.OrdinalIgnoreCase)
+                        && !status.Contains("converged", StringComparison.OrdinalIgnoreCase)
+                        && !status.Contains("stop", StringComparison.OrdinalIgnoreCase)
+                        && !status.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                        && !status.Contains("manual", StringComparison.OrdinalIgnoreCase))
                     {
-                        foreach (var el in doc.RootElement.EnumerateArray())
-                        {
-                            var status = el.TryGetProperty("status", out var st) ? st.GetString() : "";
-                            if (status is null) continue;
-                            if (!status.Contains("Close", StringComparison.OrdinalIgnoreCase)
-                                && !string.Equals(status, "Closed", StringComparison.OrdinalIgnoreCase)
-                                && !status.Contains("converged", StringComparison.OrdinalIgnoreCase)
-                                && !status.Contains("stop", StringComparison.OrdinalIgnoreCase)
-                                && !status.Contains("timeout", StringComparison.OrdinalIgnoreCase)
-                                && !status.Contains("manual", StringComparison.OrdinalIgnoreCase))
-                            {
-                                // still include if has realizedPnl
-                                if (!el.TryGetProperty("realizedPnlUsd", out var rp) || rp.ValueKind == JsonValueKind.Null)
-                                    continue;
-                            }
-                            if (!el.TryGetProperty("realizedPnlUsd", out var pnlEl) || pnlEl.ValueKind == JsonValueKind.Null)
-                                continue;
-                            DateTime closedAt = DateTime.MinValue;
-                            if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
-                                && DateTime.TryParse(ca.GetString(), out var cdt))
-                                closedAt = cdt.ToUniversalTime();
-                            else if (el.TryGetProperty("ClosedAt", out var ca2) && ca2.ValueKind == JsonValueKind.String
-                                && DateTime.TryParse(ca2.GetString(), out var cdt2))
-                                closedAt = cdt2.ToUniversalTime();
-                            if (closedAt == DateTime.MinValue) closedAt = DateTime.UtcNow;
-                            if (closedAt.Date < since) continue;
-                            closed.Add(el.Clone());
-                        }
+                        if (!el.TryGetProperty("realizedPnlUsd", out var rp) || rp.ValueKind == JsonValueKind.Null)
+                            continue;
                     }
+                    if (!el.TryGetProperty("realizedPnlUsd", out var pnlEl) || pnlEl.ValueKind == JsonValueKind.Null)
+                        continue;
+                    DateTime closedAt = DateTime.MinValue;
+                    if (el.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
+                        && DateTime.TryParse(ca.GetString(), out var cdt))
+                        closedAt = cdt.ToUniversalTime();
+                    else if (el.TryGetProperty("ClosedAt", out var ca2) && ca2.ValueKind == JsonValueKind.String
+                        && DateTime.TryParse(ca2.GetString(), out var cdt2))
+                        closedAt = cdt2.ToUniversalTime();
+                    if (closedAt == DateTime.MinValue) closedAt = DateTime.UtcNow;
+                    if (since > DateTime.MinValue && closedAt.Date < since) continue;
+                    closed.Add(el.Clone());
                 }
             }
             catch (Exception ex)
@@ -606,8 +616,10 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         return new
         {
             mode = "PAPER",
-            rangeDays = days,
-            fromUtc = since.ToString("yyyy-MM-dd"),
+            rangeDays = days <= 0 ? -1 : days,
+            fromUtc = since <= DateTime.MinValue.AddDays(1)
+                ? (pnls.Count > 0 ? pnls.Min(x => x.closedAt).ToUniversalTime().ToString("yyyy-MM-dd") : "all")
+                : since.ToString("yyyy-MM-dd"),
             toUtc = DateTime.UtcNow.Date.ToString("yyyy-MM-dd"),
             netPnl = Math.Round(net, 4),
             grossPnl = Math.Round(grossPnl, 4),
@@ -643,18 +655,19 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         };
     }
 
-    public IReadOnlyList<object> GetTradeDetails(int take = 100)
+    public IReadOnlyList<object> GetTradeDetails(int take = 500, int skip = 0)
     {
-        take = Math.Clamp(take, 1, 500);
+        take = Math.Clamp(take, 1, 20_000);
+        skip = Math.Max(0, skip);
         try
         {
-            if (!File.Exists(LedgerPath)) return Array.Empty<object>();
-            using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return Array.Empty<object>();
+            // Newest first: hot ledger is Insert(0); archive is older
             var list = new List<object>();
-            foreach (var el in doc.RootElement.EnumerateArray().Take(take))
+            foreach (var el in EnumerateAllLedgerElements())
             {
+                if (skip > 0) { skip--; continue; }
                 list.Add(JsonSerializer.Deserialize<object>(el.GetRawText())!);
+                if (list.Count >= take) break;
             }
             return list;
         }
@@ -664,6 +677,136 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         }
     }
 
+    /// <summary>Hot file first (newest), then archive jsonl newest-of-archive → oldest.</summary>
+    private List<JsonElement> EnumerateAllLedgerElements()
+    {
+        var results = new List<JsonElement>();
+        if (File.Exists(LedgerPath))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(LedgerPath));
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var el in doc.RootElement.EnumerateArray())
+                        results.Add(el.Clone());
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Read hot ledger failed");
+            }
+        }
+        if (File.Exists(LedgerArchivePath))
+        {
+            try
+            {
+                var lines = File.ReadAllLines(LedgerArchivePath);
+                // file is oldest→newest lines; for UI newest-first reverse
+                for (var i = lines.Length - 1; i >= 0; i--)
+                {
+                    var line = lines[i];
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(line);
+                        results.Add(doc.RootElement.Clone());
+                    }
+                    catch { /* skip bad line */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Read archive ledger failed");
+            }
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// Spill oldest closed rows from hot ledger to append-only archive.
+    /// Open rows stay in hot list. Never deletes trade history.
+    /// </summary>
+    private void MaybeArchiveHotLedgerUnlocked()
+    {
+        if (_tradeLedger.Count <= HotLedgerMax) return;
+
+        var toArchive = new List<object>();
+        // Prefer archiving from the end (oldest when Insert(0) for new)
+        for (var i = _tradeLedger.Count - 1; i >= 0 && _tradeLedger.Count - toArchive.Count > HotLedgerKeep; i--)
+        {
+            var row = _tradeLedger[i];
+            var status = TryGetStatus(row);
+            if (status != null && status.Contains("Open", StringComparison.OrdinalIgnoreCase)
+                && !status.Contains("Close", StringComparison.OrdinalIgnoreCase))
+                continue; // keep opens in hot
+            toArchive.Add(row);
+        }
+        if (toArchive.Count == 0) return;
+
+        foreach (var row in toArchive)
+            _tradeLedger.Remove(row);
+
+        try
+        {
+            using var sw = new StreamWriter(LedgerArchivePath, append: true);
+            foreach (var row in toArchive)
+            {
+                // archive oldest-first for chronological jsonl
+                sw.WriteLine(JsonSerializer.Serialize(row, JsonOpts));
+            }
+            _logger.LogInformation("Archived {N} paper trades → {Path} (hot={Hot})",
+                toArchive.Count, LedgerArchivePath, _tradeLedger.Count);
+        }
+        catch (Exception ex)
+        {
+            // roll back into memory if archive write failed
+            _tradeLedger.AddRange(toArchive);
+            _logger.LogWarning(ex, "Archive spill failed — kept rows in hot ledger");
+        }
+    }
+
+    private static string? TryGetStatus(object row)
+    {
+        try
+        {
+            if (row is JsonElement je)
+            {
+                if (je.TryGetProperty("status", out var s)) return s.GetString();
+                if (je.TryGetProperty("Status", out var s2)) return s2.GetString();
+                return null;
+            }
+            var t = row.GetType();
+            return t.GetProperty("status")?.GetValue(row)?.ToString()
+                   ?? t.GetProperty("Status")?.GetValue(row)?.ToString();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Write JSON via temp file + replace to avoid 0-byte corruption on crash.</summary>
+    private void AtomicWriteAllText(string path, string content)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, content);
+        if (File.Exists(path))
+        {
+            try
+            {
+                File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
+                return;
+            }
+            catch
+            {
+                // Fallback: copy over + delete tmp
+                File.Copy(tmp, path, overwrite: true);
+                try { File.Delete(tmp); } catch { /* ignore */ }
+                return;
+            }
+        }
+        File.Move(tmp, path);
+    }
 
     private void PersistDailySummary(DateTime day)
     {
@@ -685,7 +828,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                     .Select(kv => new { reason = kv.Key, count = kv.Value }).ToList(),
                 updatedUtc = DateTime.UtcNow
             };
-            File.WriteAllText(DailyPath(day), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicWriteAllText(DailyPath(day), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
         {
@@ -697,7 +840,8 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
     {
         try
         {
-            File.WriteAllText(LedgerPath, JsonSerializer.Serialize(_tradeLedger, new JsonSerializerOptions { WriteIndented = true }));
+            var json = JsonSerializer.Serialize(_tradeLedger, new JsonSerializerOptions { WriteIndented = true });
+            AtomicWriteAllText(LedgerPath, json);
         }
         catch (Exception ex)
         {
@@ -709,12 +853,22 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
     {
         try
         {
-            if (!File.Exists(LedgerPath)) return;
-            var json = File.ReadAllText(LedgerPath);
+            // Prefer recovery from .bak if main is missing or empty
+            var path = LedgerPath;
+            if ((!File.Exists(path) || new FileInfo(path).Length < 3) && File.Exists(LedgerBakPath))
+            {
+                _logger.LogWarning("trades-ledger.json missing/empty — restoring from .bak");
+                path = LedgerBakPath;
+            }
+            if (!File.Exists(path)) return;
+            var json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json)) return;
             var list = JsonSerializer.Deserialize<List<JsonElement>>(json);
             if (list == null) return;
-            foreach (var el in list.Take(500))
+            // Load FULL hot history (no Take(500) — that caused permanent data loss on SaveLedger)
+            foreach (var el in list)
                 _tradeLedger.Add(el);
+            _logger.LogInformation("Loaded {N} trades from hot ledger", _tradeLedger.Count);
         }
         catch (Exception ex)
         {
