@@ -637,14 +637,20 @@
 
           <div class="rep-modal-bd" id="repPdfModal">
             <div class="rep-modal">
-              <h3>White-label PDF statement</h3>
-              <p>Без pop-up: скачается HTML-отчёт. Откройте файл → Ctrl+P → «Сохранить как PDF». Данные = TimeRange + фильтры.</p>
+              <h3>PDF Performance Statement</h3>
+              <p>Мультиязычный отчёт (hy / ru / en). Скачивается HTML → Ctrl+P → «Сохранить как PDF». Имя файла: statement-…-ddmmyy--ddmmyy.html</p>
+              <label>Language / Լեզու / Язык</label>
+              <select id="pdfLang" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border,#2a3544);background:var(--panel,#0f1720);color:inherit">
+                <option value="hy" selected>Հայերեն (Armenian)</option>
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+              </select>
               <label>Fund / company</label>
               <input id="pdfFund" value="ArbitrageBot Paper Desk"/>
               <label>Investor / client</label>
-              <input id="pdfInvestor" placeholder="Name"/>
-              <label>Comment / disclaimer</label>
-              <textarea id="pdfNote">Paper / demo simulation. Not investment advice. Fees and funding as recorded in the ledger.</textarea>
+              <input id="pdfInvestor" placeholder="Name / Անուն / Имя"/>
+              <label>Comment / disclaimer (optional override)</label>
+              <textarea id="pdfNote" placeholder="Leave empty to use default disclaimer for selected language"></textarea>
               <div id="repPdfHint" class="muted" style="display:none;font-size:11px;margin-top:8px;line-height:1.4"></div>
               <div class="rep-modal-actions">
                 <button type="button" class="btn sm" id="repPdfCancel">Cancel</button>

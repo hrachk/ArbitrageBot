@@ -710,12 +710,204 @@ AB.pages.reports = {
     a.click();
   },
 
+  _pdfI18n(lang) {
+    const packs = {
+      hy: {
+        brand: 'ՄԻՋԲՈՐՍԱՅԱԿԱՆ ԱՐԲԻՏՐԱԺ · ԳՈՐԾԱՐՔՆԵՐԻ ՀԱՇՎԵՏՎՈՒԹՅՈՒՆ',
+        titleSuffix: 'Performance Statement',
+        preparedFor: 'Ստացող',
+        period: 'Ժամանակահատված',
+        generated: 'Ձևավորվել է',
+        mode: 'Ռեժիմ՝ Paper / Դեմո · ֆիլտրված մատյան',
+        exec: 'ԱՄՓՈՓԱԳԻՐ (EXECUTIVE SUMMARY)',
+        netPnl: 'ՄԱՔՈՒՐ PNL',
+        ofEquity: 'կապիտալի բազայից',
+        winRate: 'ՀԱՋՈՂՎԱԾ (%)',
+        closed: 'փակված',
+        totalTrades: 'ԸՆԴԱՄԵՆԸ ԳՈՐԾԱՐՔ',
+        inRange: 'ընտրված միջակայքում',
+        profitFactor: 'ՇԱՀՈՒԹԱԲԵՐՈՒԹՅՈՒՆ',
+        maxDd: 'առավ. անկում',
+        grossVsNet: 'ՀԱՄԱԽԱՌՆ VS ՄԱՔՈՒՐ ԱՐԴՅՈՒՆՔ',
+        gross: 'Համախառն (leg A/B գնային Δ)',
+        totalFees: 'Ընդհանուր միջնորդավճար',
+        ofGross: 'համախառնից',
+        funding: 'Ֆինանսավորում (Funding)',
+        netPnlRow: 'Մաքուր PnL',
+        risk: 'ՌԻՍԿ ԵՒ ՍՊԱՍՈՒՄ',
+        equityBase: 'Կապիտալի բազա',
+        avgWinLoss: 'Միջին շահույթ / միջին վնաս',
+        expectancy: 'Մաթ. սպասում',
+        avgDuration: 'Միջին տևողություն',
+        min: 'րոպե',
+        daily: 'ՕՐԱԿԱՆ ԻՐԱՑՎԱԾ ԱՐԴՅՈՒՆՔ',
+        dayUtc: 'ՕՐ (UTC)',
+        tradesCol: 'ԳՈՐԾԱՐՔՆԵՐ',
+        ledger: 'ԳՈՐԾԱՐՔՆԵՐԻ ՄԱՏՅԱՆ',
+        status: 'ԿԱՐԳԱՎԻՃԱԿ',
+        symbol: 'ԶՈՒՅԳ',
+        route: 'ՈՒՂՂՈՒԹՅՈՒՆ',
+        size: 'ԾԱՎԱԼ',
+        net: 'ՄԱՔՈՒՐ',
+        fees: 'ՎՃԱՐ',
+        opened: 'ԲԱՑՎԵԼ Է',
+        noTrades: 'Միջակայքում գործարքներ չկան',
+        disclaimer: 'Իրավական վերապահում / նշումներ',
+        foot: 'ArbitrageBot · paper analytics · ներդրումային խորհուրդ չէ · տվյալները տեղական մատյանից են՝ ընտրված միջակայքի և ֆիլտրերի համար։',
+        printHint: 'PDF պահպանելու համար՝ բացեք ֆայլը բրաուզերում → Ctrl+P → «Save as PDF» / «Պահպանել որպես PDF».',
+        defaultNote: 'Paper / demo սիմուլյացիա։ Ներդրումային խորհուրդ չէ։ Միջնորդավճարները և funding-ը՝ ըստ մատյանի։',
+        stOpen: 'Բաց է',
+        stClosed: 'Փակված',
+        stClosedTp: 'Փակված (TP)',
+        stTimeout: 'Փակված (timeout-harvest)',
+        stConverge: 'Փակված (converge)',
+        stManual: 'Փակված (manual)',
+        stStop: 'Փակված (stop)'
+      },
+      ru: {
+        brand: 'МЕЖБИРЖЕВОЙ АРБИТРАЖ · ОТЧЁТ ПО СДЕЛКАМ',
+        titleSuffix: 'Performance Statement',
+        preparedFor: 'Получатель',
+        period: 'Период',
+        generated: 'Сформирован',
+        mode: 'Режим: Paper / Демо · отфильтрованный журнал',
+        exec: 'СВОДКА (EXECUTIVE SUMMARY)',
+        netPnl: 'ЧИСТЫЙ PNL',
+        ofEquity: 'от базы капитала',
+        winRate: 'WIN RATE (%)',
+        closed: 'закрыто',
+        totalTrades: 'ВСЕГО СДЕЛОК',
+        inRange: 'в выбранном интервале',
+        profitFactor: 'ПРОФИТ-ФАКТОР',
+        maxDd: 'макс. просадка',
+        grossVsNet: 'ВАЛОВОЙ VS ЧИСТЫЙ РЕЗУЛЬТАТ',
+        gross: 'Валовой (leg A/B ценовая Δ)',
+        totalFees: 'Всего комиссий',
+        ofGross: 'от валового',
+        funding: 'Фандинг (Funding)',
+        netPnlRow: 'Чистый PnL',
+        risk: 'РИСК И ОЖИДАНИЕ',
+        equityBase: 'База капитала',
+        avgWinLoss: 'Средний win / средний loss',
+        expectancy: 'Матожидание',
+        avgDuration: 'Средняя длительность',
+        min: 'мин',
+        daily: 'ДНЕВНОЙ РЕАЛИЗОВАННЫЙ РЕЗУЛЬТАТ',
+        dayUtc: 'ДЕНЬ (UTC)',
+        tradesCol: 'СДЕЛКИ',
+        ledger: 'ЖУРНАЛ СДЕЛОК',
+        status: 'СТАТУС',
+        symbol: 'ПАРА',
+        route: 'МАРШРУТ',
+        size: 'ОБЪЁМ',
+        net: 'ЧИСТЫЙ',
+        fees: 'КОМИССИЯ',
+        opened: 'ОТКРЫТА',
+        noTrades: 'Нет сделок в диапазоне',
+        disclaimer: 'Дисклеймер / примечания',
+        foot: 'ArbitrageBot · paper analytics · не является инвестрекомендацией · данные из локального журнала за выбранный TimeRange и фильтры.',
+        printHint: 'Чтобы сохранить PDF: откройте файл в браузере → Ctrl+P → «Сохранить как PDF».',
+        defaultNote: 'Paper / demo симуляция. Не является инвестиционной рекомендацией. Комиссии и funding — по данным журнала.',
+        stOpen: 'Открыта',
+        stClosed: 'Закрыта',
+        stClosedTp: 'Закрыта (TP)',
+        stTimeout: 'Закрыта (timeout-harvest)',
+        stConverge: 'Закрыта (converge)',
+        stManual: 'Закрыта (manual)',
+        stStop: 'Закрыта (stop)'
+      },
+      en: {
+        brand: 'CROSS-EXCHANGE ARBITRAGE · TRADE STATEMENT',
+        titleSuffix: 'Performance Statement',
+        preparedFor: 'Prepared for',
+        period: 'Period',
+        generated: 'Generated',
+        mode: 'Mode: Paper / Demo · filtered ledger',
+        exec: 'EXECUTIVE SUMMARY',
+        netPnl: 'NET PNL',
+        ofEquity: 'of equity base',
+        winRate: 'WIN RATE (%)',
+        closed: 'closed',
+        totalTrades: 'TOTAL TRADES',
+        inRange: 'in selected window',
+        profitFactor: 'PROFIT FACTOR',
+        maxDd: 'max DD',
+        grossVsNet: 'GROSS VS NET BREAKDOWN',
+        gross: 'Gross (leg A/B price Δ)',
+        totalFees: 'Total fees',
+        ofGross: 'of gross',
+        funding: 'Funding',
+        netPnlRow: 'Net PnL',
+        risk: 'RISK & EXPECTANCY',
+        equityBase: 'Equity base',
+        avgWinLoss: 'Avg win / avg loss',
+        expectancy: 'Expectancy',
+        avgDuration: 'Avg duration',
+        min: 'min',
+        daily: 'DAILY REALIZED',
+        dayUtc: 'DAY (UTC)',
+        tradesCol: 'TRADES',
+        ledger: 'TRADE LEDGER',
+        status: 'STATUS',
+        symbol: 'SYMBOL',
+        route: 'ROUTE',
+        size: 'SIZE',
+        net: 'NET',
+        fees: 'FEES',
+        opened: 'OPENED',
+        noTrades: 'No trades in range',
+        disclaimer: 'Disclaimer / notes',
+        foot: 'ArbitrageBot · paper analytics · not investment advice · figures from local ledger for selected TimeRange and filters.',
+        printHint: 'To save as PDF: open this file in a browser → Ctrl+P → «Save as PDF».',
+        defaultNote: 'Paper / demo simulation. Not investment advice. Fees and funding as recorded in the ledger.',
+        stOpen: 'Open',
+        stClosed: 'Closed',
+        stClosedTp: 'Closed (TP)',
+        stTimeout: 'Closed (timeout-harvest)',
+        stConverge: 'Closed (converge)',
+        stManual: 'Closed (manual)',
+        stStop: 'Closed (stop)'
+      }
+    };
+    return packs[lang] || packs.hy;
+  },
+
+  _localizeStatus(status, message, t) {
+    const s = String(status || '');
+    const m = String(message || '').toLowerCase();
+    if (/open/i.test(s) && !/close/i.test(s)) return t.stOpen;
+    if (/timeout/i.test(s) || /timeout/i.test(m)) return t.stTimeout;
+    if (/converge/i.test(s) || /converged/i.test(s)) return t.stConverge;
+    if (/\bTP\b/i.test(s) || /take.?profit/i.test(m)) return t.stClosedTp;
+    if (/manual/i.test(s) || /manual/i.test(m)) return t.stManual;
+    if (/stop/i.test(s)) return t.stStop;
+    if (/close/i.test(s)) return t.stClosed;
+    return s || '—';
+  },
+
+  _ddmmyy(isoOrDay) {
+    const s = String(isoOrDay || '');
+    const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[3] + m[2] + m[1].slice(2);
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const yy = String(d.getUTCFullYear()).slice(2);
+      return dd + mm + yy;
+    }
+    return '000000';
+  },
+
   _generatePdf() {
     const p = this._lastPerf || {};
     const rows = this._filterTrades(this._lastTrades || []);
-    const fund = (document.getElementById('pdfFund') || {}).value || 'ArbitrageBot';
+    const lang = ((document.getElementById('pdfLang') || {}).value || 'hy').toLowerCase();
+    const t = this._pdfI18n(lang);
+    const fund = (document.getElementById('pdfFund') || {}).value || 'ArbitrageBot Paper Desk';
     const inv = (document.getElementById('pdfInvestor') || {}).value || '—';
-    const note = (document.getElementById('pdfNote') || {}).value || '';
+    const noteRaw = (document.getElementById('pdfNote') || {}).value || '';
+    const note = noteRaw.trim() ? noteRaw : t.defaultNote;
     const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const net = Number(p.netPnl) || 0;
     const fees = Number(p.totalFees) || 0;
@@ -739,123 +931,126 @@ AB.pages.reports = {
       </tr>`;
     }).join('');
 
-    const tradeRows = rows.slice(0, 120).map(t => {
-      const feesT = this._parseTradeFees(t).total;
-      const pnl = t.realizedPnlUsd != null ? Number(t.realizedPnlUsd) : null;
-      const st = this._statusBadge(t.status, t.message || t.Message).label;
-      const route = (t.longExchange || t.LongExchange || '?') + '→' + (t.shortExchange || t.ShortExchange || '?');
-      const bq = Number(t.baseQty || t.BaseQty || 0);
-      const le = Number(t.longEntry || t.LongEntry || 0);
+    const tradeRows = rows.slice(0, 120).map(tr0 => {
+      const feesT = this._parseTradeFees(tr0).total;
+      const pnl = tr0.realizedPnlUsd != null ? Number(tr0.realizedPnlUsd) : null;
+      const st = this._localizeStatus(tr0.status || tr0.Status, tr0.message || tr0.Message, t);
+      const route = (tr0.longExchange || tr0.LongExchange || '?') + '→' + (tr0.shortExchange || tr0.ShortExchange || '?');
+      const bq = Number(tr0.baseQty || tr0.BaseQty || 0);
+      const le = Number(tr0.longEntry || tr0.LongEntry || 0);
       const size = bq && le ? Math.abs(bq * le) : 0;
       return `<tr>
         <td>${esc(st)}</td>
-        <td><b>${esc(t.symbol || t.Symbol || '')}</b></td>
+        <td><b>${esc(tr0.symbol || tr0.Symbol || '')}</b></td>
         <td>${esc(route)}</td>
         <td style="text-align:right">${size ? size.toFixed(0) : '—'}</td>
         <td class="${pnl != null && pnl >= 0 ? 'pos' : 'neg'}" style="text-align:right">${pnl != null ? ((pnl >= 0 ? '+' : '') + pnl.toFixed(2)) : '—'}</td>
         <td style="text-align:right">${feesT ? feesT.toFixed(2) : '—'}</td>
-        <td>${esc((t.openedAt || t.OpenedAt || '').toString().replace('T', ' ').slice(0, 16))}</td>
+        <td>${esc((tr0.openedAt || tr0.OpenedAt || '').toString().replace('T', ' ').slice(0, 16))}</td>
       </tr>`;
     }).join('');
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
-<title>${esc(fund)} — Performance Statement</title>
+    const html = `<!DOCTYPE html><html lang="${esc(lang)}"><head><meta charset="utf-8"/>
+<title>${esc(fund)} — ${esc(t.titleSuffix)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Armenian:wght@400;600;700&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
 <style>
-  @page{size:A4;margin:16mm}
+  @page{size:A4;margin:14mm}
   *{box-sizing:border-box}
-  body{font-family:Inter,Segoe UI,system-ui,sans-serif;color:#0f172a;margin:0;padding:28px 32px;background:#fff}
-  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:16px;margin-bottom:20px}
-  .brand{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#64748b;margin-bottom:4px}
-  h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-.02em}
-  .meta{text-align:right;font-size:11px;color:#64748b;line-height:1.55}
+  body{font-family:'Noto Sans Armenian','Noto Sans',Inter,Segoe UI,system-ui,sans-serif;color:#0f172a;margin:0;padding:24px 28px;background:#fff}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:14px;margin-bottom:18px;gap:16px}
+  .brand{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin-bottom:6px;line-height:1.35}
+  h1{font-size:20px;margin:0;font-weight:700;letter-spacing:-.02em}
+  .meta{text-align:right;font-size:11px;color:#64748b;line-height:1.55;min-width:200px}
   .meta b{color:#0f172a;font-weight:600}
-  .sec{margin:22px 0 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#334155}
+  .sec{margin:20px 0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#334155}
   .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:8px 0 6px}
   .kpi>div{border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;background:#fafbfc}
-  .kpi .l{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:#64748b}
-  .kpi .v{font-size:17px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+  .kpi .l{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+  .kpi .v{font-size:16px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
   .kpi .s{font-size:10px;color:#94a3b8;margin-top:2px}
   .pos{color:#15803d}.neg{color:#b91c1c}
-  .split{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-top:8px}
+  .split{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin-top:8px}
   .box{border:1px solid #e2e8f0;border-radius:10px;padding:14px}
-  .box h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
-  .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+  .box h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
   .row:last-child{border:0;padding-top:10px;font-weight:700;font-size:14px}
   table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:6px}
-  th{text-align:left;border-bottom:2px solid #e2e8f0;padding:8px 6px;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:.04em}
+  th{text-align:left;border-bottom:2px solid #e2e8f0;padding:8px 6px;color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:.03em}
   td{border-bottom:1px solid #f1f5f9;padding:6px;font-variant-numeric:tabular-nums;vertical-align:top}
-  .note{margin-top:24px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:10.5px;color:#475569;line-height:1.5}
-  .foot{margin-top:20px;font-size:9px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
-  .noprint{margin-top:18px}
-  .noprint button{background:#0f172a;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer}
-  @media print{body{padding:0}.noprint{display:none}}
+  .note{margin-top:22px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:10.5px;color:#475569;line-height:1.5}
+  .foot{margin-top:18px;font-size:9px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
+  .noprint{margin-top:16px;padding:12px;background:#f1f5f9;border-radius:8px;font-size:12px;color:#334155}
+  @media print{body{padding:0}.noprint{display:none!important}}
+  @media (max-width:720px){.kpi{grid-template-columns:1fr 1fr}.split{grid-template-columns:1fr}}
 </style></head><body>
   <div class="hdr">
     <div>
-      <div class="brand">Cross-exchange arbitrage · performance statement</div>
+      <div class="brand">${esc(t.brand)}</div>
       <h1>${esc(fund)}</h1>
     </div>
     <div class="meta">
-      Prepared for: <b>${esc(inv)}</b><br/>
-      Period: <b>${esc(from)}</b> → <b>${esc(to)}</b><br/>
-      Generated: ${esc(genAt)}<br/>
-      Mode: Paper / Demo · filtered ledger
+      ${esc(t.preparedFor)}: <b>${esc(inv)}</b><br/>
+      ${esc(t.period)}: <b>${esc(from)}</b> → <b>${esc(to)}</b><br/>
+      ${esc(t.generated)}: ${esc(genAt)}<br/>
+      ${esc(t.mode)}
     </div>
   </div>
 
-  <div class="sec">Executive summary</div>
+  <div class="sec">${esc(t.exec)}</div>
   <div class="kpi">
-    <div><div class="l">Net PnL</div><div class="v ${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} <span style="font-size:11px">USDT</span></div>
-      <div class="s">${netPctEq>=0?'+':''}${netPctEq.toFixed(2)}% of equity base</div></div>
-    <div><div class="l">Win rate</div><div class="v">${(Number(p.winRate)||0).toFixed(1)}%</div>
-      <div class="s">${p.wins!=null?(p.wins+' / '+(p.totalTrades||0)+' closed'):'—'}</div></div>
-    <div><div class="l">Total trades</div><div class="v">${p.totalTrades||rows.length}</div>
-      <div class="s">in selected window / filters</div></div>
-    <div><div class="l">Profit factor</div><div class="v">${(Number(p.profitFactor)||0).toFixed(2)}</div>
-      <div class="s">max DD ${(Number(p.maxDrawdown)||0).toFixed(2)} USDT</div></div>
+    <div><div class="l">${esc(t.netPnl)}</div><div class="v ${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} <span style="font-size:11px">USDT</span></div>
+      <div class="s">${netPctEq>=0?'+':''}${netPctEq.toFixed(2)}% ${esc(t.ofEquity)}</div></div>
+    <div><div class="l">${esc(t.winRate)}</div><div class="v">${(Number(p.winRate)||0).toFixed(1)}%</div>
+      <div class="s">${p.wins!=null?(p.wins+' / '+(p.totalTrades||0)+' '+t.closed):'—'}</div></div>
+    <div><div class="l">${esc(t.totalTrades)}</div><div class="v">${p.totalTrades||rows.length}</div>
+      <div class="s">${esc(t.inRange)}</div></div>
+    <div><div class="l">${esc(t.profitFactor)}</div><div class="v">${(Number(p.profitFactor)||0).toFixed(2)}</div>
+      <div class="s">${esc(t.maxDd)} ${(Number(p.maxDrawdown)||0).toFixed(2)} USDT</div></div>
   </div>
 
   <div class="split">
     <div class="box">
-      <h3>Gross vs Net breakdown</h3>
-      <div class="row"><span>Gross (leg A/B price Δ)</span><span class="${gross>=0?'pos':'neg'}">${gross>=0?'+':''}${gross.toFixed(2)}</span></div>
-      <div class="row"><span>− Total fees (open+close)</span><span class="neg">−${Math.abs(fees).toFixed(2)} <span style="color:#94a3b8;font-weight:400">(${feesPctG.toFixed(1)}% gross)</span></span></div>
-      <div class="row"><span>± Funding</span><span>${funding>=0?'+':''}${funding.toFixed(2)}</span></div>
-      <div class="row"><span>= Net PnL</span><span class="${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} USDT</span></div>
+      <h3>${esc(t.grossVsNet)}</h3>
+      <div class="row"><span>${esc(t.gross)}</span><span class="${gross>=0?'pos':'neg'}">${gross>=0?'+':''}${gross.toFixed(2)}</span></div>
+      <div class="row"><span>− ${esc(t.totalFees)}</span><span class="neg">−${Math.abs(fees).toFixed(2)} <span style="color:#94a3b8;font-weight:400">(${feesPctG.toFixed(1)}% ${esc(t.ofGross)})</span></span></div>
+      <div class="row"><span>± ${esc(t.funding)}</span><span>${funding>=0?'+':''}${funding.toFixed(2)}</span></div>
+      <div class="row"><span>= ${esc(t.netPnlRow)}</span><span class="${net>=0?'pos':'neg'}">${net>=0?'+':''}${net.toFixed(2)} USDT</span></div>
     </div>
     <div class="box">
-      <h3>Risk &amp; expectancy</h3>
-      <div class="row"><span>Equity base</span><span>${eq.toFixed(0)} USDT</span></div>
-      <div class="row"><span>Avg win / avg loss</span><span>${(Number(p.avgWin)||0).toFixed(2)} / ${(Number(p.avgLoss)||0).toFixed(2)}</span></div>
-      <div class="row"><span>Expectancy</span><span>${(Number(p.expectancy)||0)>=0?'+':''}${(Number(p.expectancy)||0).toFixed(2)}</span></div>
-      <div class="row"><span>Avg duration</span><span>${(Number(p.avgDurationMin)||0).toFixed(1)} min</span></div>
+      <h3>${esc(t.risk)}</h3>
+      <div class="row"><span>${esc(t.equityBase)}</span><span>${eq.toFixed(0)} USDT</span></div>
+      <div class="row"><span>${esc(t.avgWinLoss)}</span><span>${(Number(p.avgWin)||0).toFixed(2)} / ${(Number(p.avgLoss)||0).toFixed(2)}</span></div>
+      <div class="row"><span>${esc(t.expectancy)}</span><span>${(Number(p.expectancy)||0)>=0?'+':''}${(Number(p.expectancy)||0).toFixed(2)}</span></div>
+      <div class="row"><span>${esc(t.avgDuration)}</span><span>${(Number(p.avgDurationMin)||0).toFixed(1)} ${esc(t.min)}</span></div>
     </div>
   </div>
 
-  ${dayRows ? `<div class="sec">Daily realized</div>
-  <table><thead><tr><th>Day (UTC)</th><th style="text-align:right">Net PnL</th><th style="text-align:right">Trades</th></tr></thead>
+  ${dayRows ? `<div class="sec">${esc(t.daily)}</div>
+  <table><thead><tr><th>${esc(t.dayUtc)}</th><th style="text-align:right">${esc(t.netPnlRow)}</th><th style="text-align:right">${esc(t.tradesCol)}</th></tr></thead>
   <tbody>${dayRows}</tbody></table>` : ''}
 
-  <div class="sec">Trade ledger (${Math.min(rows.length, 120)}${rows.length > 120 ? ' of ' + rows.length : ''})</div>
+  <div class="sec">${esc(t.ledger)} (${Math.min(rows.length, 120)}${rows.length > 120 ? ' / ' + rows.length : ''})</div>
   <table>
     <thead><tr>
-      <th>Status</th><th>Symbol</th><th>Route</th><th style="text-align:right">Size</th>
-      <th style="text-align:right">Net</th><th style="text-align:right">Fees</th><th>Opened</th>
+      <th>${esc(t.status)}</th><th>${esc(t.symbol)}</th><th>${esc(t.route)}</th><th style="text-align:right">${esc(t.size)}</th>
+      <th style="text-align:right">${esc(t.net)}</th><th style="text-align:right">${esc(t.fees)}</th><th>${esc(t.opened)}</th>
     </tr></thead>
-    <tbody>${tradeRows || '<tr><td colspan="7">No trades in range</td></tr>'}</tbody>
+    <tbody>${tradeRows || '<tr><td colspan="7">' + esc(t.noTrades) + '</td></tr>'}</tbody>
   </table>
 
-  <div class="note"><b>Disclaimer / notes</b><br/>${esc(note)}</div>
-  <div class="foot">ArbitrageBot · paper analytics · not investment advice · figures from local ledger for selected TimeRange and filters.</div>
-  <p class="noprint" style="margin-top:18px;padding:12px;background:#f1f5f9;border-radius:8px;font-size:12px;color:#334155">
-    <b>Как сохранить PDF:</b> откройте этот файл в браузере → Ctrl+P (Cmd+P) → принтер «Save as PDF» / «Сохранить как PDF».
-  </p>
+  <div class="note"><b>${esc(t.disclaimer)}</b><br/>${esc(note)}</div>
+  <div class="foot">${esc(t.foot)}</div>
+  <p class="noprint"><b>${esc(t.printHint)}</b></p>
 </body></html>`;
 
-    // Download as .html — no pop-up (browser print → Save as PDF)
-    const stamp = genAt.replace(/[:Z]/g, '-').slice(0, 15);
-    const safeName = String(fund).replace(/[^\w\-]+/g, '_').slice(0, 40) || 'ArbitrageBot';
-    const filename = 'statement-' + safeName + '-' + stamp + '.html';
+    // Filename: statement-ArbitrageBot_Paper_Desk-ddmmyy--ddmmyy.html
+    const startD = this._ddmmyy(from);
+    const endD = this._ddmmyy(to);
+    const safeFund = String(fund).replace(/[^\w\-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'ArbitrageBot_Paper_Desk';
+    const filename = 'statement-' + safeFund + '-' + startD + '--' + endD + '.html';
+
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -867,10 +1062,10 @@ AB.pages.reports = {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-    // Optional toast in UI
     const hint = document.getElementById('repPdfHint');
     if (hint) {
-      hint.textContent = 'Скачан: ' + filename + ' · откройте файл → Ctrl+P → Save as PDF';
+      hint.textContent = (lang === 'hy' ? 'Ներբեռնված՝ ' : lang === 'ru' ? 'Скачан: ' : 'Downloaded: ')
+        + filename + ' · Ctrl+P → Save as PDF';
       hint.style.display = 'block';
     }
   },
