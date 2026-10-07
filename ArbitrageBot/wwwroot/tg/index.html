@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>ArbitrageBot · Reports</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <span class="logo">◈</span>
+        <div>
+          <div class="title">ArbitrageBot</div>
+          <div class="sub" id="hdrMode">PAPER · Reports</div>
+        </div>
+      </div>
+      <button type="button" class="icon-btn" id="btnRefresh" title="Refresh">↻</button>
+    </header>
+
+    <div class="range" id="rangeChips">
+      <button type="button" data-d="1">1D</button>
+      <button type="button" data-d="7" class="on">7D</button>
+      <button type="button" data-d="30">30D</button>
+      <button type="button" data-d="90">90D</button>
+      <button type="button" data-d="0">ALL</button>
+    </div>
+
+    <section class="hero" id="heroNet">
+      <div class="hero-label">NET PNL</div>
+      <div class="hero-val" id="netPnl">—</div>
+      <div class="hero-sub" id="netPct">—</div>
+    </section>
+
+    <section class="kpis" id="kpiGrid">
+      <div class="kpi"><div class="k-l">Win Rate</div><div class="k-v" id="winRate">—</div></div>
+      <div class="kpi"><div class="k-l">Trades</div><div class="k-v" id="trades">—</div></div>
+      <div class="kpi"><div class="k-l">Profit Factor</div><div class="k-v" id="pf">—</div></div>
+      <div class="kpi"><div class="k-l">Max DD</div><div class="k-v" id="dd">—</div></div>
+      <div class="kpi"><div class="k-l">Expectancy</div><div class="k-v" id="exp">—</div></div>
+      <div class="kpi"><div class="k-l">Opens now</div><div class="k-v" id="opens">—</div></div>
+    </section>
+
+    <section class="card">
+      <div class="card-hd">Gross vs Net</div>
+      <div class="row"><span>Gross</span><b id="gross">—</b></div>
+      <div class="row muted"><span>Fees</span><b id="fees">—</b></div>
+      <div class="row muted"><span>Funding</span><b id="funding">—</b></div>
+      <div class="row accent"><span>Net</span><b id="net2">—</b></div>
+    </section>
+
+    <section class="card">
+      <div class="card-hd">Today · engine</div>
+      <div class="row"><span>Day realized</span><b id="dayReal">—</b></div>
+      <div class="row muted"><span>Scans / skips</span><b id="scans">—</b></div>
+      <div class="row muted"><span>Status</span><b id="status">—</b></div>
+    </section>
+
+    <section class="card">
+      <div class="card-hd">Heatmap · recent days</div>
+      <div class="heat" id="heat"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-hd">Best / Worst</div>
+      <div class="row"><span id="bestL">Best</span><b id="bestV" class="pos">—</b></div>
+      <div class="row"><span id="worstL">Worst</span><b id="worstV" class="neg">—</b></div>
+    </section>
+
+    <footer class="foot">
+      <span id="updated">—</span>
+      <span class="dot">·</span>
+      <span>Mini App · /tg/</span>
+    </footer>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

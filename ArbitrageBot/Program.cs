@@ -394,6 +394,26 @@ try
     app.MapGet("/api/analytics/trades", (IPaperAnalyticsStore a, int take = 1000, int skip = 0) => Results.Json(a.GetTradeDetails(take, skip)));
     app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 90) => Results.Json(a.GetDaySummaries(maxDays)));
 
+    // Telegram Mini App: one payload for mobile reports panel
+    app.MapGet("/api/tg/report", (IPaperAnalyticsStore a, ArbitrageState state, IFuturesPaperService paper, int days = 7) =>
+    {
+        var perf = a.GetPerformanceReport(days);
+        var summary = a.GetLiveSummary();
+        return Results.Json(new
+        {
+            utc = DateTime.UtcNow.ToString("o"),
+            days,
+            performance = perf,
+            summary,
+            mode = state.Mode,
+            paused = state.IsPaused,
+            opens = paper.OpenCount,
+            futuresPaper = state.FuturesPaper,
+            tip = "Telegram Mini App · /tg/ · refresh pulls live paper analytics"
+        });
+    });
+
+
 // ─── Live trading control (Phase 1: gate + verify, no orders) ───
     app.MapGet("/api/live/status", (LiveTradingGuard guard) => Results.Ok(guard.Status()));
 
