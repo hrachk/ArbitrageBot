@@ -28,6 +28,28 @@ public class ArbitrageWorker : BackgroundService
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
     private DateTime _lastHeartbeatLogUtc = DateTime.MinValue;
+    private readonly Dictionary<string, DateTime> _skipLogAt = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool ShouldLogSkip(string symbol, string? reason)
+    {
+        var r = reason ?? "";
+        var routine = r.Contains("Already open", StringComparison.OrdinalIgnoreCase)
+                   || r.Contains("Cooldown", StringComparison.OrdinalIgnoreCase)
+                   || r.Contains("RT ", StringComparison.OrdinalIgnoreCase)
+                   || r.Contains("min ", StringComparison.OrdinalIgnoreCase)
+                   || r.Contains("no-candidates", StringComparison.OrdinalIgnoreCase);
+        if (!routine) return true;
+        var key = symbol + "|" + (r.Length > 40 ? r[..40] : r);
+        var now = DateTime.UtcNow;
+        if (_skipLogAt.TryGetValue(key, out var last) && (now - last).TotalSeconds < 30) return false;
+        _skipLogAt[key] = now;
+        if (_skipLogAt.Count > 200)
+        {
+            var old = _skipLogAt.Where(kv => (now - kv.Value).TotalMinutes > 5).Select(kv => kv.Key).ToList();
+            foreach (var k in old) _skipLogAt.Remove(k);
+        }
+        return true;
+    }
 
     public ArbitrageWorker(
         IMarketDataService spotMarket,
@@ -352,8 +374,11 @@ public class ArbitrageWorker : BackgroundService
                     _logger.LogInformation("Opened futures paper hedge ({N}): {T}", openedThisCycle, o.ToString());
                     continue;
                 }
-                _logger.LogInformation("Paper skip {Sym}: {Msg} open={Open:F3}% RT={Rt:F3}%",
-                    o.Symbol, trade.Message, o.NetSpreadPercent, o.NetRoundTripPercent);
+                // High-frequency skip logging was flooding console and growing process memory.
+                // Sample: log at most once per 30s per symbol, or only non-routine reasons.
+                if (ShouldLogSkip(o.Symbol, trade.Message))
+                    _logger.LogInformation("Paper skip {Sym}: {Msg} open={Open:F3}% RT={Rt:F3}%",
+                        o.Symbol, trade.Message, o.NetSpreadPercent, o.NetRoundTripPercent);
             }
         }
 

@@ -144,6 +144,7 @@ AB.pages.reports = {
     const el = (id) => AB.$(id);
     if (el('r_paper_realized')) el('r_paper_realized').innerHTML = AB.fmtUsd(fp.realizedPnlUsd ?? fp.realizedPnl);
     if (el('r_day'))            el('r_day').innerHTML            = AB.fmtUsd(fp.dailyRealizedPnlUsd);
+    // Note: top KPIs are session/UTC-day (paper engine). LAYER 1–2 below are the selected TimeRange from ledger.
     if (el('r_paper_closes')) {
       const closedN = Array.isArray(trades)
         ? trades.filter(t => /clos/i.test(String(t.status || t.Status || ''))).length
@@ -246,6 +247,7 @@ AB.pages.reports = {
         `<div>scans <b>${an.scans ?? 0}</b> · avg candidates <b>${an.avgCandidates ?? 0}</b></div>`,
         `<div>opens <b class="pos">${an.opens ?? 0}</b> · closes <b>${an.closes ?? 0}</b> · skips <b>${an.skips ?? 0}</b></div>`,
         `<div>realized ${AB.fmtUsd(an.realizedPnlUsd)} · best open ${AB.fmt(an.bestOpenPctSeen, 3)}% · best RT ${AB.fmt(an.bestRtPctSeen, 3)}%</div>`,
+        `<div class="muted" style="font-size:11px">UTC day · session start ${an.sessionStartUtc ? an.sessionStartUtc.slice(0,19) : '—'} · resets 00:00 UTC</div>`,
       ].join('');
     }
 
@@ -339,7 +341,7 @@ AB.pages.reports = {
     k1.innerHTML = '<div class="empty">Loading…</div>';
     try {
       const p      = await AB.api.get('/api/analytics/performance?days=' + d);
-      const trades = await AB.api.get('/api/analytics/trades?take=5000&skip=0');
+      const trades = await AB.api.get('/api/analytics/trades?take=800&skip=0');
       const pctStr = (v, dig) => {
         const n = Number(v);
         if (!isFinite(n)) return '';
@@ -390,8 +392,8 @@ AB.pages.reports = {
         kpi('EXPECTANCY', pn(p.expectancy).s, pn(p.expectancy).cls,
           p.expectancyPctOfSize != null ? pctStr(p.expectancyPctOfSize) + ' of size' : ''),
         kpi('AVG R:R', AB.fmt(p.avgRr, 2), ''),
-        kpi('CONSEC WINS', p.consecWins, 'pos'),
-        kpi('CONSEC LOSS', p.consecLoss, 'neg'),
+        kpi('Max win streak', p.consecWins, 'pos'),
+        kpi('Max loss streak', p.consecLoss, 'neg'),
         kpi('EQUITY BASE', AB.fmt(eqBase, 0) + ' USDT', '', 'PaperStartingQuote × venues'),
       ].join('');
 

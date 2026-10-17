@@ -41,6 +41,7 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
 
     // live day counters
     private DateTime _day = DateTime.UtcNow.Date;
+    private readonly DateTime _sessionStartUtc = DateTime.UtcNow;
     private int _scans, _candidatesSum, _opens, _closes, _skips;
     private decimal _realizedDay;
     private decimal _bestOpenSeen, _bestRtSeen;
@@ -106,18 +107,9 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
             if (bestOpenPct is > 0 && bestOpenPct > _bestOpenSeen) _bestOpenSeen = bestOpenPct.Value;
             if (bestRtPct is { } rt && rt > _bestRtSeen) _bestRtSeen = rt;
 
-            var ev = new
-            {
-                type = "scan",
-                utc = DateTime.UtcNow,
-                candidates,
-                bestOpenPct,
-                bestRtPct,
-                minProfitPct,
-                note
-            };
-            Append(ev);
-            EnqueueRecent(ev);
+            // Do NOT append every scan to events-*.jsonl — with 250ms scan this was
+            // tens of thousands of disk writes/day and the main source of process growth.
+            // Counters are kept in memory and flushed to daily-*.json every 30s.
             MaybeFlushDaily();
         }
     }
@@ -146,9 +138,10 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 fullFill = opp?.FullyFilled,
                 estPnl = opp?.EstNetPnlUsd
             };
-            Append(ev);
+            // Keep recent skips in memory for UI; write to disk only every 50th to limit file growth
             EnqueueRecent(ev);
             EnqueueSkip(ev);
+            if (_skips % 50 == 0) Append(ev);
             MaybeFlushDaily();
         }
     }
@@ -283,9 +276,11 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
                 bestRtPctSeen = Math.Round(_bestRtSeen, 4),
                 skipReasons = _skipReasons.OrderByDescending(kv => kv.Value)
                     .Select(kv => new { reason = kv.Key, count = kv.Value }).ToList(),
-                quality = ComputeQualityUnlocked(),
+                // quality removed from hot path — full ledger parse on every snapshot caused CPU/RAM growth
                 dataDir = _dir,
-                note = "Persisted under data/paper/ (events-*.jsonl, daily-*.json, trades-ledger.json)"
+                sessionStartUtc = _sessionStartUtc.ToString("o"),
+                dayBoundary = "UTC",
+                note = "UTC day boundary. Session counters reset at 00:00 UTC. Ledger history is independent of session/day counters."
             };
         }
     }
@@ -357,17 +352,23 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
     {
         maxDays = Math.Clamp(maxDays, 1, 3650);
         var list = new List<object>();
-        if (!Directory.Exists(_dir)) return list;
-        foreach (var file in Directory.GetFiles(_dir, "daily-*.json").OrderByDescending(f => f).Take(maxDays))
+        var today = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+        if (Directory.Exists(_dir))
         {
-            try
+            foreach (var file in Directory.GetFiles(_dir, "daily-*.json").OrderByDescending(f => f).Take(maxDays))
             {
-                var json = File.ReadAllText(file);
-                list.Add(JsonSerializer.Deserialize<JsonElement>(json));
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    var el = JsonSerializer.Deserialize<JsonElement>(json);
+                    // skip today's file — live summary is authoritative and avoids duplicate rows after restart
+                    var day = el.TryGetProperty("dayUtc", out var du) ? du.GetString() : null;
+                    if (day == today) continue;
+                    list.Add(el);
+                }
+                catch { /* ignore */ }
             }
-            catch { /* ignore */ }
         }
-        // include today live at front if not flushed yet
         list.Insert(0, GetLiveSummary());
         return list;
     }
@@ -702,11 +703,30 @@ public sealed class PaperAnalyticsStore : IPaperAnalyticsStore
         }
     }
 
-    /// <summary>Hot file first (newest), then archive jsonl newest-of-archive → oldest.</summary>
+    /// <summary>Prefer in-memory hot ledger (already loaded). Fall back to file only if empty. Then archive jsonl.</summary>
     private List<JsonElement> EnumerateAllLedgerElements()
     {
         var results = new List<JsonElement>();
-        if (File.Exists(LedgerPath))
+        // Hot path: use memory to avoid re-parsing multi-MB JSON on every report request
+        if (_tradeLedger.Count > 0)
+        {
+            foreach (var row in _tradeLedger)
+            {
+                try
+                {
+                    if (row is JsonElement je)
+                        results.Add(je.Clone());
+                    else
+                    {
+                        var json = JsonSerializer.Serialize(row);
+                        using var doc = JsonDocument.Parse(json);
+                        results.Add(doc.RootElement.Clone());
+                    }
+                }
+                catch { /* skip */ }
+            }
+        }
+        else if (File.Exists(LedgerPath))
         {
             try
             {
