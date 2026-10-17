@@ -144,7 +144,8 @@ AB.pages.reports = {
     const el = (id) => AB.$(id);
     if (el('r_paper_realized')) el('r_paper_realized').innerHTML = AB.fmtUsd(fp.realizedPnlUsd ?? fp.realizedPnl);
     if (el('r_day'))            el('r_day').innerHTML            = AB.fmtUsd(fp.dailyRealizedPnlUsd);
-    // Note: top KPIs are session/UTC-day (paper engine). LAYER 1–2 below are the selected TimeRange from ledger.
+    // Note: Ledger realized + Margin by venue are rebuilt from trades-ledger (half PnL per leg).
+    // UTC day PnL is only today's closes. Layer 1–2 follow the selected TimeRange.
     if (el('r_paper_closes')) {
       const closedN = Array.isArray(trades)
         ? trades.filter(t => /clos/i.test(String(t.status || t.Status || ''))).length
@@ -223,9 +224,10 @@ AB.pages.reports = {
             free ${AB.fmt(sumFree, 2)} · locked ${AB.fmt(sumLocked, 2)}<br/>
             start ${AB.fmt(start * Math.max(n, 1), 0)} (${AB.fmt(start, 0)}×${n}) · Δ wallet
             <span class="${totalDelta >= 0 ? 'pos' : 'neg'}">${totalDelta >= 0 ? '+' : ''}${AB.fmt(totalDelta, 2)}</span><br/>
-            session realized <span class="${sessR >= 0 ? 'pos' : 'neg'}">${sessR >= 0 ? '+' : ''}${AB.fmt(sessR, 2)}</span>
+            ledger realized <span class="${sessR >= 0 ? 'pos' : 'neg'}">${sessR >= 0 ? '+' : ''}${AB.fmt(sessR, 2)}</span>
             · expected ${AB.fmt(expected, 2)}
             ${Math.abs(drift) > 0.5 ? ' · drift <span class="neg">' + (drift >= 0 ? '+' : '') + AB.fmt(drift, 2) + '</span>' : ''}
+            <br/><span style="opacity:.75">equity = start + half net PnL on each leg (from journal)</span>
           </div>
         </div>` + cards;
       } else if (Object.keys(bal).length) {

@@ -50,15 +50,25 @@ public class FuturesPaperService : IFuturesPaperService
 
     private string SnapshotPath => Path.Combine(_env.ContentRootPath, "data", "paper", "open-state.json");
 
+    private DateTime _ledgerPnlAfterUtc = DateTime.MinValue;
+    private List<string> _venues = [];
+
     /// <summary>
-    /// Start paper engine: restore open hedges from disk if present, else fresh balances.
+    /// Start paper engine, then rebuild free margin from the trade ledger
+    /// so wallets match accumulated realized PnL (not a wiped session).
     /// </summary>
     public void Initialize(IEnumerable<string> exchanges)
     {
-        var list = exchanges.ToList();
-        if (TryRestore(list))
-            return;
-        Reset(list);
+        var list = exchanges.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        _venues = list;
+        if (!TryRestore(list))
+            Reset(list, keepCutoff: true);
+        lock (_lock)
+            ApplyLedgerEquityUnlocked();
+        SaveOpenState();
+        _logger.LogInformation(
+            "Paper wallets synced to ledger: realized={R:F2} daily={D:F2} venues={N}",
+            RealizedPnlUsd, DailyRealizedPnlUsd, _margin.Count);
     }
 
     
@@ -71,37 +81,37 @@ public class FuturesPaperService : IFuturesPaperService
                 _logger.LogInformation("Paper reseed skipped: {N} open positions — use Reset paper after close", _positions.Count);
                 return false;
             }
-            var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
-                : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 0m);
-            if (start <= 0) start = 10_000m;
+            var start = StartingQuote();
             var keys = (exchanges ?? _margin.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (keys.Count == 0) keys = _margin.Keys.ToList();
+            if (keys.Count == 0) keys = _venues.Count > 0 ? _venues : _margin.Keys.ToList();
             foreach (var ex in keys)
-                _margin[ex] = start;
-            foreach (var k in _margin.Keys.ToList())
-                _margin[k] = start;
-            // Keep wallet and session PnL aligned: reseed without zeroing Realized caused
-            // Reports (ledger) vs Margin (wallet) desync (e.g. +253 PnL vs +4 Δ equity).
-            RealizedPnlUsd = 0;
-            DailyRealizedPnlUsd = 0;
-            UnrealizedHintUsd = 0;
-            _dayUtc = DateTime.UtcNow.Date;
+                if (!_margin.ContainsKey(ex))
+                    _margin[ex] = start;
+            // Do not flatten to start — that dropped accumulated ledger PnL
+            // while trades-ledger.json still showed thousands of USDT.
+            ApplyLedgerEquityUnlocked();
             SaveOpenState();
             _logger.LogInformation(
-                "Paper balances reseeded to {Start} USDT x {N} venues; session Realized PnL reset to 0 (ledger history kept)",
-                start, _margin.Count);
+                "Paper balances reseeded from ledger at {Start} USDT start × {N} venues; realized={R:F2}",
+                start, _margin.Count, RealizedPnlUsd);
             return true;
         }
     }
 
-    public void Reset(IEnumerable<string> exchanges)
+    public void Reset(IEnumerable<string> exchanges) => Reset(exchanges, keepCutoff: false);
+
+    /// <param name="keepCutoff">True on first boot when no snapshot — do not hide older ledger PnL.</param>
+    private void Reset(IEnumerable<string> exchanges, bool keepCutoff)
     {
         lock (_lock)
         {
+            if (!keepCutoff)
+                _ledgerPnlAfterUtc = DateTime.UtcNow;
             _margin.Clear();
-            var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
-                : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 10_000m);
-            foreach (var ex in exchanges)
+            var start = StartingQuote();
+            var list = exchanges.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (list.Count > 0) _venues = list;
+            foreach (var ex in _venues.Count > 0 ? _venues : list)
                 _margin[ex] = start;
             _positions.Clear();
             _trades.Clear();
@@ -112,9 +122,11 @@ public class FuturesPaperService : IFuturesPaperService
             TradeAttempts = 0;
             _lastOpenUtc = DateTime.MinValue;
             _lastCloseUtc = DateTime.MinValue;
-            ClearOpenStateFile();
-            _logger.LogInformation("Futures paper margin initialized: {Start} USDT x {N} exchanges", start, _margin.Count);
+            _logger.LogInformation(
+                "Futures paper margin reset: {Start} USDT x {N} exchanges (ledger PnL after {Cut})",
+                start, _margin.Count, _ledgerPnlAfterUtc == DateTime.MinValue ? "all" : _ledgerPnlAfterUtc.ToString("o"));
         }
+        SaveOpenState();
     }
 
     public FuturesPaperTrade? TryOpen(FuturesOpportunity opp)
@@ -723,6 +735,7 @@ public class FuturesPaperService : IFuturesPaperService
 
                 RealizedPnlUsd = snap.RealizedPnlUsd;
                 DailyRealizedPnlUsd = snap.DailyRealizedPnlUsd;
+                _ledgerPnlAfterUtc = snap.LedgerPnlAfterUtc;
                 _dayUtc = snap.DayUtc == default ? DateTime.UtcNow.Date : snap.DayUtc.Date;
                 if (_dayUtc.Date != DateTime.UtcNow.Date)
                     DailyRealizedPnlUsd = 0;
@@ -865,6 +878,164 @@ public class FuturesPaperService : IFuturesPaperService
         catch { return null; }
     }
 
+    private decimal StartingQuote()
+    {
+        var start = R.PaperStartingQuote > 0 ? R.PaperStartingQuote
+            : (R.LiveEquityPerExchangeUsd > 0 ? R.LiveEquityPerExchangeUsd : 0m);
+        return start > 0 ? start : 10_000m;
+    }
+
+    /// <summary>
+    /// free[venue] = start + half of each closed ledger PnL − locked margin − open fees still outstanding.
+    /// Same split the close path uses (walletCredit adds pnl/2 per leg).
+    /// </summary>
+    private void ApplyLedgerEquityUnlocked()
+    {
+        var start = StartingQuote();
+        var byVenue = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        decimal total = 0, today = 0;
+        var todayDate = DateTime.UtcNow.Date;
+        var cutoff = _ledgerPnlAfterUtc;
+
+        void Consider(JsonElement el)
+        {
+            if (!TryLedgerPnl(el, out var pnl, out var closedAt, out var longEx, out var shortEx, out var id))
+                return;
+            if (cutoff != DateTime.MinValue && closedAt <= cutoff)
+                return;
+            if (!string.IsNullOrEmpty(id))
+            {
+                if (!seen.Add(id)) return;
+            }
+            decimal half = decimal.Round(pnl / 2m, 8, MidpointRounding.AwayFromZero);
+            decimal rest = pnl - half;
+            if (!string.IsNullOrEmpty(longEx) && !string.IsNullOrEmpty(shortEx))
+            {
+                byVenue[longEx] = byVenue.GetValueOrDefault(longEx) + half;
+                byVenue[shortEx] = byVenue.GetValueOrDefault(shortEx) + rest;
+            }
+            else if (!string.IsNullOrEmpty(longEx))
+                byVenue[longEx] = byVenue.GetValueOrDefault(longEx) + pnl;
+            else if (!string.IsNullOrEmpty(shortEx))
+                byVenue[shortEx] = byVenue.GetValueOrDefault(shortEx) + pnl;
+            total += pnl;
+            if (closedAt.Date == todayDate)
+                today += pnl;
+        }
+
+        var dir = Path.Combine(_env.ContentRootPath, "data", "paper");
+        ReadLedgerArray(Path.Combine(dir, "trades-ledger.json"), Consider);
+        ReadLedgerJsonl(Path.Combine(dir, "trades-ledger-archive.jsonl"), Consider);
+
+        var locked = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var openFee = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pos in _positions)
+        {
+            var leg = pos.LockedMarginUsd > 0
+                ? pos.LockedMarginUsd
+                : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
+            locked[pos.LongExchange] = locked.GetValueOrDefault(pos.LongExchange) + leg;
+            locked[pos.ShortExchange] = locked.GetValueOrDefault(pos.ShortExchange) + leg;
+            var fee = _trades.FirstOrDefault(t => t.Id == pos.TradeId)?.OpenFeesUsd ?? 0m;
+            if (fee <= 0) continue;
+            var feeHalf = decimal.Round(fee / 2m, 8, MidpointRounding.AwayFromZero);
+            openFee[pos.LongExchange] = openFee.GetValueOrDefault(pos.LongExchange) + feeHalf;
+            openFee[pos.ShortExchange] = openFee.GetValueOrDefault(pos.ShortExchange) + (fee - feeHalf);
+        }
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var ex in _venues) names.Add(ex);
+        foreach (var ex in _margin.Keys) names.Add(ex);
+        foreach (var ex in byVenue.Keys) names.Add(ex);
+        foreach (var ex in names)
+        {
+            if (string.IsNullOrWhiteSpace(ex)) continue;
+            var pnl = byVenue.GetValueOrDefault(ex);
+            var free = start + pnl - locked.GetValueOrDefault(ex) - openFee.GetValueOrDefault(ex);
+            _margin[ex] = free;
+        }
+
+        RealizedPnlUsd = total;
+        if (_dayUtc.Date != todayDate)
+            _dayUtc = todayDate;
+        DailyRealizedPnlUsd = today;
+    }
+
+    private static bool TryLedgerPnl(
+        JsonElement el, out decimal pnl, out DateTime closedAt,
+        out string longEx, out string shortEx, out string id)
+    {
+        pnl = 0;
+        closedAt = DateTime.MinValue;
+        longEx = "";
+        shortEx = "";
+        id = "";
+        var status = "";
+        if (el.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String)
+            status = st.GetString() ?? "";
+        else if (el.TryGetProperty("Status", out var st2) && st2.ValueKind == JsonValueKind.String)
+            status = st2.GetString() ?? "";
+        if (status.Contains("Open", StringComparison.OrdinalIgnoreCase)
+            && !status.Contains("Close", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (status.Contains("Skip", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        JsonElement rp;
+        var has = el.TryGetProperty("realizedPnlUsd", out rp) || el.TryGetProperty("RealizedPnlUsd", out rp);
+        if (!has || rp.ValueKind != JsonValueKind.Number || !rp.TryGetDecimal(out pnl))
+            return false;
+
+        if (el.TryGetProperty("closedAt", out var ca) || el.TryGetProperty("ClosedAt", out ca))
+        {
+            if (ca.ValueKind == JsonValueKind.String && DateTime.TryParse(ca.GetString(), out var cdt))
+                closedAt = cdt.ToUniversalTime();
+        }
+        if (closedAt == DateTime.MinValue)
+            closedAt = DateTime.UtcNow;
+
+        string S(string a, string b) =>
+            el.TryGetProperty(a, out var x) && x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" :
+            el.TryGetProperty(b, out var y) && y.ValueKind == JsonValueKind.String ? y.GetString() ?? "" : "";
+        longEx = S("longExchange", "LongExchange");
+        shortEx = S("shortExchange", "ShortExchange");
+        id = S("id", "Id");
+        return true;
+    }
+
+    private static void ReadLedgerArray(string path, Action<JsonElement> consider)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+            foreach (var el in doc.RootElement.EnumerateArray())
+                consider(el);
+        }
+        catch { /* ignore corrupt ledger */ }
+    }
+
+    private static void ReadLedgerJsonl(string path, Action<JsonElement> consider)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            foreach (var line in File.ReadLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    consider(doc.RootElement);
+                }
+                catch { /* skip bad line */ }
+            }
+        }
+        catch { /* ignore */ }
+    }
+
     private void SaveOpenState()
     {
         try
@@ -879,6 +1050,7 @@ public class FuturesPaperService : IFuturesPaperService
                     RealizedPnlUsd = RealizedPnlUsd,
                     DailyRealizedPnlUsd = DailyRealizedPnlUsd,
                     DayUtc = _dayUtc,
+                    LedgerPnlAfterUtc = _ledgerPnlAfterUtc,
                     TradeAttempts = TradeAttempts,
                     LastOpenUtc = _lastOpenUtc,
                     Margin = _margin.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase),
@@ -931,6 +1103,8 @@ public class FuturesPaperService : IFuturesPaperService
         public decimal RealizedPnlUsd { get; set; }
         public decimal DailyRealizedPnlUsd { get; set; }
         public DateTime DayUtc { get; set; }
+        /// <summary>Closed trades at or before this instant are excluded from wallet equity (set by Reset paper).</summary>
+        public DateTime LedgerPnlAfterUtc { get; set; }
         public int TradeAttempts { get; set; }
         public DateTime LastOpenUtc { get; set; }
         public Dictionary<string, decimal>? Margin { get; set; }
