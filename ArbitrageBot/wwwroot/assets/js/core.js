@@ -161,19 +161,89 @@ AB.legMetrics = (p, books) => {
   return { qty, longE, shortE, lev, longEx, shortEx, longMark, shortMark, longPnl, shortPnl, entrySpread, curSpread, notionalL, notionalS, margin, funding };
 };
 
+AB.ui = AB.ui || {};
+AB.ui.expandedPositions = AB.ui.expandedPositions || new Set();
+
+AB.positionKey = (p) => {
+  const id = p && (p.tradeId || p.TradeId || p.id || p.Id);
+  if (id) return String(id);
+  const sym = (p && (p.symbol || p.Symbol)) || '';
+  const a = (p && (p.longExchange || p.LongExchange || p.exchange)) || '';
+  const b = (p && (p.shortExchange || p.ShortExchange || p.side)) || '';
+  const opened = (p && (p.openedAt || p.OpenedAt)) || '';
+  return sym + '_' + a + '_' + b + '_' + opened;
+};
+
+AB.togglePosition = (key, ev) => {
+  if (!key) return;
+  const set = AB.ui.expandedPositions;
+  if (set.has(key)) set.delete(key); else set.add(key);
+  const card = ev && ev.currentTarget ? ev.currentTarget.closest('[data-k]') : null;
+  if (card) card.classList.toggle('open', set.has(key));
+};
+
+AB.applyPosFields = (root, fields) => {
+  if (!root || !fields) return;
+  Object.keys(fields).forEach((name) => {
+    const spec = fields[name];
+    const n = root.querySelector('[data-f="' + name + '"]');
+    if (!n || !spec) return;
+    if (n.textContent !== spec.text) n.textContent = spec.text;
+    if (spec.cls != null) {
+      n.classList.toggle('pos', spec.cls === 'pos');
+      n.classList.toggle('neg', spec.cls === 'neg');
+    }
+    if (spec.badge != null) n.className = 'leg-badge ' + spec.badge;
+  });
+};
+
+/** Reuse card DOM by data-k. Snapshot only patches [data-f] text. Expand lives in AB.ui.expandedPositions. */
+AB.mountKeyed = (container, entries) => {
+  if (!container) return;
+  const have = new Map();
+  Array.from(container.children).forEach((child) => {
+    const k = child.getAttribute('data-k');
+    if (k) have.set(k, child);
+  });
+  const frag = document.createDocumentFragment();
+  const seen = new Set();
+  entries.forEach((e) => {
+    seen.add(e.key);
+    let node = have.get(e.key);
+    if (node) have.delete(e.key);
+    else {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = e.html.trim();
+      node = tmp.firstElementChild;
+    }
+    if (!node) return;
+    if (e.fields) AB.applyPosFields(node, e.fields);
+    if (node.classList.contains('leg-acc'))
+      node.classList.toggle('open', AB.ui.expandedPositions.has(e.key));
+    frag.appendChild(node);
+  });
+  const sc = container.scrollTop;
+  const se = document.scrollingElement;
+  const y = se ? se.scrollTop : 0;
+  container.replaceChildren(frag);
+  container.scrollTop = sc;
+  if (se && se.scrollTop !== y) se.scrollTop = y;
+  AB.ui.expandedPositions.forEach((k) => { if (!seen.has(k)) AB.ui.expandedPositions.delete(k); });
+};
+
 AB.legSplitHtml = (v) => {
   const px = (n) => (n > 0 ? AB.fmt(n, n < 1 ? 6 : 4) : '—');
   const pnl = (n) => (n == null || !isFinite(n) ? '—' : AB.fmtUsd(n));
   const cls = (n) => (n == null ? '' : (n >= 0 ? 'pos' : 'neg'));
-  const row = (k, val) => `<div class="leg-row"><span>${k}</span><b class="mono">${val}</b></div>`;
+  const row = (k, field, val) => `<div class="leg-row"><span>${k}</span><b class="mono" data-f="${field}">${val}</b></div>`;
   const col = (side, ex, entry, mark, notional, upnl) => `<div class="leg leg-${side}">
       <div class="leg-hd"><span class="leg-badge ${side}">${side === 'long' ? 'LONG' : 'SHORT'}</span><span class="mono">${ex}</span></div>
-      ${row('Entry', px(entry))}
-      ${row('Mark', px(mark))}
-      ${row('Qty', v.qty ? AB.fmt(v.qty, 4) : '—')}
-      ${row('Notional', notional ? ('$' + notional.toFixed(0)) : '—')}
-      ${row('Lev · margin', v.lev + 'x · $' + (v.margin || 0).toFixed(2))}
-      ${row('uPnL', `<span class="${cls(upnl)}">${pnl(upnl)}</span>`)}
+      ${row('Entry', side + 'Entry', px(entry))}
+      ${row('Mark', side + 'Mark', px(mark))}
+      ${row('Qty', side + 'Qty', v.qty ? AB.fmt(v.qty, 4) : '—')}
+      ${row('Notional', side + 'Ntl', notional ? ('$' + notional.toFixed(0)) : '—')}
+      ${row('Lev · margin', side + 'Lev', v.lev + 'x · $' + (v.margin || 0).toFixed(2))}
+      <div class="leg-row"><span>uPnL</span><b class="mono"><span data-f="${side}Pnl" class="${cls(upnl)}">${pnl(upnl)}</span></b></div>
     </div>`;
   const es = v.entrySpread == null ? '—' : ((v.entrySpread >= 0 ? '+' : '') + v.entrySpread.toFixed(3) + '%');
   const cs = v.curSpread == null ? '—' : ((v.curSpread >= 0 ? '+' : '') + v.curSpread.toFixed(3) + '%');
@@ -181,42 +251,77 @@ AB.legSplitHtml = (v) => {
       ${col('long', v.longEx, v.longE, v.longMark, v.notionalL, v.longPnl)}
       ${col('short', v.shortEx, v.shortE, v.shortMark, v.notionalS, v.shortPnl)}
     </div>
-    <div class="leg-meta">entry spread <b>${es}</b> · now <b>${cs}</b> · funding <b class="${cls(v.funding)}">${pnl(v.funding)}</b></div>`;
+    <div class="leg-meta">entry spread <b data-f="entrySpread">${es}</b> · now <b data-f="curSpread">${cs}</b> · funding <b data-f="funding" class="${cls(v.funding)}">${pnl(v.funding)}</b></div>`;
+};
+
+AB.posFields = (p, books) => {
+  const v = AB.legMetrics(p, books);
+  const u = p.unrealizedPnlUsd != null ? p.unrealizedPnlUsd
+    : (p.unrealizedPnl != null ? p.unrealizedPnl
+      : ((v.longPnl != null || v.shortPnl != null) ? (Number(v.longPnl) || 0) + (Number(v.shortPnl) || 0) : null));
+  const hold = p.holdSeconds != null
+    ? (Math.floor(p.holdSeconds / 60) + 'm ' + (p.holdSeconds % 60) + 's')
+    : '—';
+  const px = (n) => (n > 0 ? AB.fmt(n, n < 1 ? 6 : 4) : '—');
+  const pnl = (n) => (n == null || !isFinite(Number(n)) ? '—' : AB.fmtUsd(n));
+  const cls = (n) => (n == null || !isFinite(Number(n)) ? 'flat' : (Number(n) >= 0 ? 'pos' : 'neg'));
+  const es = v.entrySpread == null ? '—' : ((v.entrySpread >= 0 ? '+' : '') + v.entrySpread.toFixed(3) + '%');
+  const cs = v.curSpread == null ? '—' : ((v.curSpread >= 0 ? '+' : '') + v.curSpread.toFixed(3) + '%');
+  const decision = (p.lastHoldDecision || '').toString().toUpperCase();
+  const tag = decision.includes('CLOSE') ? 'CLOSE' : (decision ? 'HOLD' : '');
+  return {
+    hold: { text: 'hold ' + hold + ' · width ' + AB.fmt(p.currentWidthPercent, 3) + '%' },
+    upnl: { text: pnl(u), cls: cls(u) },
+    holdTag: { text: tag, badge: tag === 'CLOSE' ? 'short' : 'long' },
+    longEntry: { text: px(v.longE) },
+    longMark: { text: px(v.longMark) },
+    longQty: { text: v.qty ? AB.fmt(v.qty, 4) : '—' },
+    longNtl: { text: v.notionalL ? ('$' + v.notionalL.toFixed(0)) : '—' },
+    longLev: { text: v.lev + 'x · $' + (v.margin || 0).toFixed(2) },
+    longPnl: { text: pnl(v.longPnl), cls: cls(v.longPnl) },
+    shortEntry: { text: px(v.shortE) },
+    shortMark: { text: px(v.shortMark) },
+    shortQty: { text: v.qty ? AB.fmt(v.qty, 4) : '—' },
+    shortNtl: { text: v.notionalS ? ('$' + v.notionalS.toFixed(0)) : '—' },
+    shortLev: { text: v.lev + 'x · $' + (v.margin || 0).toFixed(2) },
+    shortPnl: { text: pnl(v.shortPnl), cls: cls(v.shortPnl) },
+    entrySpread: { text: es },
+    curSpread: { text: cs },
+    funding: { text: pnl(v.funding), cls: cls(v.funding) },
+    reason: { text: p.lastHoldDecisionReason || '' }
+  };
 };
 
 AB.posCardHtml = (p, books) => {
   if (!p) return '';
-  const u = p.unrealizedPnlUsd != null ? p.unrealizedPnlUsd : p.unrealizedPnl;
-  const hold = p.holdSeconds != null
-    ? (Math.floor(p.holdSeconds / 60) + 'm ' + (p.holdSeconds % 60) + 's')
-    : '—';
-  const id = p.tradeId || p.id || '';
+  const key = AB.positionKey(p);
+  const id = p.tradeId || p.TradeId || p.id || '';
   const live = p.source === 'ledger' || p.source === 'live';
   const v = AB.legMetrics(p, books);
-  const holdTag = (p.lastHoldDecision || '').toString().toUpperCase().includes('CLOSE')
-    ? '<span class="leg-badge short">CLOSE</span>'
-    : (p.lastHoldDecision ? '<span class="leg-badge long">HOLD</span>' : '');
-  return `<div class="pos-item leg-acc">
-    <button type="button" class="leg-acc-hd" onclick="this.parentElement.classList.toggle('open')">
+  const fields = AB.posFields(p, books);
+  const open = AB.ui.expandedPositions.has(key) ? ' open' : '';
+  const safeKey = String(key).replace(/"/g, '');
+  return `<div class="pos-item leg-acc${open}" data-k="${safeKey}">
+    <button type="button" class="leg-acc-hd" onclick="AB.togglePosition(this.closest('[data-k]').getAttribute('data-k'), event)">
       <div>
         <div class="mono" style="font-weight:700;font-size:14px">${p.symbol || '?'}</div>
         <div style="margin-top:4px;font-size:12px">
           <span class="side-long">LONG ${v.longEx}</span>
           &nbsp;·&nbsp;
           <span class="side-short">SHORT ${v.shortEx}</span>
-          ${holdTag}
+          <span class="leg-badge ${fields.holdTag.badge}" data-f="holdTag">${fields.holdTag.text}</span>
         </div>
-        <div class="muted mono" style="margin-top:4px;font-size:11px">hold ${hold} · width ${AB.fmt(p.currentWidthPercent, 3)}%</div>
+        <div class="muted mono" style="margin-top:4px;font-size:11px" data-f="hold">${fields.hold.text}</div>
       </div>
       <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        <div style="font-size:16px;font-weight:700">${AB.fmtUsd(u)}</div>
+        <div style="font-size:16px;font-weight:700" data-f="upnl" class="${fields.upnl.cls === 'flat' ? '' : fields.upnl.cls}">${fields.upnl.text}</div>
         <span class="leg-chev">details</span>
       </div>
     </button>
     <div class="leg-acc-body">
       ${AB.legSplitHtml(v)}
       <div class="pos-foot" style="margin-top:8px">
-        <span class="muted" style="font-size:11px">${p.lastHoldDecisionReason || ''}</span>
+        <span class="muted" style="font-size:11px" data-f="reason">${fields.reason.text}</span>
         <button type="button" class="btn sm danger" onclick="event.stopPropagation();AB.closeHedge('${id}','${live ? 'live' : 'paper'}')">Close</button>
       </div>
     </div>

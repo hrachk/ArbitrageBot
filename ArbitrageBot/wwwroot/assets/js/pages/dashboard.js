@@ -206,32 +206,44 @@ AB.pages.dashboard = {
         const positions = fp.positions || [];
         const ledger = (livePos.ledger || livePos.open || []);
         const legs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
-        let htmlPos = '';
+        const books = data.bookTickers || {};
+        const entries = [];
         if (legs.length) {
-          htmlPos += '<div class="section-label" style="margin:4px 0 8px">Exchange positions (real)</div>';
-          htmlPos += legs.map(function (p) {
+          entries.push({ key: 'sec-x', html: '<div class="section-label" data-k="sec-x" style="margin:4px 0 8px">Exchange positions (real)</div>' });
+          legs.forEach(function (p) {
             const pnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null;
-            const pnlCol = pnl == null ? 'var(--muted)' : (pnl >= 0 ? 'var(--green)' : 'var(--red)');
-            return '<div class="pos-card" style="border-left:3px solid var(--amber)">' +
-              '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
-              '<div class="muted" style="font-size:12px">' + (p.exchange || '?') + ' · ' + (p.side || '?') +
-              ' · qty ' + (p.quantity != null ? p.quantity : '—') +
-              (p.entryPrice != null ? ' @ ' + p.entryPrice : '') + '</div>' +
-              (pnl != null ? '<div class="mono" style="color:' + pnlCol + '">uPnL ' + AB.fmtUsd(pnl) + '</div>' : '') +
-              '</div>';
-          }).join('');
+            const key = 'x:' + (p.symbol || '?') + '_' + (p.exchange || '') + '_' + (p.side || '');
+            const pnlText = pnl == null ? '' : ('uPnL ' + AB.fmtUsd(pnl));
+            entries.push({
+              key: key,
+              html: '<div class="pos-card" data-k="' + key.replace(/"/g, '') + '" style="border-left:3px solid var(--amber)">' +
+                '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
+                '<div class="muted" style="font-size:12px">' + (p.exchange || '?') + ' · ' + (p.side || '?') +
+                ' · qty ' + (p.quantity != null ? p.quantity : '—') +
+                (p.entryPrice != null ? ' @ ' + p.entryPrice : '') + '</div>' +
+                '<div class="mono" data-f="xpnl">' + pnlText + '</div></div>',
+              fields: { xpnl: { text: pnlText, cls: pnl == null ? 'flat' : (pnl >= 0 ? 'pos' : 'neg') } }
+            });
+          });
         }
         if (ledger.length) {
-          htmlPos += '<div class="section-label" style="margin:12px 0 8px">Live ledger (bot hedges)</div>';
-          htmlPos += ledger.map(function (p) {
-            return AB.posCardHtml(p, data.bookTickers || {});
-          }).join('');
+          entries.push({ key: 'sec-live', html: '<div class="section-label" data-k="sec-live" style="margin:12px 0 8px">Live ledger (bot hedges)</div>' });
+          ledger.forEach(function (p) {
+            const key = AB.positionKey(p);
+            entries.push({ key: key, html: AB.posCardHtml(p, books), fields: AB.posFields(p, books) });
+          });
         }
         if (positions.length) {
-          htmlPos += '<div class="section-label" style="margin:12px 0 8px">Paper hedges</div>';
-          htmlPos += positions.map(function (p) { return AB.posCardHtml(p, data.bookTickers || {}); }).join('');
+          entries.push({ key: 'sec-paper', html: '<div class="section-label" data-k="sec-paper" style="margin:12px 0 8px">Paper hedges</div>' });
+          positions.forEach(function (p) {
+            const key = AB.positionKey(p);
+            entries.push({ key: key, html: AB.posCardHtml(p, books), fields: AB.posFields(p, books) });
+          });
         }
-        posEl.innerHTML = htmlPos || '<div class="empty">No open hedges (paper / ledger / exchange)</div>';
+        if (!entries.length) {
+          entries.push({ key: 'empty', html: '<div class="empty" data-k="empty">No open hedges (paper / ledger / exchange)</div>' });
+        }
+        AB.mountKeyed(posEl, entries);
       }
     
       // Live spread bars
