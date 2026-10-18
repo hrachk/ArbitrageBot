@@ -623,6 +623,10 @@ public class FuturesPaperService : IFuturesPaperService
                 var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m) / 100m;
                 var longPnl = (longBid - pos.LongEntry) * pos.BaseQty - pos.LongEntry * pos.BaseQty * longFee - longBid * pos.BaseQty * longFee;
                 var shortPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty - pos.ShortEntry * pos.BaseQty * shortFee - shortAsk * pos.BaseQty * shortFee;
+                pos.LongUnrealizedPnlUsd = longPnl;
+                pos.ShortUnrealizedPnlUsd = shortPnl;
+                pos.MarkLongBid = longBid;
+                pos.MarkShortAsk = shortAsk;
                 pos.UnrealizedPnlUsd = longPnl + shortPnl;
                 pos.CurrentWidthPercent = (shortAsk - longBid) / longBid * 100m;
                 sum += pos.UnrealizedPnlUsd;

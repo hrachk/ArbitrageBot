@@ -106,10 +106,13 @@ AB.onSnapshot = (data) => {
 
 AB.pages = AB.pages || {};
 
-AB.closePaper = async (tradeId) => {
-  if (!tradeId || !confirm('Close this paper hedge at market marks?')) return;
+AB.closePaper = async (tradeId) => AB.closeHedge(tradeId, 'paper');
+
+AB.closeHedge = async (tradeId, source) => {
+  if (!tradeId || !confirm('Close this hedge at market marks?')) return;
   try {
-    await AB.api.post('/api/paper/close/' + tradeId);
+    const url = source === 'live' ? '/api/live/close/' + tradeId : '/api/paper/close/' + tradeId;
+    await AB.api.post(url);
     await AB.refreshSnapshot();
   } catch (e) {
     alert('Close failed: ' + e.message);
@@ -126,29 +129,96 @@ AB.closeAllPaper = async () => {
   }
 };
 
-AB.posCardHtml = (p) => {
+AB.legMetrics = (p, books) => {
+  const qty = Number(p.baseQty ?? p.BaseQty ?? 0);
+  const longE = Number(p.longEntry ?? p.LongEntry ?? 0);
+  const shortE = Number(p.shortEntry ?? p.ShortEntry ?? 0);
+  const lev = Number(p.leverage ?? p.Leverage ?? 5) || 5;
+  const longEx = p.longExchange || p.LongExchange || '?';
+  const shortEx = p.shortExchange || p.ShortExchange || '?';
+  const sym = p.symbol || p.Symbol || '';
+  let longMark = Number(p.markLongBid ?? p.MarkLongBid ?? 0);
+  let shortMark = Number(p.markShortAsk ?? p.MarkShortAsk ?? 0);
+  const bag = books && (books[sym] || books);
+  if (bag && typeof bag === 'object') {
+    const lb = bag[longEx];
+    const sb = bag[shortEx];
+    if (!longMark && lb) longMark = Number(lb.bestBid ?? lb.BestBid ?? 0);
+    if (!shortMark && sb) shortMark = Number(sb.bestAsk ?? sb.BestAsk ?? 0);
+  }
+  const longPnl = p.longUnrealizedPnlUsd != null ? Number(p.longUnrealizedPnlUsd)
+    : (longMark > 0 && longE > 0 && qty ? (longMark - longE) * qty : null);
+  const shortPnl = p.shortUnrealizedPnlUsd != null ? Number(p.shortUnrealizedPnlUsd)
+    : (shortMark > 0 && shortE > 0 && qty ? (shortE - shortMark) * qty : null);
+  const entrySpread = longE > 0 ? ((shortE - longE) / longE) * 100 : null;
+  const curSpread = (longMark > 0 && shortMark > 0)
+    ? ((shortMark - longMark) / longMark) * 100
+    : (p.currentWidthPercent != null ? Number(p.currentWidthPercent) : null);
+  const notionalL = longE * qty;
+  const notionalS = shortE * qty;
+  const margin = Number(p.lockedMarginUsd ?? (lev > 0 && notionalL ? notionalL / lev : 0));
+  const funding = Number(p.accumulatedFundingPnlUsd ?? 0);
+  return { qty, longE, shortE, lev, longEx, shortEx, longMark, shortMark, longPnl, shortPnl, entrySpread, curSpread, notionalL, notionalS, margin, funding };
+};
+
+AB.legSplitHtml = (v) => {
+  const px = (n) => (n > 0 ? AB.fmt(n, n < 1 ? 6 : 4) : '—');
+  const pnl = (n) => (n == null || !isFinite(n) ? '—' : AB.fmtUsd(n));
+  const cls = (n) => (n == null ? '' : (n >= 0 ? 'pos' : 'neg'));
+  const row = (k, val) => `<div class="leg-row"><span>${k}</span><b class="mono">${val}</b></div>`;
+  const col = (side, ex, entry, mark, notional, upnl) => `<div class="leg leg-${side}">
+      <div class="leg-hd"><span class="leg-badge ${side}">${side === 'long' ? 'LONG' : 'SHORT'}</span><span class="mono">${ex}</span></div>
+      ${row('Entry', px(entry))}
+      ${row('Mark', px(mark))}
+      ${row('Qty', v.qty ? AB.fmt(v.qty, 4) : '—')}
+      ${row('Notional', notional ? ('$' + notional.toFixed(0)) : '—')}
+      ${row('Lev · margin', v.lev + 'x · $' + (v.margin || 0).toFixed(2))}
+      ${row('uPnL', `<span class="${cls(upnl)}">${pnl(upnl)}</span>`)}
+    </div>`;
+  const es = v.entrySpread == null ? '—' : ((v.entrySpread >= 0 ? '+' : '') + v.entrySpread.toFixed(3) + '%');
+  const cs = v.curSpread == null ? '—' : ((v.curSpread >= 0 ? '+' : '') + v.curSpread.toFixed(3) + '%');
+  return `<div class="leg-split">
+      ${col('long', v.longEx, v.longE, v.longMark, v.notionalL, v.longPnl)}
+      ${col('short', v.shortEx, v.shortE, v.shortMark, v.notionalS, v.shortPnl)}
+    </div>
+    <div class="leg-meta">entry spread <b>${es}</b> · now <b>${cs}</b> · funding <b class="${cls(v.funding)}">${pnl(v.funding)}</b></div>`;
+};
+
+AB.posCardHtml = (p, books) => {
   if (!p) return '';
   const u = p.unrealizedPnlUsd != null ? p.unrealizedPnlUsd : p.unrealizedPnl;
   const hold = p.holdSeconds != null
     ? (Math.floor(p.holdSeconds / 60) + 'm ' + (p.holdSeconds % 60) + 's')
     : '—';
   const id = p.tradeId || p.id || '';
-  return `<div class="pos-item">
-    <div>
-      <div class="mono" style="font-weight:700;font-size:14px">${p.symbol || '?'}</div>
-      <div style="margin-top:6px;font-size:12px">
-        <span class="side-long">LONG ${p.longExchange || ''}</span>
-        &nbsp;·&nbsp;
-        <span class="side-short">SHORT ${p.shortExchange || ''}</span>
+  const live = p.source === 'ledger' || p.source === 'live';
+  const v = AB.legMetrics(p, books);
+  const holdTag = (p.lastHoldDecision || '').toString().toUpperCase().includes('CLOSE')
+    ? '<span class="leg-badge short">CLOSE</span>'
+    : (p.lastHoldDecision ? '<span class="leg-badge long">HOLD</span>' : '');
+  return `<div class="pos-item leg-acc">
+    <button type="button" class="leg-acc-hd" onclick="this.parentElement.classList.toggle('open')">
+      <div>
+        <div class="mono" style="font-weight:700;font-size:14px">${p.symbol || '?'}</div>
+        <div style="margin-top:4px;font-size:12px">
+          <span class="side-long">LONG ${v.longEx}</span>
+          &nbsp;·&nbsp;
+          <span class="side-short">SHORT ${v.shortEx}</span>
+          ${holdTag}
+        </div>
+        <div class="muted mono" style="margin-top:4px;font-size:11px">hold ${hold} · width ${AB.fmt(p.currentWidthPercent, 3)}%</div>
       </div>
-      <div class="muted mono" style="margin-top:6px;font-size:11px">
-        L ${AB.fmt(p.longEntry)} / S ${AB.fmt(p.shortEntry)} · qty ${AB.fmt(p.baseQty, 5)} · hold ${hold}
+      <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <div style="font-size:16px;font-weight:700">${AB.fmtUsd(u)}</div>
+        <span class="leg-chev">details</span>
       </div>
-      <div class="muted mono" style="font-size:11px">width ${AB.fmt(p.currentWidthPercent, 3)}% (entry ${AB.fmt(p.entryWidthPercent, 3)}%)</div>
-    </div>
-    <div style="text-align:right;display:flex;flex-direction:column;gap:8px;align-items:flex-end">
-      <div style="font-size:16px;font-weight:700">${AB.fmtUsd(u)}</div>
-      <button type="button" class="btn sm danger" onclick="AB.closePaper('${id}')">Close</button>
+    </button>
+    <div class="leg-acc-body">
+      ${AB.legSplitHtml(v)}
+      <div class="pos-foot" style="margin-top:8px">
+        <span class="muted" style="font-size:11px">${p.lastHoldDecisionReason || ''}</span>
+        <button type="button" class="btn sm danger" onclick="event.stopPropagation();AB.closeHedge('${id}','${live ? 'live' : 'paper'}')">Close</button>
+      </div>
     </div>
   </div>`;
 };

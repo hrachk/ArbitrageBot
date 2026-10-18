@@ -1122,6 +1122,23 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
   padding-top:8px;
   border-top:1px solid rgba(148,163,184,.1);
 }
+.leg-split{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.leg{border-radius:8px;padding:8px;background:rgba(0,0,0,.22);border:1px solid rgba(148,163,184,.12)}
+.leg-long{border-top:2px solid #3dd68c}
+.leg-short{border-top:2px solid #ff5d73}
+.leg-hd{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:12px;font-weight:700}
+.leg-badge{font-size:9px;font-weight:800;letter-spacing:.04em;padding:2px 6px;border-radius:4px}
+.leg-badge.long{background:rgba(61,214,140,.18);color:#3dd68c}
+.leg-badge.short{background:rgba(255,93,115,.18);color:#ff5d73}
+.leg-row{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#8b9cb3;margin-top:3px}
+.leg-row b{color:#e7eef8;font-weight:600}
+.leg-meta{margin-top:8px;font-size:11px;color:#8b9cb3}
+.leg-acc{display:block}
+.leg-acc-hd{width:100%;display:flex;justify-content:space-between;gap:10px;background:transparent;border:0;color:inherit;text-align:left;cursor:pointer;padding:0}
+.leg-acc-body{display:none;margin-top:8px}
+.leg-acc.open .leg-acc-body{display:block}
+.leg-chev{font-size:10px;color:#8b9cb3;text-transform:uppercase;letter-spacing:.04em}
+.leg-acc.open .leg-chev{color:#7cc4ff}
 #posTable, #arbList, #fundTable{
   overflow-y:auto !important;
   flex:1 1 auto !important;

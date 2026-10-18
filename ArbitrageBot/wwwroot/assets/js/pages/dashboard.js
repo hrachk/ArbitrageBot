@@ -224,16 +224,12 @@ AB.pages.dashboard = {
         if (ledger.length) {
           htmlPos += '<div class="section-label" style="margin:12px 0 8px">Live ledger (bot hedges)</div>';
           htmlPos += ledger.map(function (p) {
-            return '<div class="pos-card" style="border-left:3px solid var(--green)">' +
-              '<div class="mono" style="color:var(--blue)">' + (p.symbol || '?') + '</div>' +
-              '<div class="muted" style="font-size:12px">' + (p.longExchange || '?') + ' long / ' +
-              (p.shortExchange || '?') + ' short · qty ' + (p.baseQty != null ? p.baseQty : '—') + '</div>' +
-              '<div class="muted" style="font-size:11px">' + (p.status || '') + ' ' + (p.message || '') + '</div></div>';
+            return AB.posCardHtml(p, data.bookTickers || {});
           }).join('');
         }
         if (positions.length) {
           htmlPos += '<div class="section-label" style="margin:12px 0 8px">Paper hedges</div>';
-          htmlPos += positions.map(function (p) { return AB.posCardHtml(p); }).join('');
+          htmlPos += positions.map(function (p) { return AB.posCardHtml(p, data.bookTickers || {}); }).join('');
         }
         posEl.innerHTML = htmlPos || '<div class="empty">No open hedges (paper / ledger / exchange)</div>';
       }

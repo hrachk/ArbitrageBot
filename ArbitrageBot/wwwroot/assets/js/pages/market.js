@@ -419,6 +419,7 @@ AB.pages.market = {
         sym:    p.symbol || p.Symbol,
         long:   p.longExchange || p.LongExchange,
         short:  p.shortExchange || p.ShortExchange,
+        shortEntry: Number(p.shortEntry ?? p.ShortEntry ?? 0),
         entry,
         qty,
         notional,
@@ -431,7 +432,8 @@ AB.pages.market = {
         source: 'paper',
         opened: p.openedAt || p.OpenedAt || p.opened,
         openNet: p.openNetPercent ?? p.OpenNetPercent ?? p.entryNetPercent,
-        funding: Number(p.accumulatedFundingPnlUsd ?? 0)
+        funding: Number(p.accumulatedFundingPnlUsd ?? 0),
+        raw: p
       });
     });
     ledger.forEach(p => {
@@ -441,6 +443,7 @@ AB.pages.market = {
         sym:    p.symbol || p.Symbol,
         long:   p.longExchange || p.LongExchange,
         short:  p.shortExchange || p.ShortExchange,
+        shortEntry: Number(p.shortEntry ?? p.ShortEntry ?? 0),
         entry,
         qty,
         notional: qty && entry ? qty * entry : 0,
@@ -452,7 +455,8 @@ AB.pages.market = {
         source: 'live',
         opened: p.openedAt || p.OpenedAt,
         openNet: null,
-        funding: Number(p.accumulatedFundingPnlUsd ?? 0)
+        funding: Number(p.accumulatedFundingPnlUsd ?? 0),
+        raw: p
       });
     });
 
@@ -489,28 +493,28 @@ AB.pages.market = {
         ? `<span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;background:${p.hold==='HOLD'?'rgba(45,212,191,.2)':'rgba(248,113,113,.2)'};color:${p.hold==='HOLD'?'#2dd4bf':'#f87171'}">${p.hold}</span>`
         : '';
       const opened = p.opened ? String(p.opened).replace('T',' ').slice(0, 19) : '—';
-      const netS = p.openNet != null ? (Number(p.openNet).toFixed(3) + '%') : '—';
-      const notionalS = p.notional ? ('$' + p.notional.toFixed(0)) : '—';
-      const fundS = p.funding ? ((p.funding >= 0 ? '+$' : '-$') + Math.abs(p.funding).toFixed(2)) : '—';
+      const books = (data.bookTickers || data.BookTickers || {})[p.sym] || {};
+      const v = AB.legMetrics(Object.assign({}, p.raw || {}, {
+        symbol: p.sym, longExchange: p.long, shortExchange: p.short,
+        longEntry: p.entry, shortEntry: p.shortEntry, baseQty: p.qty,
+        leverage: p.lev, lockedMarginUsd: p.raw && p.raw.lockedMarginUsd,
+        markLongBid: p.raw && p.raw.markLongBid, markShortAsk: p.raw && p.raw.markShortAsk,
+        longUnrealizedPnlUsd: p.raw && p.raw.longUnrealizedPnlUsd,
+        shortUnrealizedPnlUsd: p.raw && p.raw.shortUnrealizedPnlUsd,
+        accumulatedFundingPnlUsd: p.funding, currentWidthPercent: p.raw && p.raw.currentWidthPercent
+      }), books);
       return `<div class="pos-card">
         <div class="pos-card-hd">
           <div>
             <span class="pos-sym">${p.sym || '—'}</span>
             ${badge}
+            ${holdHtml}
           </div>
           <div class="mono ${upnlCls}" style="font-size:15px;font-weight:800">${upnlS}</div>
         </div>
-        <div class="pos-grid">
-          <div><div class="lbl">Route</div><div class="val">🟢 ${p.long || '?'} → 🔴 ${p.short || '?'}</div></div>
-          <div><div class="lbl">Notional · Lev</div><div class="val">${notionalS} · ${p.lev}x</div></div>
-          <div><div class="lbl">Entry</div><div class="val mono">${p.entry ? this.fmtP(p.entry) : '—'}</div></div>
-          <div><div class="lbl">Qty</div><div class="val mono">${p.qty ? this.fmtP(p.qty) : '—'}</div></div>
-          <div><div class="lbl">Open net</div><div class="val">${netS}</div></div>
-          <div><div class="lbl">Funding</div><div class="val">${fundS}</div></div>
-          <div style="grid-column:1/-1"><div class="lbl">Opened</div><div class="val" style="font-weight:500;color:#94a3b8">${opened}</div></div>
-        </div>
+        ${AB.legSplitHtml(v)}
         <div class="pos-foot">
-          <div style="display:flex;gap:6px;align-items:center">${holdHtml}</div>
+          <div class="muted" style="font-size:11px">${opened}</div>
           <button type="button" class="close-btn" style="padding:4px 10px;font-size:11px;font-weight:600;border-radius:6px;border:1px solid rgba(248,113,113,.35);background:rgba(248,113,113,.1);color:#fca5a5;cursor:pointer"
             data-close="${p.id || ''}" data-src="${p.source}">✕ Закрыть</button>
         </div>

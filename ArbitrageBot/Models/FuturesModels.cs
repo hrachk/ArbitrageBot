@@ -69,6 +69,10 @@ public class FuturesPaperPosition
     public Guid TradeId { get; set; }
     public decimal EntryWidthPercent { get; set; }
     public decimal UnrealizedPnlUsd { get; set; }
+    public decimal LongUnrealizedPnlUsd { get; set; }
+    public decimal ShortUnrealizedPnlUsd { get; set; }
+    public decimal MarkLongBid { get; set; }
+    public decimal MarkShortAsk { get; set; }
     public decimal CurrentWidthPercent { get; set; }
     public decimal LockedMarginUsd { get; set; }
     public decimal Leverage { get; set; }
