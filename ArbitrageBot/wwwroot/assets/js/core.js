@@ -70,6 +70,36 @@ AB.setPage = (name) => {
   }
 };
 
+AB.captureScroll = () => {
+  const main = document.querySelector('.main');
+  const nested = [];
+  const page = document.querySelector('.page.active');
+  if (page) {
+    page.querySelectorAll('.scroll, .scroll-signals, .scroll-trades, .pos-list').forEach((el) => {
+      if (el.scrollTop || el.scrollLeft)
+        nested.push({ el, top: el.scrollTop, left: el.scrollLeft });
+    });
+  }
+  return {
+    x: window.scrollX,
+    y: window.scrollY,
+    mainTop: main ? main.scrollTop : 0,
+    nested
+  };
+};
+
+AB.restoreScroll = (snap) => {
+  if (!snap) return;
+  const main = document.querySelector('.main');
+  if (main && main.scrollTop !== snap.mainTop) main.scrollTop = snap.mainTop;
+  if (window.scrollX !== snap.x || window.scrollY !== snap.y) window.scrollTo(snap.x, snap.y);
+  (snap.nested || []).forEach((n) => {
+    if (!n.el || !n.el.isConnected) return;
+    if (n.el.scrollTop !== n.top) n.el.scrollTop = n.top;
+    if (n.el.scrollLeft !== n.left) n.el.scrollLeft = n.left;
+  });
+};
+
 AB.onSnapshot = (data) => {
   if (!data || typeof data !== 'object') return;
   AB.state.snapshot = data;
@@ -96,11 +126,14 @@ AB.onSnapshot = (data) => {
   // Always render active page
   const page = AB.pages[AB.state.page || 'dashboard'];
   if (page && typeof page.render === 'function') {
+    const scroll = AB.captureScroll();
     try { page.render(data); } catch (e) {
       console.error('page render failed', AB.state.page, e);
       const b = AB.$('d_banner');
       if (b) b.textContent = 'Render error: ' + e.message;
     }
+    AB.restoreScroll(scroll);
+    requestAnimationFrame(() => AB.restoreScroll(scroll));
   }
 };
 
@@ -223,11 +256,8 @@ AB.mountKeyed = (container, entries) => {
     frag.appendChild(node);
   });
   const sc = container.scrollTop;
-  const se = document.scrollingElement;
-  const y = se ? se.scrollTop : 0;
   container.replaceChildren(frag);
-  container.scrollTop = sc;
-  if (se && se.scrollTop !== y) se.scrollTop = y;
+  if (container.scrollTop !== sc) container.scrollTop = sc;
   AB.ui.expandedPositions.forEach((k) => { if (!seen.has(k)) AB.ui.expandedPositions.delete(k); });
 };
 
