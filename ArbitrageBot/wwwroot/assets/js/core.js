@@ -12,6 +12,11 @@ AB.fmtPct = (n) => {
   const v = Number(n);
   return `<span class="mono ${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}${v.toFixed(3)}%</span>`;
 };
+AB.usdText = (n) => {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+  const v = Number(n);
+  return (v >= 0 ? '+' : '') + v.toFixed(2);
+};
 AB.fmtUsd = (n) => {
   if (n == null || !Number.isFinite(Number(n))) return '—';
   const v = Number(n);
@@ -263,7 +268,7 @@ AB.mountKeyed = (container, entries) => {
 
 AB.legSplitHtml = (v) => {
   const px = (n) => (n > 0 ? AB.fmt(n, n < 1 ? 6 : 4) : '—');
-  const pnl = (n) => (n == null || !isFinite(n) ? '—' : AB.fmtUsd(n));
+  const pnl = (n) => (n == null || !isFinite(n) ? '—' : AB.usdText(n));
   const cls = (n) => (n == null ? '' : (n >= 0 ? 'pos' : 'neg'));
   const row = (k, field, val) => `<div class="leg-row"><span>${k}</span><b class="mono" data-f="${field}">${val}</b></div>`;
   const col = (side, ex, entry, mark, notional, upnl) => `<div class="leg leg-${side}">
@@ -293,7 +298,7 @@ AB.posFields = (p, books) => {
     ? (Math.floor(p.holdSeconds / 60) + 'm ' + (p.holdSeconds % 60) + 's')
     : '—';
   const px = (n) => (n > 0 ? AB.fmt(n, n < 1 ? 6 : 4) : '—');
-  const pnl = (n) => (n == null || !isFinite(Number(n)) ? '—' : AB.fmtUsd(n));
+  const pnl = (n) => (n == null || !isFinite(Number(n)) ? '—' : AB.usdText(n));
   const cls = (n) => (n == null || !isFinite(Number(n)) ? 'flat' : (Number(n) >= 0 ? 'pos' : 'neg'));
   const es = v.entrySpread == null ? '—' : ((v.entrySpread >= 0 ? '+' : '') + v.entrySpread.toFixed(3) + '%');
   const cs = v.curSpread == null ? '—' : ((v.curSpread >= 0 ? '+' : '') + v.curSpread.toFixed(3) + '%');

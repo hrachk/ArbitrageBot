@@ -213,7 +213,7 @@ AB.pages.dashboard = {
           legs.forEach(function (p) {
             const pnl = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null;
             const key = 'x:' + (p.symbol || '?') + '_' + (p.exchange || '') + '_' + (p.side || '');
-            const pnlText = pnl == null ? '' : ('uPnL ' + AB.fmtUsd(pnl));
+            const pnlText = pnl == null ? '' : ('uPnL ' + AB.usdText(pnl));
             entries.push({
               key: key,
               html: '<div class="pos-card" data-k="' + key.replace(/"/g, '') + '" style="border-left:3px solid var(--amber)">' +
