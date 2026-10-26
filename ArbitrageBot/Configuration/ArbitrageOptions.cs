@@ -72,7 +72,7 @@ public class ArbitrageOptions
     /// </summary>
     public int FuturesHardMaxHoldMinutes { get; set; } = 0; // 0 = never force-flat
     /// <summary>Close leg fees as fraction of taker (0.5 ≈ limit/maker exit).</summary>
-    public decimal PaperCloseFeeFactor { get; set; } = 0.55m;
+    public decimal PaperCloseFeeFactor { get; set; } = 1.0m;
     /// <summary>Open only if gross is rising vs ~1s ago (avoid dying spreads).</summary>
     public bool RequireSpreadingEdge { get; set; } = true;
     /// <summary>Optional upper volume cap to skip ultra-majors when ranking.</summary>
@@ -108,20 +108,19 @@ public class ArbitrageOptions
     /// <summary>If true, only verify balances/positions via API — never place orders.</summary>
     public bool LiveReadOnlyMode { get; set; } = true;
     /// <summary>Hard ceiling: max concurrent live hedges.</summary>
-    public int LiveMaxOpenPositions { get; set; } = 1;
+    public int LiveMaxOpenPositions { get; set; } = 2;
     /// <summary>Max notional USD per leg on live (hard ceiling).</summary>
-    public decimal LiveMaxNotionalUsd { get; set; } = 200m;
+    public decimal LiveMaxNotionalUsd { get; set; } = 80m;
     /// <summary>
-    /// Assumed free USDT equity available for margin on EACH exchange.
-    /// Live notional = equity × leverage × LiveMarginUsageFraction (capped by LiveMaxNotionalUsd).
+    /// Free USDT margin on EACH exchange. $100 deposit → notional = equity × leverage × usage, capped at LiveMaxNotionalUsd.
     /// </summary>
-    public decimal LiveEquityPerExchangeUsd { get; set; } = 5m;
-    /// <summary>Fraction of per-exchange equity to lock as margin (0.6 = use $3 of $5).</summary>
-    public decimal LiveMarginUsageFraction { get; set; } = 0.6m;
+    public decimal LiveEquityPerExchangeUsd { get; set; } = 100m;
+    /// <summary>Fraction of per-exchange equity locked as margin. 0.25 of $100 at 5x = $125, then capped by max notional.</summary>
+    public decimal LiveMarginUsageFraction { get; set; } = 0.25m;
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
-    public decimal LiveDailyLossLimitUsd { get; set; } = -50m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
-    public decimal LiveStopLossUsd { get; set; } = -25m;
+    public decimal LiveStopLossUsd { get; set; } = -4m;
     /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
     public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
     /// <summary>Reject live open if book status is not healthy (Synced/book-ticker).</summary>

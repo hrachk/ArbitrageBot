@@ -12,6 +12,7 @@ using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
 using OKX.Net;
 using GateIo.Net;
+using Kucoin.Net;
 
 namespace ArbitrageBot.Services;
 
@@ -106,22 +107,22 @@ public sealed class LiveOrderEngine
         var lev = req.Leverage > 0 ? req.Leverage
                 : (Opt.LivePaperLeverage > 0 ? Opt.LivePaperLeverage : 3m);
 
-        // Size for ~$5 free equity per exchange:
-        // marginUsed = equity * usageFraction  →  notional = marginUsed * leverage
-        // e.g. $5 * 0.6 * 5x = $15 notional per leg (~$3 margin on EACH venue)
+        // Size from the real per-venue deposit (default $100), same notional cap as paper QuoteSize.
+        // margin = equity * usage, notional = margin * leverage, then hard cap LiveMaxNotionalUsd.
         var opt = Opt;
-        var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 500m;
-        var usage  = opt.LiveMarginUsageFraction  > 0 ? opt.LiveMarginUsageFraction  : 0.6m;
-        usage = Math.Clamp(usage, 0.2m, 0.85m);
+        var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 100m;
+        var usage  = opt.LiveMarginUsageFraction  > 0 ? opt.LiveMarginUsageFraction  : 0.25m;
+        usage = Math.Clamp(usage, 0.15m, 0.50m);
         var maxNotional = equity * lev * usage;
         if (opt.LiveMaxNotionalUsd > 0 && maxNotional > opt.LiveMaxNotionalUsd)
             maxNotional = opt.LiveMaxNotionalUsd;
         if (req.NotionalUsd > 0 && req.NotionalUsd < maxNotional)
             maxNotional = req.NotionalUsd;
-        var absCap = equity * lev;
+        var absCap = equity * lev * 0.50m;
         if (maxNotional > absCap) maxNotional = absCap;
-        // Production floor: below $50 notional the economics don't work (fees eat all profit)
-        if (maxNotional < 50m) maxNotional = 50m;
+        // Do not inflate size above the deposit math. $20 is the smallest hedge that can clear taker fees.
+        if (maxNotional < 20m)
+            return new { ok = false, error = $"notional {maxNotional:F2}$ below $20 — set Live equity to the real deposit (100) and max notional ≥ 20" };
 
         if (refPrice > 0)
         {
@@ -279,13 +280,17 @@ public sealed class LiveOrderEngine
             .ConfigureAwait(false);
 
         decimal? pnl = null;
+        var feeNote = "";
         if (getMarks != null)
         {
             var m = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
             if (m != null)
             {
                 var (longBid, shortAsk) = m.Value;
-                pnl = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
+                var gross = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
+                var fees = RoundTripFees(pos, longBid, shortAsk);
+                pnl = gross - fees;
+                feeNote = $" gross={gross:F4} fees={fees:F4}";
             }
         }
 
@@ -296,7 +301,7 @@ public sealed class LiveOrderEngine
             pos.ClosedAt = DateTime.UtcNow;
             pos.Status = closeLong && closeShort ? "Closed" : "ClosedPartial";
             pos.RealizedPnlUsd = pnl;
-            pos.Message = $"close longOk={closeLong} shortOk={closeShort} pnl={pnl}";
+            pos.Message = $"close longOk={closeLong} shortOk={closeShort} pnl={pnl}{feeNote}";
             _closed.Insert(0, pos);
             if (_closed.Count > 500) _closed.RemoveRange(500, _closed.Count - 500);
             SaveUnlocked();
@@ -403,9 +408,11 @@ public sealed class LiveOrderEngine
         var bag = new ExchangeCredentials();
         var name = exchange.Trim();
 
-        // OKX / Bitget require passphrase
+        // OKX / Bitget / Kucoin require passphrase
         if ((name.Equals("OKX", StringComparison.OrdinalIgnoreCase)
-             || name.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+             || name.Equals("Bitget", StringComparison.OrdinalIgnoreCase)
+             || name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+             || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
             && string.IsNullOrWhiteSpace(pass))
         {
             _logger.LogWarning("LIVE CreateClient {Ex}: passphrase required", name);
@@ -443,8 +450,18 @@ public sealed class LiveOrderEngine
             rest.SetApiCredentials(bag);
             rest.GateIo.SetApiCredentials(new GateIoCredentials(key, secret));
         }
+        else if (name.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+                 || name.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+        {
+            bag.Kucoin = new KucoinCredentials(key, secret, pass);
+            rest.SetApiCredentials(bag);
+            rest.Kucoin.SetApiCredentials(new KucoinCredentials(key, secret, pass));
+        }
         else
+        {
+            _logger.LogError("LIVE CreateClient: no order handler for {Ex}", name);
             return null;
+        }
 
         return rest;
     }
@@ -478,7 +495,28 @@ public sealed class LiveOrderEngine
                 new ExchangeParameter("OKX", "MarginMode", "Cross"),
                 new ExchangeParameter("OKX", "tdMode", "cross"));
         }
+        if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ExchangeParameters(
+                new ExchangeParameter("Kucoin", "MarginMode", "Cross"));
+        }
         return new ExchangeParameters();
+    }
+
+    /// <summary>Same taker table as paper, both legs, open and close. No 0.85 discount.</summary>
+    private decimal RoundTripFees(LiveHedgePosition pos, decimal longBid, decimal shortAsk)
+    {
+        decimal Pct(string ex)
+        {
+            if (Opt.EstimatedTakerFees != null && Opt.EstimatedTakerFees.TryGetValue(ex, out var f) && f > 0)
+                return f / 100m;
+            return 0.0005m;
+        }
+        var qty = pos.BaseQty;
+        var open = pos.LongEntry * qty * Pct(pos.LongExchange) + pos.ShortEntry * qty * Pct(pos.ShortExchange);
+        var close = longBid * qty * Pct(pos.LongExchange) + shortAsk * qty * Pct(pos.ShortExchange);
+        return open + close;
     }
 
     /// <summary>

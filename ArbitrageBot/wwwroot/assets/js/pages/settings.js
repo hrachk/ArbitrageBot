@@ -2,29 +2,30 @@ AB.pages.settings = {
   presets: {
     professional: {
       minProfitPercent: 0.10,
-      quoteSize: 200,
+      quoteSize: 80,
       leverage: 5,
-      maxOpenPositions: 4,
-      stopLossUsd: -25,
-      dailyLossLimitUsd: -80,
+      maxOpenPositions: 2,
+      stopLossUsd: -4,
+      dailyLossLimitUsd: -12,
       maxHoldMinutes: 0,
       futuresMaxHoldSeconds: 90,
       closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.35,
-      maxNotionalUsd: 350,
+      maxMarginUsagePercent: 0.25,
+      maxNotionalUsd: 80,
       paperCooldownMs: 5000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
       minGrossSpreadPercent: 0.28,
-      minTakeProfitUsd: 0.50,
+      minTakeProfitUsd: 0.35,
       spatialScalpMode: true,
-      paperStartingQuote: 1000,
-      liveEquityPerExchangeUsd: 1000,
-      liveMarginUsageFraction: 0.35,
-      liveMaxNotionalUsd: 350,
-      liveMaxOpenPositions: 4,
-      liveStopLossUsd: -25
+      paperStartingQuote: 100,
+      liveEquityPerExchangeUsd: 100,
+      liveMarginUsageFraction: 0.25,
+      liveMaxNotionalUsd: 80,
+      liveMaxOpenPositions: 2,
+      liveStopLossUsd: -4,
+      paperCloseFeeFactor: 1
     },
     micro5: {
       minProfitPercent: 0.10,
@@ -139,8 +140,8 @@ AB.pages.settings = {
     set('s_marginUse', r.maxMarginUsagePercent);
     set('s_maxNotional', r.maxNotionalUsd);
     set('s_cooldown', r.paperCooldownMs);
-    set('s_liveEquity', r.liveEquityPerExchangeUsd ?? 5);
-    set('s_liveUsage', r.liveMarginUsageFraction ?? 0.6);
+    set('s_liveEquity', r.liveEquityPerExchangeUsd ?? 100);
+    set('s_liveUsage', r.liveMarginUsageFraction ?? 0.25);
     set('s_liveMaxN', r.liveMaxNotionalUsd ?? 100);
     set('s_liveMaxOpen', r.liveMaxOpenPositions ?? 1);
     set('s_liveStop', r.liveStopLossUsd ?? -2.5);
@@ -194,18 +195,18 @@ AB.pages.settings = {
     if (AB.$('s_paper')) AB.$('s_paper').checked = t.paperTrading !== false;
     if (AB.$('s_auto')) AB.$('s_auto').checked = !!t.paperAutoExecute;
     if (AB.$('s_minProfit')) AB.$('s_minProfit').value = t.minProfitPercent ?? 0.10;
-    if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 500;
+    if (AB.$('s_size')) AB.$('s_size').value = t.quoteSize ?? 80;
     if (AB.$('s_lev')) AB.$('s_lev').value = t.futuresPaperLeverage ?? 5;
     if (AB.$('s_maxPos')) AB.$('s_maxPos').value = t.futuresMaxOpenPositions ?? 2;
-    if (AB.$('s_stop')) AB.$('s_stop').value = t.futuresStopLossUsd ?? -12;
-    if (AB.$('s_dayLimit')) AB.$('s_dayLimit').value = t.futuresDailyLossLimitUsd ?? -40;
-    if (AB.$('s_liveEquity')) AB.$('s_liveEquity').value = t.liveEquityPerExchangeUsd ?? 2500;
-    if (AB.$('s_liveUsage')) AB.$('s_liveUsage').value = t.liveMarginUsageFraction ?? 0.6;
-    if (AB.$('s_liveMaxN')) AB.$('s_liveMaxN').value = t.liveMaxNotionalUsd ?? 500;
-    if (AB.$('s_liveMaxOpen')) AB.$('s_liveMaxOpen').value = t.liveMaxOpenPositions ?? 1;
-    if (AB.$('s_liveStop')) AB.$('s_liveStop').value = t.liveStopLossUsd ?? -2.5;
-    if (AB.$('s_maxNotional')) AB.$('s_maxNotional').value = t.maxNotionalUsd ?? t.liveMaxNotionalUsd ?? 500;
-    if (AB.$('s_marginUse')) AB.$('s_marginUse').value = t.maxMarginUsagePercent ?? 0.35;
+    if (AB.$('s_stop')) AB.$('s_stop').value = t.futuresStopLossUsd ?? -4;
+    if (AB.$('s_dayLimit')) AB.$('s_dayLimit').value = t.futuresDailyLossLimitUsd ?? -12;
+    if (AB.$('s_liveEquity')) AB.$('s_liveEquity').value = t.liveEquityPerExchangeUsd ?? 100;
+    if (AB.$('s_liveUsage')) AB.$('s_liveUsage').value = t.liveMarginUsageFraction ?? 0.25;
+    if (AB.$('s_liveMaxN')) AB.$('s_liveMaxN').value = t.liveMaxNotionalUsd ?? 80;
+    if (AB.$('s_liveMaxOpen')) AB.$('s_liveMaxOpen').value = t.liveMaxOpenPositions ?? 2;
+    if (AB.$('s_liveStop')) AB.$('s_liveStop').value = t.liveStopLossUsd ?? -4;
+    if (AB.$('s_maxNotional')) AB.$('s_maxNotional').value = t.maxNotionalUsd ?? t.liveMaxNotionalUsd ?? 80;
+    if (AB.$('s_marginUse')) AB.$('s_marginUse').value = t.maxMarginUsagePercent ?? 0.25;
     if (AB.$('s_hold')) AB.$('s_hold').value = t.maxHoldMinutes ?? 0;
     if (AB.$('s_closeWidth')) AB.$('s_closeWidth').value = t.closeBelowNetPercent ?? 0.02;
     if (AB.$('s_cooldown')) AB.$('s_cooldown').value = t.paperCooldownMs ?? 15000;
@@ -355,7 +356,7 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     futuresMaxHoldSeconds: int('s_holdSec', 0),
     spatialScalpMode: !!AB.$('s_scalp')?.checked,
     requireSpreadingEdge: !!AB.$('s_spreadEdge')?.checked,
-    paperCloseFeeFactor: num('s_closeFee', 0.85),
+    paperCloseFeeFactor: num('s_closeFee', 1),
     openEdgeBufferPercent: num('s_edgeBuffer', 0.02),
     requireDepthFullFill: AB.$('s_depthFill') ? !!AB.$('s_depthFill').checked : true,
     minDepthScoreForUniverse: num('s_depthScore', 0.85),
@@ -366,13 +367,13 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     dynamicMinQuoteVolumeUsd: num('s_dynMinVol', 8000000),
     dynamicMaxQuoteVolumeUsd: num('s_dynMaxVol', 500000000),
     dynamicRefreshMinutes: int('s_dynRefresh', 5),
-    paperStartingQuote: num('s_paperStart', 2500),
-    liveEquityPerExchangeUsd: num('s_liveEquity', 2500),
-    liveMarginUsageFraction: Math.min(0.85, Math.max(0.2, num('s_liveUsage', 0.35))),
+    paperStartingQuote: num('s_paperStart', 100),
+    liveEquityPerExchangeUsd: num('s_liveEquity', 100),
+    liveMarginUsageFraction: Math.min(0.50, Math.max(0.20, num('s_liveUsage', 0.25))),
     liveMaxNotionalUsd: maxN,
     liveMaxOpenPositions: int('s_liveMaxOpen', maxOpen) || maxOpen,
-    liveStopLossUsd: num('s_liveStop', -25),
-    liveDailyLossLimitUsd: num('s_dayLimit', -80)
+    liveStopLossUsd: num('s_liveStop', -4),
+    liveDailyLossLimitUsd: num('s_dayLimit', -12)
   };
   const risk = {
     minProfitPercent: trading.minProfitPercent,
