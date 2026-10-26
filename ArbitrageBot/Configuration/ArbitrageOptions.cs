@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.06m;
+    public decimal MinProfitPercent { get; set; } = 0.12m;
     public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
@@ -24,11 +24,11 @@ public class ArbitrageOptions
         ["Kucoin"] = 0.06m
     };
 
-    public decimal QuoteSize { get; set; } = 500m;
+    public decimal QuoteSize { get; set; } = 250m;
     public int MaxDepthLevels { get; set; } = 20;
 
     public bool PaperAutoExecute { get; set; } = true;
-    public decimal PaperStartingQuote { get; set; } = 10_000m;
+    public decimal PaperStartingQuote { get; set; } = 1_000m;
     public decimal PaperStartingBaseDefault { get; set; } = 0.05m;
     public Dictionary<string, decimal> PaperStartingBaseUnits { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -36,14 +36,14 @@ public class ArbitrageOptions
         ["ETH"] = 0.5m,
         ["SOL"] = 5m
     };
-    public int PaperCooldownMs { get; set; } = 8000;
+    public int PaperCooldownMs { get; set; } = 15000;
     public bool PaperRequireFullFill { get; set; } = true;
 
     public bool DynamicSymbols { get; set; } = true;
-    public int DynamicTopN { get; set; } = 6;
-    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 10_000_000m;
+    public int DynamicTopN { get; set; } = 12;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 15_000_000m;
     public string DynamicQuoteAsset { get; set; } = "USDT";
-    public int DynamicRefreshMinutes { get; set; } = 60;
+    public int DynamicRefreshMinutes { get; set; } = 15;
     /// <summary>Skip these base assets (majors with near-zero cross-exchange edge).</summary>
     public List<string> ExcludeMajorBases { get; set; } = ["BTC", "ETH", "BNB"];
     /// <summary>Meme / equity-perp / thin names that destroy spatial EV.</summary>
@@ -55,13 +55,13 @@ public class ArbitrageOptions
         "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
     ];
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
-    public decimal MinDepthScoreForUniverse { get; set; } = 0.85m;
+    public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.01m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.02m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 0.80m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.40m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.22m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.36m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
@@ -80,19 +80,19 @@ public class ArbitrageOptions
 
     // Futures paper
     public decimal FuturesPaperLeverage { get; set; } = 5m;
-    public int FuturesMaxOpenPositions { get; set; } = 3;
+    public int FuturesMaxOpenPositions { get; set; } = 2;
     public int FuturesMaxHoldMinutes { get; set; } = 5;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
 
     /// <summary>Max share of free margin on one exchange that a single new hedge may lock (0.25 = 25%).</summary>
-    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.15m;
+    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.20m;
     /// <summary>Force-close if unrealized PnL on a hedge drops below this (USD, negative).</summary>
-    public decimal FuturesStopLossUsd { get; set; } = -40m;
+    public decimal FuturesStopLossUsd { get; set; } = -3m;
     /// <summary>Stop opening new hedges if day realized PnL is below this.</summary>
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -150m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -12m;
     /// <summary>Refuse open if notional would exceed this (USD) even with leverage.</summary>
-    public decimal FuturesMaxNotionalUsd { get; set; } = 1500m;
+    public decimal FuturesMaxNotionalUsd { get; set; } = 250m;
 
     /// <summary>Include expected funding over N funding intervals (usually 8h each) in net filter.</summary>
     public bool FuturesIncludeFunding { get; set; } = true;
@@ -110,13 +110,13 @@ public class ArbitrageOptions
     /// <summary>Hard ceiling: max concurrent live hedges.</summary>
     public int LiveMaxOpenPositions { get; set; } = 2;
     /// <summary>Max notional USD per leg on live (hard ceiling).</summary>
-    public decimal LiveMaxNotionalUsd { get; set; } = 80m;
+    public decimal LiveMaxNotionalUsd { get; set; } = 250m;
     /// <summary>
     /// Free USDT margin on EACH exchange. $100 deposit → notional = equity × leverage × usage, capped at LiveMaxNotionalUsd.
     /// </summary>
     public decimal LiveEquityPerExchangeUsd { get; set; } = 100m;
     /// <summary>Fraction of per-exchange equity locked as margin. 0.25 of $100 at 5x = $125, then capped by max notional.</summary>
-    public decimal LiveMarginUsageFraction { get; set; } = 0.25m;
+    public decimal LiveMarginUsageFraction { get; set; } = 0.20m;
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
     public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
@@ -133,18 +133,18 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 250;
+    public int MinSpreadPersistMs { get; set; } = 800;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
-    public int MaxBookAgeMs { get; set; } = 3000;
+    public int MaxBookAgeMs { get; set; } = 300;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
-    public int MaxLegsPerVenue { get; set; } = 3;
+    public int MaxLegsPerVenue { get; set; } = 2;
     /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>
-    public decimal MaxWidthExpansionPercent { get; set; } = 0.25m;
+    public decimal MaxWidthExpansionPercent { get; set; } = 0.08m;
     /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
     public bool RequireDepthFullFill { get; set; } = true;
 
     /// <summary>Leverage used for live orders (separate from paper simulation).</summary>
-    public decimal LivePaperLeverage { get; set; } = 3m;
+    public decimal LivePaperLeverage { get; set; } = 5m;
 
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);
@@ -183,3 +183,4 @@ public class ArbitrageOptions
         return b is "BTC" or "ETH" or "BNB";
     }
 }
+ 

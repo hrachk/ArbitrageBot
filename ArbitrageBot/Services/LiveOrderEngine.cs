@@ -153,12 +153,15 @@ public sealed class LiveOrderEngine
             return SkipSymbol(req.Symbol, $"notional {estNotional:F2}$ below $20 after lot step — not sent", RejectCooldown);
 
         // Do not open a hedge that is already red after both taker legs (open + close).
+        // Use the same min edge % as the scanner so an executable signal is not rejected by a different floor.
         if (req.LongAsk is > 0 && req.ShortBid is > 0 && req.ShortBid > req.LongAsk)
         {
             var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
             var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
             var netOpen = grossOpen - feesOpen;
-            var minTp = LiveMinNetUsd(estNotional);
+            var minEdgePct = opt.MinProfitPercent + (opt.OpenEdgeBufferPercent > 0 ? opt.OpenEdgeBufferPercent : 0m);
+            var minNetUsd = estNotional * minEdgePct / 100m;
+            var minTp = Math.Max(minNetUsd, LiveMinNetUsd(estNotional) * 0.5m); // floor at half the close TP so we don't open dust
             if (netOpen < minTp)
             {
                 _logger.LogInformation(

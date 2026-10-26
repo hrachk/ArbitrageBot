@@ -328,11 +328,12 @@ public class ArbitrageWorker : BackgroundService
 
         // Unified gates: same MinProfit/RT/full-fill for paper and live.
         // Live orders ONLY if guard.CanPlaceOrders; otherwise DEMO paper on real books.
-        var autoExec = _options.PaperAutoExecute || _options.PaperTrading;
+        var snap = _runtime.Snapshot;
+        var autoExec = snap.PaperAutoExecute || snap.PaperTrading;
         if (opps.Count > 0 && autoExec)
         {
             var openedThisCycle = 0;
-            var maxPerCycle = Math.Max(1, _options.FuturesMaxOpenPositions);
+            var maxPerCycle = Math.Max(1, snap.FuturesMaxOpenPositions);
             foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.NetSpreadPercent))
             {
                 if (openedThisCycle >= maxPerCycle) break;
@@ -349,7 +350,7 @@ public class ArbitrageWorker : BackgroundService
                         NotionalUsd = o.NotionalUsd,
                         LongAsk = o.LongAskVwap,
                         ShortBid = o.ShortBidVwap,
-                        Leverage = _options.LiveMaxOpenPositions > 0 ? _runtime.Snapshot.FuturesPaperLeverage : 3
+                        Leverage = snap.FuturesPaperLeverage > 0 ? snap.FuturesPaperLeverage : 5m
                     };
                     var liveRes = await _liveExec.TryOpenHedgeAsync(liveReq, ct);
                     var okProp = liveRes.GetType().GetProperty("ok")?.GetValue(liveRes);
