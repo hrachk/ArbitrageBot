@@ -30,6 +30,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private readonly ArbitrageOptions _options;
     private readonly ILogger<LiveExecutionService> _logger;
     private readonly LiveOrderEngine _orders;
+    private readonly ConcurrentDictionary<string, (DateTime at, object data)> _cache = new(StringComparer.OrdinalIgnoreCase);
     private List<object> _cachedExchangeLegs = [];
     private object? _cachedBalances;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(12);
