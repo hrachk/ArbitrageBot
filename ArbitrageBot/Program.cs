@@ -30,9 +30,10 @@ try
         Args = args,
         ContentRootPath = exeDir
     });
-    // Always listen on 5050 if nothing else was set (VS profile or env).
+    // One loopback URL only. "localhost" already includes 127.0.0.1, so listing both
+    // makes Kestrel bind the same socket twice and the process exits (10048).
     if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
-        builder.WebHost.UseUrls("http://127.0.0.1:5050", "http://localhost:5050");
+        builder.WebHost.UseUrls("http://127.0.0.1:5050");
 
     builder.Host.UseSerilog((ctx, services, lc) => lc
         .ReadFrom.Configuration(ctx.Configuration)
