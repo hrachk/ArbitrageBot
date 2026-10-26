@@ -30,7 +30,8 @@ public sealed class LiveExecutionService : ILiveExecutionService
     private readonly ArbitrageOptions _options;
     private readonly ILogger<LiveExecutionService> _logger;
     private readonly LiveOrderEngine _orders;
-    private readonly ConcurrentDictionary<string, (DateTime at, object data)> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private List<object> _cachedExchangeLegs = [];
+    private object? _cachedBalances;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(12);
 
     public LiveExecutionService(
@@ -97,11 +98,13 @@ public sealed class LiveExecutionService : ILiveExecutionService
             p.UnrealizedPricePnlUsd,
             totalUnrealizedPnlUsd = p.TotalUnrealizedPnlUsd
         }),
-        closed   = _orders.GetClosed(20),
+        closed   = _orders.GetClosed(400),
         openCount = _orders.GetOpen().Count,
         realizedPnlUsd = _orders.GetClosed(1000)
             .Where(t => t.RealizedPnlUsd.HasValue)
-            .Sum(t => t.RealizedPnlUsd!.Value)
+            .Sum(t => t.RealizedPnlUsd!.Value),
+        exchangeLegs = _cachedExchangeLegs,
+        balances = _cachedBalances
     };
 
     /// <summary>
@@ -151,6 +154,9 @@ public sealed class LiveExecutionService : ILiveExecutionService
             _logger.LogWarning(ex, "Failed to flatten exchange positions");
         }
 
+        _cachedExchangeLegs = exchangeLegs;
+        _cachedBalances = bal;
+
         return new
         {
             utc = DateTime.UtcNow,
@@ -184,7 +190,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 source = "ledger"
             }),
             exchangeLegs,
-            closed = _orders.GetClosed(20),
+            closed = _orders.GetClosed(400),
             balances = bal
         };
     }
@@ -894,6 +900,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
         // Bitget: UTA UnifiedApi first, then Classic FuturesApiV2, then shared
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
         {
+            string? bitgetErr = null;
             try
             {
                 // symbol null = all USDT-M positions on UTA
@@ -918,10 +925,10 @@ public sealed class LiveExecutionService : ILiveExecutionService
                         .Where(x => x.quantity != 0)
                         .Take(50)
                         .ToList();
-                    return list.Count > 0 ? (object)list : new List<object>();
+                    if (list.Count > 0) return list;
                 }
             }
-            catch { /* fall through */ }
+            catch { /* classic account: unified often succeeds with an empty list */ }
 
             try
             {
@@ -930,27 +937,189 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 if (r.Success && r.Data != null)
                 {
                     var list = r.Data
-                        .Where(p => { var v = p.GetType().GetProperty("Quantity")?.GetValue(p); return v is decimal d && d != 0; })
                         .Select(p =>
                         {
-                            decimal Dec(string n) { var v = p.GetType().GetProperty(n)?.GetValue(p); return v is decimal d ? d : 0; }
-                            string Str(string n) => p.GetType().GetProperty(n)?.GetValue(p)?.ToString() ?? "—";
+                            // Classic model: size is Total; QuantityOpen is resting size, not the position.
+                            var qty = p.Total != 0 ? p.Total : (p.QuantityOpen != 0 ? p.QuantityOpen : p.Available);
+                            if (qty < 0) qty = -qty;
                             return new
                             {
-                                symbol = Str("Symbol"),
-                                side = Str("PositionSide"),
-                                quantity = Dec("Quantity"),
-                                entryPrice = (decimal?)Dec("AverageOpenPrice"),
-                                unrealizedPnl = (decimal?)Dec("UnrealizedPnl"),
-                                leverage = (decimal?)Dec("Leverage")
+                                symbol = p.Symbol,
+                                side = p.PositionSide.ToString(),
+                                quantity = qty,
+                                entryPrice = p.AverageOpenPrice == 0 ? (decimal?)null : p.AverageOpenPrice,
+                                unrealizedPnl = (decimal?)p.UnrealizedProfitAndLoss,
+                                leverage = p.Leverage == 0 ? (decimal?)null : p.Leverage
                             };
-                        }).Take(50).ToList();
-                    return list.Count > 0 ? (object)list : new List<object>();
+                        })
+                        .Where(x => x.quantity != 0)
+                        .Take(50)
+                        .ToList();
+                    if (list.Count > 0) return list;
                 }
+                else if (!r.Success)
+                    bitgetErr = "Classic: " + FormatErr(r.Error, r.OriginalData);
             }
-            catch { /* fall through */ }
+            catch (Exception ex) { bitgetErr = "Classic: " + ex.Message; }
+
+            var sharedBg = await TrySharedPositionsAsync(rest, exchange, ct).ConfigureAwait(false);
+            if (ListCount(sharedBg) > 0) return sharedBg;
+            if (bitgetErr != null)
+                return new { error = "Bitget positions: " + bitgetErr };
+            return sharedBg ?? new List<object>();
         }
+
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            return await TryOkxPositionsAsync(rest, ct).ConfigureAwait(false);
+
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("GateIO", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("Gate", StringComparison.OrdinalIgnoreCase))
+            return await TryGatePositionsAsync(rest, ct).ConfigureAwait(false);
+
+        if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+            return await TryKucoinPositionsAsync(rest, ct).ConfigureAwait(false);
+
         return await TrySharedPositionsAsync(rest, exchange, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<object?> TryOkxPositionsAsync(ExchangeRestClient rest, CancellationToken ct)
+    {
+        try
+        {
+            var r = await rest.OKX.UnifiedApi.Account
+                .GetPositionsAsync(OKX.Net.Enums.InstrumentType.Swap, ct: ct).ConfigureAwait(false);
+            if (!r.Success)
+                return new { error = "OKX positions: " + FormatErr(r.Error, r.OriginalData), detail = Truncate(r.OriginalData) };
+            var list = (r.Data ?? [])
+                .Select(p =>
+                {
+                    var qty = p.PositionsQuantity;
+                    if (qty == 0) qty = p.AvailablePositions;
+                    var side = p.PositionSide.ToString();
+                    if (qty < 0)
+                    {
+                        side = "Short";
+                        qty = -qty;
+                    }
+                    else if (qty > 0 && side.Equals("Net", StringComparison.OrdinalIgnoreCase))
+                        side = "Long";
+                    return new
+                    {
+                        symbol = p.Symbol,
+                        side,
+                        quantity = qty,
+                        entryPrice = p.AveragePrice == 0 ? (decimal?)null : p.AveragePrice,
+                        unrealizedPnl = (decimal?)p.UnrealizedPnl,
+                        leverage = p.Leverage == 0 ? (decimal?)null : (decimal?)p.Leverage
+                    };
+                })
+                .Where(x => x.quantity != 0)
+                .Take(50)
+                .ToList();
+            return list;
+        }
+        catch (Exception ex)
+        {
+            return new { error = "OKX positions: " + ex.Message };
+        }
+    }
+
+    private static async Task<object?> TryGatePositionsAsync(ExchangeRestClient rest, CancellationToken ct)
+    {
+        try
+        {
+            var r = await rest.GateIo.PerpetualFuturesApi.Trading
+                .GetPositionsAsync("usdt", holding: true, ct: ct).ConfigureAwait(false);
+            if (!r.Success)
+                return new { error = "Gate positions: " + FormatErr(r.Error, r.OriginalData), detail = Truncate(r.OriginalData) };
+            var list = (r.Data ?? [])
+                .Select(p =>
+                {
+                    var size = p.Size;
+                    var qty = size < 0 ? -size : size;
+                    var lev = p.Leverage != 0 ? p.Leverage : p.CrossLeverageLimit;
+                    return new
+                    {
+                        symbol = p.Contract,
+                        side = size < 0 ? "Short" : "Long",
+                        quantity = qty,
+                        entryPrice = p.EntryPrice == 0 ? (decimal?)null : p.EntryPrice,
+                        unrealizedPnl = (decimal?)p.UnrealisedPnl,
+                        leverage = lev == 0 ? (decimal?)null : lev
+                    };
+                })
+                .Where(x => x.quantity != 0)
+                .Take(50)
+                .ToList();
+            return list;
+        }
+        catch (Exception ex)
+        {
+            return new { error = "Gate positions: " + ex.Message };
+        }
+    }
+
+    private static async Task<object?> TryKucoinPositionsAsync(ExchangeRestClient rest, CancellationToken ct)
+    {
+        try
+        {
+            var r = await rest.Kucoin.FuturesApi.Account
+                .GetPositionsAsync("USDT", ct).ConfigureAwait(false);
+            if (!r.Success)
+                return new { error = "Kucoin positions: " + FormatErr(r.Error, r.OriginalData), detail = Truncate(r.OriginalData) };
+            var list = (r.Data ?? [])
+                .Select(p =>
+                {
+                    var qty = p.CurrentQuantity;
+                    var side = p.PositionSide.ToString();
+                    if (qty < 0)
+                    {
+                        side = "Short";
+                        qty = -qty;
+                    }
+                    else if (qty > 0 && (side.Equals("Both", StringComparison.OrdinalIgnoreCase)
+                                         || side.Equals("Net", StringComparison.OrdinalIgnoreCase)))
+                        side = "Long";
+                    return new
+                    {
+                        symbol = p.Symbol,
+                        side,
+                        quantity = qty,
+                        entryPrice = p.AverageEntryPrice == 0 ? (decimal?)null : p.AverageEntryPrice,
+                        unrealizedPnl = (decimal?)p.UnrealizedPnl,
+                        leverage = p.Leverage == 0 ? (decimal?)null : p.Leverage
+                    };
+                })
+                .Where(x => x.quantity != 0)
+                .Take(50)
+                .ToList();
+            return list;
+        }
+        catch (Exception ex)
+        {
+            return new { error = "Kucoin positions: " + ex.Message };
+        }
+    }
+
+    private static int ListCount(object? o)
+    {
+        if (o is System.Collections.IEnumerable en and not string)
+        {
+            var n = 0;
+            var it = en.GetEnumerator();
+            try
+            {
+                while (it.MoveNext()) n++;
+            }
+            finally
+            {
+                (it as IDisposable)?.Dispose();
+            }
+            return n;
+        }
+        return -1;
     }
 
     private static async Task<object?> TrySharedPositionsAsync(
@@ -985,12 +1154,17 @@ public sealed class LiveExecutionService : ILiveExecutionService
     {
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
             return new ExchangeParameters(
-                new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
+                new ExchangeParameter("Bitget", "ProductType", BitgetProductTypeV2.UsdtFutures),
                 new ExchangeParameter("Bitget", "MarginAsset", "USDT"),
                 new ExchangeParameter("Bitget", "marginCoin", "USDT"));
         if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
             || exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
             return new ExchangeParameters(new ExchangeParameter(exchange, "SettleAsset", "usdt"));
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            return new ExchangeParameters(new ExchangeParameter("OKX", "InstrumentType", "Swap"));
+        if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+            return new ExchangeParameters(new ExchangeParameter("Kucoin", "MarginMode", "Cross"));
         return new ExchangeParameters();
     }
 

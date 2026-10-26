@@ -218,6 +218,7 @@
   margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid var(--rl);background:var(--r2);
 }
 .page[data-page="reports"] .chip.ok{border-color:#166534;background:#0c1f14;color:#86efac}
+.page[data-page="reports"] .chip.live{border-color:#9f1239;background:#2a0c14;color:#fda4af}
 
 /* PDF modal overlay — high z-index, works even if parent clips */
 #repPdfModal{

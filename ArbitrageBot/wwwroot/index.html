@@ -569,16 +569,16 @@
           <div class="rep-filter-actions">
             <button type="button" class="btn primary sm" id="repFilterApply">Apply filters</button>
             <button type="button" class="btn sm" id="repFilterReset">Reset</button>
-            <span class="muted" style="font-size:11px" id="repFilterHint">фильтр → KPI split + Trade ledger</span>
+            <span class="muted" style="font-size:11px" id="repFilterHint">Mode switches the top KPIs · Paper book or Live ledger</span>
           </div>
         </div>
 
         <div id="rep_paperSection">
           <div class="kpi-grid rep-kpi" id="repPaperKpi">
-            <div class="kpi"><div class="kpi-l">Ledger realized</div><div class="kpi-v" id="r_paper_realized">—</div></div>
-            <div class="kpi"><div class="kpi-l">UTC day PnL</div><div class="kpi-v" id="r_day">—</div></div>
-            <div class="kpi"><div class="kpi-l">Session closes</div><div class="kpi-v" id="r_paper_closes">—</div></div>
-            <div class="kpi"><div class="kpi-l">Open · Lev · Stop</div><div class="kpi-v" style="font-size:1.1rem"><span id="r_paper_open">—</span> · <span id="r_lev">—</span> · <span id="r_stop">—</span></div></div>
+            <div class="kpi"><div class="kpi-l" id="r_lbl_realized">Ledger realized</div><div class="kpi-v" id="r_paper_realized">—</div></div>
+            <div class="kpi"><div class="kpi-l" id="r_lbl_day">UTC day PnL</div><div class="kpi-v" id="r_day">—</div></div>
+            <div class="kpi"><div class="kpi-l" id="r_lbl_closes">Session closes</div><div class="kpi-v" id="r_paper_closes">—</div></div>
+            <div class="kpi"><div class="kpi-l" id="r_lbl_open">Open · Lev · Stop</div><div class="kpi-v" style="font-size:1.1rem"><span id="r_paper_open">—</span> · <span id="r_lev">—</span> · <span id="r_stop">—</span></div></div>
           </div>
 
           <div class="rep-layer">
@@ -620,7 +620,7 @@
             <div class="panel rep-panel" style="padding:0;overflow:hidden">
               <div class="rep-table-wrap" id="perfTrades"></div>
             </div>
-            <div class="panel rep-panel rep-skip-card">
+            <div class="panel rep-panel rep-skip-card rep-paper-only">
               <div class="panel-hd"><h2 class="panel-title">Skip reasons distribution</h2><span class="panel-sub">по текущему дню / окну</span></div>
               <div id="repSkipBars"></div>
             </div>
@@ -659,7 +659,7 @@
             </div>
           </div>
 
-          <div class="rep-split">
+          <div class="rep-split rep-paper-only">
             <div class="panel rep-panel">
               <div class="panel-hd"><h2 class="panel-title">Day summary</h2></div>
               <div id="r_daySummary" class="rep-day-summary"></div>
@@ -687,7 +687,7 @@
             </div>
           </div>
 
-          <div class="panel rep-panel" style="margin-bottom:14px">
+          <div class="panel rep-panel rep-paper-only" style="margin-bottom:14px">
             <div class="panel-hd"><h2 class="panel-title">Multi-day history</h2><span class="panel-sub">paper engine daily files</span></div>
             <div class="scroll" style="max-height:180px">
               <table class="data">
@@ -697,7 +697,7 @@
             </div>
           </div>
 
-          <div class="panel rep-panel" style="margin-bottom:14px">
+          <div class="panel rep-panel rep-paper-only" style="margin-bottom:14px">
             <div class="panel-hd">
               <h2 class="panel-title">Margin by venue</h2>
               <span class="panel-sub">paper equity = free + locked</span>
@@ -705,7 +705,7 @@
             <div class="g3" id="r_margin"></div>
           </div>
 
-          <div class="rep-split">
+          <div class="rep-split rep-paper-only">
             <div class="panel rep-panel">
               <div class="panel-hd"><h2 class="panel-title">Paper open positions</h2></div>
               <div class="scroll" style="max-height:220px">
@@ -773,7 +773,7 @@
             </div>
             <div class="scroll" style="max-height:260px">
               <table class="data">
-                <thead><tr><th>Status</th><th>Symbol</th><th>Route</th><th>PnL</th><th>Opened</th><th>Note</th></tr></thead>
+                <thead><tr><th>Opened</th><th>Symbol</th><th>Route</th><th>Qty</th><th>Net PnL</th><th>Status</th><th>Note</th></tr></thead>
                 <tbody id="r_tradeBody"></tbody>
               </table>
             </div>
@@ -1363,7 +1363,7 @@
 <script src="/assets/js/pages/live.js"></script>
 <script src="/assets/js/pages/market.js"></script>
 <script src="/assets/js/pages/screener.js"></script>
-<script src="/assets/js/pages/reports.js"></script>
+<script src="/assets/js/pages/reports.js?v=20261026c"></script>
 <script src="/assets/js/pages/settings.js"></script>
 <script src="/assets/js/pages/help.js"></script>
 <div id="repTip"></div>

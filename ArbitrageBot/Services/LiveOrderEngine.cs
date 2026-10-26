@@ -133,6 +133,23 @@ public sealed class LiveOrderEngine
         if (roundedQty <= 0)
             return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty})" };
 
+        // Do not open a hedge that is already red after both taker legs (open + close).
+        // The old path entered on a thin gross and closed at a loss once fees were subtracted.
+        if (req.LongAsk is > 0 && req.ShortBid is > 0 && req.ShortBid > req.LongAsk)
+        {
+            var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
+            var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
+            var netOpen = grossOpen - feesOpen;
+            var minTp = LiveMinNetUsd(roundedQty * req.LongAsk.Value);
+            if (netOpen < minTp)
+            {
+                _logger.LogInformation(
+                    "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2})",
+                    req.Symbol, netOpen, minTp, grossOpen, feesOpen);
+                return new { ok = false, error = $"RT net {netOpen:F2}$ < min take-profit {minTp:F2}$ after fees — skip" };
+            }
+        }
+
         var estNotional = refPrice > 0 ? roundedQty * refPrice : maxNotional;
         var estMargin = lev > 0 ? estNotional / lev : estNotional;
         _logger.LogInformation(
@@ -331,23 +348,28 @@ public sealed class LiveOrderEngine
             if (longBid <= 0 || shortAsk <= 0) continue;
 
             var width = (shortAsk - longBid) / longBid * 100m;
-            var legsPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
-            var stop = stopLossUsd < 0 && legsPnl <= stopLossUsd;
-            var converged = width <= closeBelow;
-            // Live professional: close on converge only if green enough, or SL.
-            // maxHoldMinutes only harvests green (never forced red dump).
-            var notional = pos.LongEntry * pos.BaseQty;
-            var minTp = Math.Max(0.30m, notional * 0.0015m);
-            var convergeProfit = converged && legsPnl >= minTp * 0.85m;
+            var entryWidth = pos.LongEntry > 0 ? (pos.ShortEntry - pos.LongEntry) / pos.LongEntry * 100m : 0m;
+            var gross = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
+            var fees = RoundTripFees(pos, longBid, shortAsk);
+            var net = gross - fees;
+            var notional = pos.LongEntry > 0 ? pos.LongEntry * pos.BaseQty : pos.NotionalUsd;
+            var minTp = LiveMinNetUsd(notional);
+            // A normal exit must be green AFTER taker fees. Only the stop may book a loss.
+            var stop = stopLossUsd < 0 && net <= stopLossUsd;
+            var converged = width <= closeBelow || (entryWidth > 0 && width <= entryWidth * 0.35m);
+            var shrunk = entryWidth > 0 && width <= entryWidth * 0.55m;
+            var green = net >= minTp;
+            var takeProfit = green && (converged || shrunk);
             var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
-            var timeoutHarvest = timedOut && legsPnl >= minTp;
+            var timeoutHarvest = timedOut && green;
 
-            if (!stop && !convergeProfit && !timeoutHarvest) continue;
+            if (!stop && !takeProfit && !timeoutHarvest) continue;
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;
-            _logger.LogWarning("LIVE auto-close {Sym} width={W:F3} pnl~{P:F2} stop={S} harvest={T} converge={C}",
-                pos.Symbol, width, legsPnl, stop, timeoutHarvest, convergeProfit);
+            _logger.LogWarning(
+                "LIVE auto-close {Sym} width={W:F3} net={N:F2} gross={G:F2} fees={F:F2} min={M:F2} stop={S} tp={T} timeout={H}",
+                pos.Symbol, width, net, gross, fees, minTp, stop, takeProfit, timeoutHarvest);
         }
         return closed;
     }
@@ -504,19 +526,43 @@ public sealed class LiveOrderEngine
         return new ExchangeParameters();
     }
 
-    /// <summary>Same taker table as paper, both legs, open and close. No 0.85 discount.</summary>
+    /// <summary>Open fees at entry prices + close fees at the exit marks. No 0.85 discount.</summary>
     private decimal RoundTripFees(LiveHedgePosition pos, decimal longBid, decimal shortAsk)
     {
-        decimal Pct(string ex)
-        {
-            if (Opt.EstimatedTakerFees != null && Opt.EstimatedTakerFees.TryGetValue(ex, out var f) && f > 0)
-                return f / 100m;
-            return 0.0005m;
-        }
         var qty = pos.BaseQty;
-        var open = pos.LongEntry * qty * Pct(pos.LongExchange) + pos.ShortEntry * qty * Pct(pos.ShortExchange);
-        var close = longBid * qty * Pct(pos.LongExchange) + shortAsk * qty * Pct(pos.ShortExchange);
+        var open = pos.LongEntry * qty * TakerRate(pos.LongExchange) + pos.ShortEntry * qty * TakerRate(pos.ShortExchange);
+        var close = longBid * qty * TakerRate(pos.LongExchange) + shortAsk * qty * TakerRate(pos.ShortExchange);
         return open + close;
+    }
+
+    private decimal EstimateRoundTripFees(string longEx, string shortEx, decimal longPx, decimal shortPx, decimal qty)
+    {
+        var open = longPx * qty * TakerRate(longEx) + shortPx * qty * TakerRate(shortEx);
+        var close = longPx * qty * TakerRate(longEx) + shortPx * qty * TakerRate(shortEx);
+        return open + close;
+    }
+
+    private decimal TakerRate(string ex)
+    {
+        var table = Opt.EstimatedTakerFees;
+        if (table != null)
+        {
+            if (table.TryGetValue(ex, out var f) && f > 0) return f / 100m;
+            foreach (var kv in table)
+            {
+                if (kv.Key.Equals(ex, StringComparison.OrdinalIgnoreCase) && kv.Value > 0)
+                    return kv.Value / 100m;
+            }
+        }
+        return 0.0005m;
+    }
+
+    /// <summary>Minimum net USD (after open+close taker) before a live hedge may be closed green.</summary>
+    private decimal LiveMinNetUsd(decimal notional)
+    {
+        var floor = Opt.MinTakeProfitUsd > 0 ? Opt.MinTakeProfitUsd : 0.35m;
+        var scaled = notional > 0 ? notional * 0.0015m : 0m;
+        return Math.Max(floor, scaled);
     }
 
     /// <summary>

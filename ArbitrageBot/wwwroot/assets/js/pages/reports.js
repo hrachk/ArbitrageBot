@@ -6,21 +6,86 @@ AB.pages.reports = {
   // ── вызывается из SignalR при каждом тике ────────────────────────────────
   render(data) {
     if (!data) return;
-    const mode = String(data.mode || 'PAPER').toUpperCase();
-    // LIVE / LIVE_READONLY / LIVE-RO / LIVE_FULL — anything with LIVE
-    const isLive = mode.indexOf('LIVE') >= 0 && mode.indexOf('PAPER') < 0;
+    this._lastSnap = data;
+    const mode = String(data.mode || data.Mode || 'PAPER').toUpperCase();
+    const isLive = this._botIsLive(data);
     // In paper (and live-ro while paper engine still runs) show paper analytics
     const liveSection  = document.getElementById('rep_liveSection');
     const paperSection = document.getElementById('rep_paperSection');
     // Always keep BOTH visible: live block = real open hedges + balances; paper = paper stats
     if (liveSection)  liveSection.style.display  = '';
     if (paperSection) paperSection.style.display = '';
+    this._syncReportMode(isLive);
 
     this._renderOpenHedges(data);   // real open rows → r_posBody
     this._renderLive(data);
     this._renderPaper(data);
     this.renderFunding(data.fundingRates || data.FundingRates);
     this.renderHoldDecisions(data.livePositions);
+  },
+
+  _reportMode() {
+    const sel = document.getElementById('repFilterMode');
+    return (sel && sel.value) || 'paper';
+  },
+
+  /** Bot is live if the snapshot says so — mode string OR guard phase. */
+  _botIsLive(data) {
+    const d = data || this._lastSnap || {};
+    const mode = String(d.mode || d.Mode || '').toUpperCase();
+    const ls = d.liveStatus || d.LiveStatus || {};
+    const phase = String(ls.phase || ls.Phase || '').toUpperCase();
+    const can = ls.canPlaceOrders === true || ls.CanPlaceOrders === true;
+    if (can) return true;
+    if (phase.indexOf('LIVE') >= 0 && phase.indexOf('PAPER') < 0) return true;
+    if (mode.indexOf('LIVE') >= 0 && mode.indexOf('PAPER') < 0) return true;
+    return false;
+  },
+
+  /** Follow the bot. A Live/Paper transition clears a manual pin so Reports cannot stay stuck on Paper. */
+  _syncReportMode(botIsLive) {
+    const sel = document.getElementById('repFilterMode');
+    if (!sel) return;
+    if (this._botLive !== botIsLive) {
+      this._botLive = botIsLive;
+      this._modePinned = null;
+    }
+    if (this._modePinned !== 'user') {
+      const want = botIsLive ? 'live' : 'paper';
+      if (sel.value !== want) {
+        this._suppressModeEvent = true;
+        sel.value = want;
+        this._suppressModeEvent = false;
+        this._applyModeChrome();
+        this.loadPerformance(this._perfDays || 7);
+        return;
+      }
+    }
+    this._applyModeChrome();
+  },
+
+  _applyModeChrome() {
+    const mode = this._reportMode();
+    const chip = document.getElementById('repModeChip');
+    if (chip) {
+      chip.textContent = mode === 'live' ? 'LIVE' : (mode === 'all' ? 'ALL' : 'PAPER');
+      chip.className = 'chip ' + (mode === 'live' ? 'live' : 'ok');
+    }
+    document.querySelectorAll('.rep-paper-only').forEach(el => {
+      el.style.display = mode === 'live' ? 'none' : '';
+    });
+    const set = (id, text) => { const e = document.getElementById(id); if (e) e.textContent = text; };
+    if (mode === 'live') {
+      set('r_lbl_realized', 'Live realized');
+      set('r_lbl_day', 'Live UTC day');
+      set('r_lbl_closes', 'Live closes');
+      set('r_lbl_open', 'Open · Lev · Day limit');
+    } else {
+      set('r_lbl_realized', 'Ledger realized');
+      set('r_lbl_day', 'UTC day PnL');
+      set('r_lbl_closes', 'Session closes');
+      set('r_lbl_open', 'Open · Lev · Stop');
+    }
   },
 
   /** Unified open hedges: paper positions + live ledger + exchange legs (no mock). */
@@ -111,6 +176,14 @@ AB.pages.reports = {
     if (el('r_attempts')) el('r_attempts').textContent = closed.length;
     if (el('r_liveOpenCount'))  el('r_liveOpenCount').textContent  = ledger.length + ' open';
     if (el('r_liveLedgerCount')) el('r_liveLedgerCount').textContent = closed.length + ' closed · ' + ledger.length + ' open';
+    if (this._reportMode() === 'live') {
+      if (el('r_paper_open')) el('r_paper_open').textContent = ledger.length;
+      if (this._liveClosedSeen != null && closed.length !== this._liveClosedSeen) {
+        this._liveClosedSeen = closed.length;
+        clearTimeout(this._liveReload);
+        this._liveReload = setTimeout(() => this._loadLivePerformance(), 500);
+      }
+    }
 
     // Open hedges table filled by _renderOpenHedges (paper+ledger+exchange)
 
@@ -140,8 +213,9 @@ AB.pages.reports = {
     const trades = fp.trades    || [];
     const pos    = fp.positions || [];
 
-    // Paper KPIs
+    // Paper KPIs — left alone while Mode is Live
     const el = (id) => AB.$(id);
+    if (this._reportMode() !== 'live') {
     if (el('r_paper_realized')) el('r_paper_realized').innerHTML = AB.fmtUsd(fp.realizedPnlUsd ?? fp.realizedPnl);
     if (el('r_day'))            el('r_day').innerHTML            = AB.fmtUsd(fp.dailyRealizedPnlUsd);
     // Note: Ledger realized + Margin by venue are rebuilt from trades-ledger (half PnL per leg).
@@ -155,6 +229,7 @@ AB.pages.reports = {
     if (el('r_paper_open'))     el('r_paper_open').textContent   = pos.length;
     if (el('r_lev'))            el('r_lev').textContent          = (fp.leverage || 5) + 'x';
     if (el('r_stop'))           el('r_stop').textContent         = fp.stopLossUsd ?? '—';
+    }
 
     // Paper open positions
     if (el('r_paperPosBody')) {
@@ -333,9 +408,16 @@ AB.pages.reports = {
     } catch (e) { console.warn(e); }
   },
 
-  // ── Performance panel (paper analytics API) ──────────────────────────────
+  // ── Performance panel — Paper book or Live ledger, depending on Mode ──
   async loadPerformance(days) {
     if (days) this._perfDays = days;
+    this._applyModeChrome();
+    const seq = (this._perfSeq = (this._perfSeq || 0) + 1);
+    if (this._reportMode() === 'live') return this._loadLivePerformance(seq);
+    return this._loadPaperPerformance(seq);
+  },
+
+  async _loadPaperPerformance(seq) {
     const d  = this._perfDays || 7;
     const k1 = AB.$('perfKpis');
     const k2 = AB.$('perfKpis2');
@@ -344,6 +426,7 @@ AB.pages.reports = {
     try {
       const p      = await AB.api.get('/api/analytics/performance?days=' + d);
       const trades = await AB.api.get('/api/analytics/trades?take=800&skip=0');
+      if (seq !== this._perfSeq || this._reportMode() === 'live') return;
       const pctStr = (v, dig) => {
         const n = Number(v);
         if (!isFinite(n)) return '';
@@ -477,6 +560,207 @@ AB.pages.reports = {
       this._renderTradeTable(this._filterTrades(this._lastTrades));
     } catch (e) {
       k1.innerHTML = '<div class="empty neg">' + (e.message || e) + '</div>';
+      if (k2) k2.innerHTML = '';
+    }
+  },
+
+  async _loadLivePerformance(seq) {
+    const d = this._perfDays || 7;
+    const k1 = AB.$('perfKpis');
+    const k2 = AB.$('perfKpis2');
+    if (!k1) return;
+    k1.innerHTML = '<div class="empty">Loading live ledger…</div>';
+    if (k2) k2.innerHTML = '';
+    try {
+      const view = await AB.api.get('/api/live/positions');
+      if (seq !== this._perfSeq || this._reportMode() !== 'live') return;
+      const closedRaw = Array.isArray(view.closed) ? view.closed : (Array.isArray(view.Closed) ? view.Closed : []);
+      const openRaw = Array.isArray(view.ledger) ? view.ledger
+        : (Array.isArray(view.open) ? view.open : (Array.isArray(view.Open) ? view.Open : []));
+      const now = Date.now();
+      const fromMs = d < 0 ? 0 : now - d * 86400000;
+      const num = v => { const n = Number(v); return isFinite(n) ? n : null; };
+      const when = t => Date.parse(t.closedAt || t.ClosedAt || t.openedAt || t.OpenedAt || '') || 0;
+      const inRange = t => {
+        const ms = when(t);
+        return !fromMs || !ms || ms >= fromMs;
+      };
+      const parseMsg = t => {
+        const msg = String(t.message || t.Message || '');
+        const g = msg.match(/gross=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+        const f = msg.match(/fees=\s*([-+]?[0-9]*\.?[0-9]+)/i);
+        return { gross: g ? Number(g[1]) : null, fees: f ? Math.abs(Number(f[1])) : 0 };
+      };
+      const closed = closedRaw.filter(inRange).map(t => {
+        const pnl = num(t.realizedPnlUsd ?? t.RealizedPnlUsd);
+        const extra = parseMsg(t);
+        return Object.assign({}, t, {
+          _pnl: pnl == null ? 0 : pnl,
+          _hasPnl: pnl != null,
+          _gross: extra.gross,
+          _fees: extra.fees,
+          status: t.status || t.Status || 'Closed',
+          realizedPnlUsd: pnl,
+          grossPnlUsd: extra.gross != null ? extra.gross : (pnl != null ? pnl + extra.fees : null),
+          closeFeesUsd: extra.fees || undefined
+        });
+      }).filter(t => t._hasPnl);
+      closed.sort((a, b) => when(a) - when(b));
+
+      const openMapped = openRaw.map(t => Object.assign({}, t, {
+        status: t.status || t.Status || 'Open',
+        realizedPnlUsd: null
+      }));
+
+      const pnlN = closed.reduce((s, t) => s + t._pnl, 0);
+      const wins = closed.filter(t => t._pnl > 0);
+      const losses = closed.filter(t => t._pnl < 0);
+      const sumW = wins.reduce((s, t) => s + t._pnl, 0);
+      const sumL = losses.reduce((s, t) => s + t._pnl, 0);
+      const grossN = closed.reduce((s, t) => s + (t._gross != null ? t._gross : t._pnl), 0);
+      const feesN = closed.reduce((s, t) => s + (t._fees || 0), 0);
+      const avg = arr => arr.length ? arr.reduce((s, t) => s + t._pnl, 0) / arr.length : 0;
+      const avgWin = avg(wins);
+      const avgLoss = avg(losses);
+      const pf = sumL < 0 ? (sumW / Math.abs(sumL)) : (sumW > 0 ? 99 : 0);
+      let eq = 0, peak = 0, maxDd = 0, cw = 0, cl = 0, maxW = 0, maxL = 0, durSum = 0, durN = 0;
+      const curve = [];
+      const byDay = {};
+      closed.forEach(t => {
+        eq += t._pnl;
+        if (eq > peak) peak = eq;
+        if (peak - eq > maxDd) maxDd = peak - eq;
+        if (t._pnl > 0) { cw++; cl = 0; if (cw > maxW) maxW = cw; }
+        else if (t._pnl < 0) { cl++; cw = 0; if (cl > maxL) maxL = cl; }
+        else { cw = 0; cl = 0; }
+        const a = Date.parse(t.openedAt || t.OpenedAt || '');
+        const b = Date.parse(t.closedAt || t.ClosedAt || '');
+        if (isFinite(a) && isFinite(b) && b >= a) { durSum += (b - a) / 60000; durN++; }
+        const day = (t.closedAt || t.ClosedAt || t.openedAt || t.OpenedAt || '').toString().slice(0, 10);
+        if (day) {
+          if (!byDay[day]) byDay[day] = { pnl: 0, trades: 0, wins: 0 };
+          byDay[day].pnl += t._pnl;
+          byDay[day].trades++;
+          if (t._pnl > 0) byDay[day].wins++;
+        }
+        curve.push({ equity: eq, t: (t.closedAt || t.ClosedAt || '').toString().replace('T', ' ').slice(0, 16) });
+      });
+      const today = new Date().toISOString().slice(0, 10);
+      const dayPnl = (byDay[today] && byDay[today].pnl) || 0;
+      const best = closed.reduce((m, t) => t._pnl > m ? t._pnl : m, closed.length ? -Infinity : 0);
+      const worst = closed.reduce((m, t) => t._pnl < m ? t._pnl : m, closed.length ? Infinity : 0);
+      const bal = view.balances || view.Balances || {};
+      const eqBase = Number(bal.totalUsdtApprox ?? bal.TotalUsdtApprox) || 0;
+      const winRate = closed.length ? (wins.length / closed.length * 100) : 0;
+      const expectancy = closed.length ? pnlN / closed.length : 0;
+      const avgDur = durN ? durSum / durN : 0;
+      const rr = avgLoss < 0 ? avgWin / Math.abs(avgLoss) : 0;
+
+      const pctStr = (v, dig) => {
+        const n = Number(v);
+        if (!isFinite(n)) return '';
+        return (n > 0 ? '+' : '') + AB.fmt(n, dig ?? 2) + '%';
+      };
+      const kpi = (label, val, cls, sub) =>
+        `<div class="kpi" style="margin:0"><div class="kpi-l">${label}</div>
+         <div class="mono ${cls||''}" style="font-size:18px;font-weight:700;margin-top:6px;line-height:1.15">${val}</div>
+         ${sub ? `<div class="mono muted" style="font-size:11px;margin-top:3px;opacity:0.9">${sub}</div>` : ''}</div>`;
+      const pn = (v, dig) => {
+        const n = Number(v) || 0;
+        return { s: (n >= 0 ? '+' : '') + AB.fmt(n, dig ?? 2), cls: n > 0 ? 'pos' : (n < 0 ? 'neg' : ''), n };
+      };
+      const net = pn(pnlN);
+      const gross = pn(grossN);
+      const fees = pn(-Math.abs(feesN));
+      const netEq = eqBase ? pctStr(pnlN / eqBase * 100) : '';
+      const feeOfG = grossN ? (Math.abs(feesN) / Math.abs(grossN) * 100).toFixed(1) + '% of gross' : '';
+      k1.innerHTML = [
+        kpi('NET PNL', net.s + ' USDT', net.cls, (netEq ? netEq + ' of equity' : 'live ledger')),
+        kpi('WIN RATE', AB.fmt(winRate, 1) + '%', '', wins.length + ' / ' + closed.length + ' closed'),
+        kpi('TOTAL TRADES', closed.length, ''),
+        kpi('AVG WIN', pn(avgWin).s, 'pos'),
+      ].join('');
+      if (k2) k2.innerHTML = [
+        kpi('AVG LOSS', pn(avgLoss).s, 'neg'),
+        kpi('PROFIT FACTOR', AB.fmt(pf, 2), ''),
+        kpi('MAX DRAWDOWN', AB.fmt(maxDd, 2), 'neg', eqBase ? pctStr(maxDd / eqBase * 100, 2) + ' of equity' : ''),
+        kpi('BEST TRADE', closed.length ? pn(best).s : '—', 'pos'),
+        kpi('WORST TRADE', closed.length ? pn(worst).s : '—', 'neg'),
+        kpi('AVG DURATION', AB.fmt(avgDur, 1) + ' m', ''),
+        kpi('EXPECTANCY', pn(expectancy).s, pn(expectancy).cls),
+        kpi('AVG R:R', AB.fmt(rr, 2), ''),
+        kpi('Max win streak', maxW, 'pos'),
+        kpi('Max loss streak', maxL, 'neg'),
+        kpi('EQUITY BASE', (eqBase ? AB.fmt(eqBase, 0) : '—') + (eqBase ? ' USDT' : ''), '', 'Live USDT-M total'),
+      ].join('');
+
+      const gnb = AB.$('repGrossNetBody');
+      if (gnb) {
+        gnb.innerHTML =
+          `<div class="row"><span>Gross (from close messages)</span><span><b class="${gross.cls}">${gross.s}</b></span></div>
+           <div class="row"><span>− Total fees</span><span><b class="neg">${fees.s}</b> <span class="muted" style="font-size:10px">${feeOfG}</span></span></div>
+           <div class="row"><span>± Funding</span><span><b>0.00</b> <span class="muted" style="font-size:10px">not in live close</span></span></div>
+           <div class="row" style="border:0;padding-top:12px"><span style="color:#e8eef4;font-weight:600">= Net PnL</span>
+             <span class="text-right"><b class="${net.cls}" style="font-size:18px">${net.s}</b>
+             <div class="muted mono" style="font-size:11px">${netEq || 'live ledger'} · ${closed.length} closes</div></span></div>`;
+      }
+      const tctx = AB.$('repTimeCtx');
+      if (tctx) {
+        tctx.textContent = 'LIVE ledger · ' + (d < 0 ? 'ALL' : (d + 'D')) +
+          ' · ' + closed.length + ' closes · equity ' + (eqBase ? AB.fmt(eqBase, 0) + ' USDT' : '—');
+      }
+      const fp = (this._lastSnap && (this._lastSnap.futuresPaper || this._lastSnap.paper)) || {};
+      const ls = (this._lastSnap && this._lastSnap.liveStatus) || {};
+      if (AB.$('r_paper_realized')) AB.$('r_paper_realized').innerHTML = AB.fmtUsd(pnlN);
+      if (AB.$('r_day')) AB.$('r_day').innerHTML = AB.fmtUsd(dayPnl);
+      if (AB.$('r_paper_closes')) AB.$('r_paper_closes').textContent = closed.length;
+      if (AB.$('r_paper_open')) AB.$('r_paper_open').textContent = openRaw.length;
+      if (AB.$('r_lev')) AB.$('r_lev').textContent = (fp.leverage || 5) + 'x';
+      if (AB.$('r_stop')) AB.$('r_stop').textContent = ls.dailyLossLimitUsd != null ? ls.dailyLossLimitUsd : '—';
+
+      const sub = AB.$('perfCurveSub');
+      if (sub) sub.textContent = curve.length ? (curve.length + ' closes · ' + (d < 0 ? 'ALL' : d + 'D')) : 'no live closes in range';
+      this._drawEquityCanvas(curve);
+
+      const cal = AB.$('perfCalendar');
+      if (cal) {
+        const days = Object.keys(byDay).sort();
+        const absMax = Math.max(...days.map(k => Math.abs(byDay[k].pnl)), 1);
+        cal.innerHTML = days.length ? days.map(dayKey => {
+          const n = byDay[dayKey].pnl;
+          const tr = byDay[dayKey].trades;
+          const wr = tr ? (byDay[dayKey].wins / tr * 100) : null;
+          const dayLbl = dayKey.slice(8, 10);
+          const sel = this._dayFilter === dayKey ? ' selected' : '';
+          let hm = '';
+          if (n > 0) hm = n / absMax > 0.66 ? 'hm-pos-3' : (n / absMax > 0.33 ? 'hm-pos-2' : 'hm-pos-1');
+          else if (n < 0) hm = Math.abs(n) / absMax > 0.5 ? 'hm-neg-2' : 'hm-neg-1';
+          return `<div class="day-cell hm-cell ${hm}${sel}" data-day="${dayKey}">
+            <div class="muted" style="font-size:10px">${dayLbl}</div>
+            <div class="p mono" style="font-size:13px;font-weight:700">${(n >= 0 ? '+' : '') + AB.fmt(n, 1)}</div>
+            <div class="muted" style="font-size:9px">${tr}tr${wr != null ? ' · ' + wr.toFixed(0) + '%' : ''}</div>
+          </div>`;
+        }).join('') : '<div class="empty">No live closes in range</div>';
+        cal.querySelectorAll('.day-cell[data-day]').forEach(cell => {
+          cell.addEventListener('click', () => {
+            const day = cell.getAttribute('data-day');
+            this._dayFilter = (this._dayFilter === day) ? null : day;
+            const lbl = AB.$('repDayFilterLbl');
+            if (lbl) lbl.textContent = this._dayFilter ? ('Selected day: ' + this._dayFilter) : '';
+            this._renderTradeTable(this._filterTrades(this._lastTrades || []));
+            cal.querySelectorAll('.day-cell').forEach(c => c.classList.toggle('selected', c.getAttribute('data-day') === this._dayFilter));
+          });
+        });
+      }
+
+      this._lastTrades = openMapped.concat(closed);
+      this._lastPerf = { netPnl: pnlN, mode: 'LIVE' };
+      this._liveClosedSeen = closedRaw.length;
+      this._fillFilterOptions(this._lastTrades);
+      this._renderTradeTable(this._filterTrades(this._lastTrades));
+    } catch (e) {
+      k1.innerHTML = '<div class="empty neg">' + (e.message || e) + '</div>';
+      if (k2) k2.innerHTML = '';
     }
   },
 
@@ -1096,8 +1380,28 @@ AB.pages.reports = {
           </div>`;
         }
         const usdt = x.usdtTotal != null ? x.usdtTotal : 0;
-        const positions = Array.isArray(x.positions) ? x.positions.filter(p => p.quantity !== 0) : [];
-        const posHtml = positions.length
+        let positions = [];
+        let posErr = '';
+        if (Array.isArray(x.positions)) {
+          positions = x.positions.filter(p => {
+            const q = Number(p.quantity ?? p.qty ?? p.size);
+            return isFinite(q) && q !== 0;
+          });
+        } else if (x.positions && typeof x.positions === 'object') {
+          posErr = x.positions.error || x.positions.Error || x.positions.detail || 'positions request failed';
+        }
+        const snapLp = (this._lastSnap && this._lastSnap.livePositions) || {};
+        const snapLedger = Array.isArray(snapLp.ledger) ? snapLp.ledger
+          : (Array.isArray(snapLp.open) ? snapLp.open : []);
+        const expected = snapLedger.filter(p => {
+          const ex = String(x.exchange || '').toLowerCase();
+          const L = String(p.longExchange || p.LongExchange || '').toLowerCase();
+          const S = String(p.shortExchange || p.ShortExchange || '').toLowerCase();
+          return L === ex || S === ex;
+        });
+        const posHtml = posErr
+          ? `<div class="neg" style="font-size:11px;margin-top:8px;word-break:break-word">${posErr}</div>`
+          : (positions.length
           ? `<table style="width:100%;border-collapse:collapse;font-size:10px;margin-top:8px">
               <thead><tr class="muted">
                 <th style="text-align:left;padding:2px 4px">Symbol</th>
@@ -1111,24 +1415,31 @@ AB.pages.reports = {
                 const pnl  = p.unrealizedPnl != null ? Number(p.unrealizedPnl) : null;
                 const pnlC = pnl == null ? '' : (pnl >= 0 ? 'pos' : 'neg');
                 const pnlS = pnl == null ? '—' : ((pnl >= 0 ? '+' : '') + AB.fmt(pnl, 2));
-                const isLong = p.side === 'Buy' || p.side === 'Long';
+                const side = String(p.side || '');
+                const isLong = /buy|long/i.test(side);
                 return `<tr style="border-top:1px solid rgba(148,163,184,0.1)">
                   <td class="mono" style="padding:2px 4px">${p.symbol || '—'}</td>
-                  <td class="${isLong ? 'pos' : 'neg'}" style="padding:2px 4px">${p.side || '—'}</td>
+                  <td class="${isLong ? 'pos' : 'neg'}" style="padding:2px 4px">${side || '—'}</td>
                   <td class="mono" style="padding:2px 4px">${AB.fmt(p.quantity, 4)}</td>
-                  <td class="mono" style="padding:2px 4px">${p.entryPrice ? AB.fmt(p.entryPrice, 2) : '—'}</td>
+                  <td class="mono" style="padding:2px 4px">${p.entryPrice ? AB.fmt(p.entryPrice, 4) : '—'}</td>
                   <td class="mono ${pnlC}" style="padding:2px 4px">${pnlS}</td>
                   <td class="muted" style="padding:2px 4px">${p.leverage ? p.leverage + 'x' : '—'}</td>
                 </tr>`;
               }).join('')}</tbody>
             </table>`
-          : `<div class="muted" style="font-size:11px;margin-top:8px">No open positions</div>`;
+          : `<div class="muted" style="font-size:11px;margin-top:8px">No open positions</div>`);
+        const mismatch = !posErr && !positions.length && expected.length
+          ? `<div class="neg" style="font-size:11px;margin-top:6px">Ledger still has ${expected.map(p => (p.symbol || p.Symbol || '?')).join(', ')} on this venue, but the exchange API returned no position.</div>`
+          : '';
+        const gateHint = /gate/i.test(String(x.exchange || '')) && Number(usdt) === 0
+          ? `<div class="muted" style="font-size:10px;margin-top:4px">USDT-M wallet reads 0. If the deposit is on spot, transfer it to perpetual futures (settle usdt).</div>`
+          : '';
 
         return `<div class="kpi" style="margin:0;border-color:rgba(56,189,248,0.3)">
           <div class="kpi-l">${x.exchange} <span class="pos" style="font-size:10px">● live</span></div>
           <div class="mono" style="font-size:22px;font-weight:700;margin-top:4px;color:var(--blue)">${AB.fmt(usdt, 2)} <span class="muted" style="font-size:11px">USDT</span></div>
           <div class="muted mono" style="font-size:11px;margin-top:4px">perm: ${x.permission||'—'} · ${x.accountMode||'—'}</div>
-          <div><span class="muted" style="font-size:11px">Positions (${positions.length})</span>${posHtml}</div>
+          <div><span class="muted" style="font-size:11px">Positions (${positions.length})</span>${posHtml}${mismatch}${gateHint}</div>
         </div>`;
       }).join('');
 
@@ -1286,19 +1597,27 @@ document.getElementById('repFilterApply')?.addEventListener('click', () => {
   const r = AB.pages.reports;
   r._renderTradeTable(r._filterTrades(r._lastTrades || []));
 });
+document.getElementById('repFilterMode')?.addEventListener('change', () => {
+  const r = AB.pages.reports;
+  if (r._suppressModeEvent) return;
+  r._modePinned = 'user';
+  r._dayFilter = null;
+  r.loadPerformance(r._perfDays || 7);
+});
 document.getElementById('repFilterReset')?.addEventListener('click', () => {
   const r = AB.pages.reports;
   r._dayFilter = null;
   r._filterRoutes = [];
   r._filterSymbols = [];
+  r._modePinned = 'user';
   const st = document.getElementById('repFilterStatus');
   if (st) st.value = 'all';
   const mode = document.getElementById('repFilterMode');
   if (mode) mode.value = 'paper';
   const lbl = document.getElementById('repDayFilterLbl');
   if (lbl) lbl.textContent = '';
-  r._fillFilterOptions(r._lastTrades || []);
-  r._renderTradeTable(r._filterTrades(r._lastTrades || []));
+  r._applyModeChrome();
+  r.loadPerformance(r._perfDays || 7);
 });
 document.getElementById('repFilterRouteAdd')?.addEventListener('change', (e) => {
   const v = e.target.value;
