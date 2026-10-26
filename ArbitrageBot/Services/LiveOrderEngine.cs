@@ -117,23 +117,20 @@ public sealed class LiveOrderEngine
         var lev = req.Leverage > 0 ? req.Leverage
                 : (Opt.LivePaperLeverage > 0 ? Opt.LivePaperLeverage : 3m);
 
-        // Size from the real per-venue deposit. The scan qty is only a depth probe
-        // (often the top-of-book size, e.g. 0.378 QNT ≈ $15) and must not be the order.
+        // The settings size (scan notional) is the order. Do not shrink it to equity × usage.
+        // LiveMaxNotional is only a ceiling, and Save raises it to the size.
         var opt = Opt;
         var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 100m;
         var usage  = opt.LiveMarginUsageFraction  > 0 ? opt.LiveMarginUsageFraction  : 0.25m;
         usage = Math.Clamp(usage, 0.15m, 0.50m);
-        var target = equity * lev * usage;
+        var target = req.NotionalUsd >= 20m
+            ? req.NotionalUsd
+            : equity * lev * usage;
         if (opt.LiveMaxNotionalUsd > 0 && target > opt.LiveMaxNotionalUsd)
             target = opt.LiveMaxNotionalUsd;
-        var absCap = equity * lev * 0.50m;
-        if (target > absCap) target = absCap;
-        // A real scan ticket may shrink the order. A dust probe (< $20) must not.
-        if (req.NotionalUsd >= 20m && req.NotionalUsd < target)
-            target = req.NotionalUsd;
         if (target < 20m)
         {
-            var why = $"live target {target:F2}$ below $20 — raise Live max notional / equity";
+            var why = $"live target {target:F2}$ below $20 — raise size";
             return SkipSymbol(req.Symbol, why, TimeSpan.FromMinutes(2));
         }
 

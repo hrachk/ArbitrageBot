@@ -184,6 +184,7 @@ try
         TradingUiSettings body,
         ISettingsStore store,
         RuntimeRiskConfig risk,
+        LiveTradingGuard guard,
         IFuturesPaperService paper,
         ActiveMarketContext markets) =>
     {
@@ -192,14 +193,17 @@ try
             body.PaperStartingQuote = body.LiveEquityPerExchangeUsd;
         if (body.LiveEquityPerExchangeUsd <= 0 && body.PaperStartingQuote > 0)
             body.LiveEquityPerExchangeUsd = body.PaperStartingQuote;
-        // Size consistency
-        if (body.QuoteSize > 0 && body.MaxNotionalUsd > 0 && body.QuoteSize > body.MaxNotionalUsd)
-            body.QuoteSize = body.MaxNotionalUsd;
+        // Size is what the user typed. Raise the ceilings so 1000 is not cut back to 80/180.
+        if (body.QuoteSize > 0 && body.MaxNotionalUsd < body.QuoteSize)
+            body.MaxNotionalUsd = body.QuoteSize;
+        if (body.QuoteSize > 0 && body.LiveMaxNotionalUsd < body.QuoteSize)
+            body.LiveMaxNotionalUsd = body.QuoteSize;
 
         await store.SaveTradingAsync(body);
         risk.ApplyTrading(body);
 
         var snap = risk.Snapshot;
+        guard.ApplyLimits(snap.LiveMaxNotionalUsd, snap.LiveMaxOpenPositions, snap.LiveDailyLossLimitUsd);
         var reseeded = false;
         var openN = paper.OpenCount;
         if (openN == 0)

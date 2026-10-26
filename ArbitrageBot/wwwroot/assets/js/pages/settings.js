@@ -324,10 +324,10 @@ document.getElementById('btnSaveTrading')?.addEventListener('click', async () =>
     return Number.isFinite(v) ? v : fallback;
   };
 
-  // Unified professional profile: size ≤ max notional; live mirrors paper
+  // Size is the order. The notional ceiling follows it, it does not cut it.
   let size = num('s_size', 500);
   let maxN = num('s_maxNotional', 500);
-  if (size > maxN) size = maxN;
+  if (!(size > 0)) size = 80;
   if (maxN < size) maxN = size;
   const maxOpen = int('s_maxPos', 3);
   const trading = {

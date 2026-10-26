@@ -63,6 +63,17 @@ public sealed class LiveTradingGuard
         auditTail = _audit.Take(20).ToList()
     };
 
+    /// <summary>Settings save updates the notional ceiling without toggling live.</summary>
+    public void ApplyLimits(decimal maxNotional, int maxOpen, decimal dailyLossLimit)
+    {
+        lock (_lock)
+        {
+            if (maxNotional > 0) _maxNotional = maxNotional;
+            if (maxOpen > 0) _maxOpen = maxOpen;
+            if (dailyLossLimit != 0) _dailyLossLimit = dailyLossLimit;
+        }
+    }
+
     public (bool ok, string message) TryEnable(string confirmPhrase, bool readOnly, ArbitrageOptions opts)
     {
         var expected = string.IsNullOrWhiteSpace(opts.LiveEnableConfirmPhrase)
