@@ -183,4 +183,3 @@ public class ArbitrageOptions
         return b is "BTC" or "ETH" or "BNB";
     }
 }
- 
