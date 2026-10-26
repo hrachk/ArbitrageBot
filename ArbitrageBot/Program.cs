@@ -20,6 +20,9 @@ try
     Log.Information("Starting ArbitrageBot Web (WS order books + SignalR realtime)...");
 
     var builder = WebApplication.CreateBuilder(args);
+    // Always listen on 5050 if nothing else was set (VS profile or env).
+    if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+        builder.WebHost.UseUrls("http://127.0.0.1:5050", "http://localhost:5050");
 
     builder.Host.UseSerilog((ctx, services, lc) => lc
         .ReadFrom.Configuration(ctx.Configuration)
