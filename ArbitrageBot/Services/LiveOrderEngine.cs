@@ -35,7 +35,15 @@ public sealed class LiveOrderEngine
 
     /// <summary>Exchange → UTC until which we skip live orders (balance / hard rejects).</summary>
     private readonly ConcurrentDictionary<string, DateTime> _venueCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _symbolCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan BalanceCooldown = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan RejectCooldown = TimeSpan.FromSeconds(90);
+
+    private sealed record OkxLot(decimal CtVal, decimal LotSz, decimal MinSz);
+    private static readonly ConcurrentDictionary<string, OkxLot> OkxLots = new(StringComparer.OrdinalIgnoreCase);
+    private static DateTime _okxLotsAt = DateTime.MinValue;
+    private static readonly SemaphoreSlim OkxLotLock = new(1, 1);
+    private static readonly HttpClient OkxHttp = new() { Timeout = TimeSpan.FromSeconds(8) };
 
     private string LedgerPath => Path.Combine(_env.ContentRootPath, "data", "live", "trades-ledger.json");
     private ArbitrageOptions Opt => _runtime.Snapshot;
