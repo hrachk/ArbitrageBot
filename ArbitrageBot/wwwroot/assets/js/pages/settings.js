@@ -103,27 +103,40 @@ AB.pages.settings = {
   },
 
   async load() {
-    try {
-      const s = await AB.api.get('/api/settings');
-      AB.state.settings = s;
-      this.fill(s);
-      try {
-        const r = await AB.api.get('/api/settings/risk');
-        this.fillRisk(r);
-        // Apply Live ($5) preset on first load if nothing saved yet
-        if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) {
-          this.applyPreset('professional');
-          if (AB.$('s_paper')) AB.$('s_paper').checked = true;
-          if (AB.$('s_auto')) AB.$('s_auto').checked = true;
-        }
-      } catch (_) {}
-      // Show active mode in settings header
-      this._updateModeHint(s);
-    } catch (e) {
-      AB.$('s_msg').className = 'alert warn';
-      AB.$('s_msg').textContent = 'Settings load failed: ' + e.message;
-      AB.$('s_msg').classList.remove('hidden');
+    const tryGet = async (url) => {
+      try { return await AB.api.get(url); } catch (_) { return null; }
+    };
+    let s = await tryGet('/api/settings');
+    if (!s) {
+      await new Promise(r => setTimeout(r, 400));
+      s = await tryGet('/api/settings');
     }
+    if (!s) {
+      const risk = await tryGet('/api/settings/risk');
+      if (risk) {
+        this.fillRisk(risk);
+        AB.$('s_msg').className = 'alert warn';
+        AB.$('s_msg').textContent = 'Settings API unreachable — loaded risk snapshot only. Restart the bot if this persists.';
+        AB.$('s_msg').classList.remove('hidden');
+        return;
+      }
+      AB.$('s_msg').className = 'alert warn';
+      AB.$('s_msg').textContent = 'Failed to fetch — bot not responding. Check that ArbitrageBot is running and refresh.';
+      AB.$('s_msg').classList.remove('hidden');
+      return;
+    }
+    AB.state.settings = s;
+    this.fill(s);
+    try {
+      const r = await AB.api.get('/api/settings/risk');
+      this.fillRisk(r);
+      if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) {
+        this.applyPreset('professional');
+        if (AB.$('s_paper')) AB.$('s_paper').checked = true;
+        if (AB.$('s_auto')) AB.$('s_auto').checked = true;
+      }
+    } catch (_) {}
+    this._updateModeHint(s);
   },
 
   _updateModeHint(s) {
