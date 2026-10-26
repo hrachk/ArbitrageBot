@@ -15,11 +15,21 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
 
+// Published exe is often started from a different cwd (Explorer / shortcut).
+// Pin content + logs next to the exe so appsettings.json and logs/ resolve.
+var exeDir = AppContext.BaseDirectory;
+try { Directory.SetCurrentDirectory(exeDir); } catch { /* ignore */ }
+Directory.CreateDirectory(Path.Combine(exeDir, "logs"));
+
 try
 {
-    Log.Information("Starting ArbitrageBot Web (WS order books + SignalR realtime)...");
+    Log.Information("Starting ArbitrageBot Web from {Dir}", exeDir);
 
-    var builder = WebApplication.CreateBuilder(args);
+    var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+    {
+        Args = args,
+        ContentRootPath = exeDir
+    });
     // Always listen on 5050 if nothing else was set (VS profile or env).
     if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
         builder.WebHost.UseUrls("http://127.0.0.1:5050", "http://localhost:5050");
@@ -30,7 +40,7 @@ try
         .Enrich.FromLogContext()
         .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
         .WriteTo.File(
-            path: "logs/arbitrage-.log",
+            path: Path.Combine(exeDir, "logs", "arbitrage-.log"),
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 14));
 
@@ -604,6 +614,19 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
+    try
+    {
+        var crash = Path.Combine(AppContext.BaseDirectory, "startup-error.log");
+        File.WriteAllText(crash, DateTime.Now.ToString("s") + Environment.NewLine + ex + Environment.NewLine);
+        Console.WriteLine();
+        Console.WriteLine("START FAILED. Details written to:");
+        Console.WriteLine(crash);
+        Console.WriteLine(ex.GetType().Name + ": " + ex.Message);
+        Console.WriteLine();
+        Console.WriteLine("Press Enter to close...");
+        Console.ReadLine();
+    }
+    catch { /* ignore */ }
 }
 finally
 {
