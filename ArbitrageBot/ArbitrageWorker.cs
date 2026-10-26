@@ -361,7 +361,10 @@ public class ArbitrageWorker : BackgroundService
                     else
                     {
                         var err = liveRes.GetType().GetProperty("error")?.GetValue(liveRes)?.ToString();
-                        _logger.LogWarning("LIVE skip {Sym}: {Err}", o.Symbol, err);
+                        if (err != null && err.StartsWith("cooldown ", StringComparison.OrdinalIgnoreCase))
+                            _logger.LogDebug("LIVE skip {Sym}: {Err}", o.Symbol, err);
+                        else
+                            _logger.LogWarning("LIVE skip {Sym}: {Err}", o.Symbol, err);
                     }
                     continue;
                 }

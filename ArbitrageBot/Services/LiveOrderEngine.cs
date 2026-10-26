@@ -88,6 +88,8 @@ public sealed class LiveOrderEngine
             return new { ok = false, error = $"cooldown {req.LongExchange} {longCd.TotalSeconds:F0}s" };
         if (IsCoolingDown(req.ShortExchange, out var shortCd))
             return new { ok = false, error = $"cooldown {req.ShortExchange} {shortCd.TotalSeconds:F0}s" };
+        if (IsSymbolCooling(req.Symbol, out var symCd))
+            return new { ok = false, error = $"cooldown {req.Symbol} {symCd.TotalSeconds:F0}s" };
 
         // Both legs must be ready BEFORE any order (never open long without short client)
         var longClient = CreateClient(req.LongExchange);
@@ -102,62 +104,72 @@ public sealed class LiveOrderEngine
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
 
         var refPrice  = req.LongAsk ?? req.ShortBid ?? 0m;
-        var roundedQty = RoundBaseQty(req.BaseQty, refPrice);
+        var scanQty = RoundBaseQty(req.BaseQty, refPrice);
         // Use live-specific leverage (separate from paper leverage)
         var lev = req.Leverage > 0 ? req.Leverage
                 : (Opt.LivePaperLeverage > 0 ? Opt.LivePaperLeverage : 3m);
 
-        // Size from the real per-venue deposit (default $100), same notional cap as paper QuoteSize.
-        // margin = equity * usage, notional = margin * leverage, then hard cap LiveMaxNotionalUsd.
+        // Size from the real per-venue deposit. The scan qty is only a depth probe
+        // (often the top-of-book size, e.g. 0.378 QNT ≈ $15) and must not be the order.
         var opt = Opt;
         var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 100m;
         var usage  = opt.LiveMarginUsageFraction  > 0 ? opt.LiveMarginUsageFraction  : 0.25m;
         usage = Math.Clamp(usage, 0.15m, 0.50m);
-        var maxNotional = equity * lev * usage;
-        if (opt.LiveMaxNotionalUsd > 0 && maxNotional > opt.LiveMaxNotionalUsd)
-            maxNotional = opt.LiveMaxNotionalUsd;
-        if (req.NotionalUsd > 0 && req.NotionalUsd < maxNotional)
-            maxNotional = req.NotionalUsd;
+        var target = equity * lev * usage;
+        if (opt.LiveMaxNotionalUsd > 0 && target > opt.LiveMaxNotionalUsd)
+            target = opt.LiveMaxNotionalUsd;
         var absCap = equity * lev * 0.50m;
-        if (maxNotional > absCap) maxNotional = absCap;
-        // Do not inflate size above the deposit math. $20 is the smallest hedge that can clear taker fees.
-        if (maxNotional < 20m)
-            return new { ok = false, error = $"notional {maxNotional:F2}$ below $20 — set Live equity to the real deposit (100) and max notional ≥ 20" };
-
-        if (refPrice > 0)
+        if (target > absCap) target = absCap;
+        // A real scan ticket may shrink the order. A dust probe (< $20) must not.
+        if (req.NotionalUsd >= 20m && req.NotionalUsd < target)
+            target = req.NotionalUsd;
+        if (target < 20m)
         {
-            var maxBase = maxNotional / refPrice;
-            if (roundedQty > maxBase)
-                roundedQty = RoundBaseQty(maxBase, refPrice);
+            var why = $"live target {target:F2}$ below $20 — raise Live max notional / equity";
+            return SkipSymbol(req.Symbol, why, TimeSpan.FromMinutes(2));
         }
+
+        var roundedQty = refPrice > 0 ? RoundBaseQty(target / refPrice, refPrice) : scanQty;
         if (roundedQty <= 0)
-            return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty})" };
+            return new { ok = false, error = $"qty rounded to zero (raw={req.BaseQty} target={target:F2})" };
+
+        var okxLeg = IsOkx(req.LongExchange) || IsOkx(req.ShortExchange);
+        if (okxLeg)
+        {
+            await EnsureOkxLotsAsync(ct).ConfigureAwait(false);
+            var aligned = AlignOkxBase(req.Symbol, roundedQty, out var lotWhy);
+            if (aligned <= 0)
+                return SkipSymbol(req.Symbol, lotWhy ?? "OKX lot reject", RejectCooldown);
+            roundedQty = aligned;
+        }
+
+        var estNotional = refPrice > 0 ? roundedQty * refPrice : target;
+        if (estNotional < 20m)
+            return SkipSymbol(req.Symbol, $"notional {estNotional:F2}$ below $20 after lot step — not sent", RejectCooldown);
 
         // Do not open a hedge that is already red after both taker legs (open + close).
-        // The old path entered on a thin gross and closed at a loss once fees were subtracted.
         if (req.LongAsk is > 0 && req.ShortBid is > 0 && req.ShortBid > req.LongAsk)
         {
             var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
             var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
             var netOpen = grossOpen - feesOpen;
-            var minTp = LiveMinNetUsd(roundedQty * req.LongAsk.Value);
+            var minTp = LiveMinNetUsd(estNotional);
             if (netOpen < minTp)
             {
                 _logger.LogInformation(
                     "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2})",
                     req.Symbol, netOpen, minTp, grossOpen, feesOpen);
-                return new { ok = false, error = $"RT net {netOpen:F2}$ < min take-profit {minTp:F2}$ after fees — skip" };
+                return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min take-profit {minTp:F2}$ after fees — skip", TimeSpan.FromSeconds(45));
             }
         }
 
-        var estNotional = refPrice > 0 ? roundedQty * refPrice : maxNotional;
         var estMargin = lev > 0 ? estNotional / lev : estNotional;
         _logger.LogInformation(
-            "LIVE size {Sym} qty={Q} notional≈{N:F2}$ margin≈{M:F2}$ (equity={E}$ lev={L}x usage={U:P0})",
-            req.Symbol, roundedQty, estNotional, estMargin, equity, lev, usage);
+            "LIVE size {Sym} qty={Q} notional≈{N:F2}$ margin≈{M:F2}$ (equity={E}$ lev={L}x usage={U:P0} scanQty={Scan})",
+            req.Symbol, roundedQty, estNotional, estMargin, equity, lev, usage, scanQty);
 
-        var longQty = QtyForExchange(req.LongExchange, roundedQty);
-        var shortQty = QtyForExchange(req.ShortExchange, roundedQty);
+        var longQty = QtyForExchange(req.LongExchange, req.Symbol, roundedQty);
+        var shortQty = QtyForExchange(req.ShortExchange, req.Symbol, roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
 
         // 1) LONG — market, hedge mode: no reduceOnly / no timeInForce
@@ -178,12 +190,12 @@ public sealed class LiveOrderEngine
         var longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
         if (!longResult.Success)
         {
-            var err = FailMsg(longResult.Error?.Message, longResult.OriginalData, "long order failed");
+            var err = DescribeFail(longResult.Error, longResult.OriginalData, "long order failed");
             if (IsBalanceError(err))
                 MarkCooldown(req.LongExchange, err);
-            _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err} detail={D}",
-                req.LongExchange, req.Symbol, err, Trunc(longResult.OriginalData));
-            return new { ok = false, error = "LONG failed: " + err, leg = "long", detail = Trunc(longResult.OriginalData) };
+            _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}",
+                req.LongExchange, req.Symbol, err);
+            return SkipSymbol(req.Symbol, "LONG failed: " + err, RejectCooldown);
         }
 
         var longOrderId = longResult.Data?.Id ?? "?";
@@ -207,14 +219,14 @@ public sealed class LiveOrderEngine
         var shortResult = await shortClient.PlaceFuturesOrderAsync(req.ShortExchange, shortReq, ct).ConfigureAwait(false);
         if (!shortResult.Success)
         {
-            var err = FailMsg(shortResult.Error?.Message, shortResult.OriginalData, "short order failed");
+            var err = DescribeFail(shortResult.Error, shortResult.OriginalData, "short order failed");
             if (IsBalanceError(err))
                 MarkCooldown(req.ShortExchange, err);
-            _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long detail={D}",
-                req.ShortExchange, req.Symbol, err, Trunc(shortResult.OriginalData));
+            _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long",
+                req.ShortExchange, req.Symbol, err);
             await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
                 .ConfigureAwait(false);
-            return new { ok = false, error = "SHORT failed: " + err + " (long unwind attempted)", leg = "short", detail = Trunc(shortResult.OriginalData) };
+            return SkipSymbol(req.Symbol, "SHORT failed: " + err + " (long unwind attempted)", RejectCooldown);
         }
 
         var shortOrderId = shortResult.Data?.Id ?? "?";
@@ -226,7 +238,7 @@ public sealed class LiveOrderEngine
             LongExchange = req.LongExchange,
             ShortExchange = req.ShortExchange,
             BaseQty = roundedQty,
-            NotionalUsd = req.NotionalUsd,
+            NotionalUsd = estNotional,
             LongEntry = longAvg,
             ShortEntry = shortAvg,
             LongOrderId = longOrderId?.ToString(),
@@ -281,8 +293,10 @@ public sealed class LiveOrderEngine
 
         var baseAsset = pos.Symbol.EndsWith("USDT") ? pos.Symbol[..^4] : pos.Symbol;
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
-        var longQty = QtyForExchange(pos.LongExchange, pos.BaseQty);
-        var shortQty = QtyForExchange(pos.ShortExchange, pos.BaseQty);
+        if (IsOkx(pos.LongExchange) || IsOkx(pos.ShortExchange))
+            await EnsureOkxLotsAsync(ct).ConfigureAwait(false);
+        var longQty = QtyForExchange(pos.LongExchange, pos.Symbol, pos.BaseQty);
+        var shortQty = QtyForExchange(pos.ShortExchange, pos.Symbol, pos.BaseQty);
 
         var longClient = CreateClient(pos.LongExchange);
         var shortClient = CreateClient(pos.ShortExchange);
@@ -405,7 +419,7 @@ public sealed class LiveOrderEngine
             var result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
             if (!result.Success)
             {
-                _logger.LogError("LIVE reduce fail {Ex}: {Err}", exchange, result.Error?.Message);
+                _logger.LogError("LIVE reduce fail {Ex}: {Err}", exchange, DescribeFail(result.Error, result.OriginalData, "reduce failed"));
                 return false;
             }
             return true;
@@ -566,14 +580,187 @@ public sealed class LiveOrderEngine
     }
 
     /// <summary>
-    /// OKX linear swaps size is in contracts; most alts have ctVal=1 so contracts ≈ base.
+    /// OKX linear swaps are sized in contracts (sz = base / ctVal), stepped by lotSz.
+    /// QNT-USDT-SWAP is ctVal=1, lotSz=0.1 — 0.378 is rejected with an empty client error.
     /// Binance/Bybit/Bitget shared path accepts base asset quantity.
     /// </summary>
-    private static SharedQuantity QtyForExchange(string exchange, decimal baseQty)
+    private static SharedQuantity QtyForExchange(string exchange, string symbol, decimal baseQty)
     {
-        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+        if (IsOkx(exchange) && OkxLots.TryGetValue(NormSym(symbol), out var lot) && lot.CtVal > 0)
+            return SharedQuantity.Contracts(FloorStep(baseQty / lot.CtVal, lot.LotSz));
+        if (IsOkx(exchange))
             return SharedQuantity.Contracts(baseQty);
         return SharedQuantity.Base(baseQty);
+    }
+
+    private object SkipSymbol(string symbol, string why, TimeSpan forHowLong)
+    {
+        MarkSymbolCooldown(symbol, why, forHowLong);
+        _logger.LogInformation("LIVE skip {Sym}: {Why}", symbol, why);
+        return new { ok = false, error = "cooldown " + why };
+    }
+
+    private static bool IsOkx(string exchange)
+        => exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormSym(string symbol)
+        => symbol.Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal).ToUpperInvariant();
+
+    private static decimal AlignOkxBase(string symbol, decimal baseQty, out string? why)
+    {
+        why = null;
+        if (!OkxLots.TryGetValue(NormSym(symbol), out var lot))
+        {
+            why = "OKX contract spec not loaded for " + symbol + " — order not sent";
+            return 0;
+        }
+        if (lot.CtVal <= 0 || lot.LotSz <= 0)
+        {
+            why = "OKX contract spec invalid for " + symbol;
+            return 0;
+        }
+        var contracts = FloorStep(baseQty / lot.CtVal, lot.LotSz);
+        if (contracts < lot.MinSz)
+        {
+            why = $"OKX {symbol} {contracts} contracts < min {lot.MinSz} (ctVal={lot.CtVal} lot={lot.LotSz})";
+            return 0;
+        }
+        return contracts * lot.CtVal;
+    }
+
+    private static decimal FloorStep(decimal value, decimal step)
+    {
+        if (value <= 0 || step <= 0) return 0;
+        var steps = Math.Floor(value / step);
+        var v = steps * step;
+        var scale = 0;
+        var s = step;
+        while (s < 1m && scale < 8)
+        {
+            s *= 10m;
+            scale++;
+        }
+        return decimal.Round(v, scale, MidpointRounding.ToZero);
+    }
+
+    private async Task EnsureOkxLotsAsync(CancellationToken ct)
+    {
+        if (OkxLots.Count > 0 && DateTime.UtcNow - _okxLotsAt < TimeSpan.FromHours(6))
+            return;
+        await OkxLotLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (OkxLots.Count > 0 && DateTime.UtcNow - _okxLotsAt < TimeSpan.FromHours(6))
+                return;
+            string? body = null;
+            foreach (var url in new[]
+            {
+                "https://www.okx.com/api/v5/public/instruments?instType=SWAP",
+                "https://aws.okx.com/api/v5/public/instruments?instType=SWAP"
+            })
+            {
+                try
+                {
+                    using var resp = await OkxHttp.GetAsync(url, ct).ConfigureAwait(false);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        _logger.LogWarning("OKX instruments HTTP {Code} {Url}", (int)resp.StatusCode, url);
+                        continue;
+                    }
+                    body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "OKX instruments fetch failed {Url}", url);
+                }
+            }
+            if (string.IsNullOrEmpty(body))
+                return;
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return;
+            var n = 0;
+            foreach (var el in data.EnumerateArray())
+            {
+                var id = el.TryGetProperty("instId", out var idEl) ? idEl.GetString() : null;
+                if (string.IsNullOrEmpty(id) || !id.EndsWith("-USDT-SWAP", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var ctVal = ReadDec(el, "ctVal", 0m);
+                var lotSz = ReadDec(el, "lotSz", 0m);
+                var minSz = ReadDec(el, "minSz", lotSz);
+                if (ctVal <= 0 || lotSz <= 0) continue;
+                if (minSz <= 0) minSz = lotSz;
+                var baseCcy = el.TryGetProperty("ctValCcy", out var ccyEl) ? ccyEl.GetString() : null;
+                if (string.IsNullOrWhiteSpace(baseCcy))
+                    baseCcy = id[..^"-USDT-SWAP".Length];
+                OkxLots[NormSym(baseCcy + "USDT")] = new OkxLot(ctVal, lotSz, minSz);
+                n++;
+            }
+            if (n > 0)
+            {
+                _okxLotsAt = DateTime.UtcNow;
+                _logger.LogInformation("OKX swap specs loaded: {N}", n);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OKX instruments fetch failed");
+        }
+        finally
+        {
+            OkxLotLock.Release();
+        }
+    }
+
+    private static decimal ReadDec(JsonElement el, string name, decimal fallback)
+    {
+        if (!el.TryGetProperty(name, out var p)) return fallback;
+        if (p.ValueKind == JsonValueKind.Number && p.TryGetDecimal(out var n)) return n;
+        if (p.ValueKind == JsonValueKind.String
+            && decimal.TryParse(p.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var s))
+            return s;
+        return fallback;
+    }
+
+    private static string DescribeFail(CryptoExchange.Net.Objects.Error? error, string? originalData, string fallback)
+    {
+        string? msg = null;
+        if (error != null)
+        {
+            msg = error.ToString();
+            if (!string.IsNullOrWhiteSpace(error.ErrorCode) && (msg == null || !msg.Contains(error.ErrorCode, StringComparison.Ordinal)))
+                msg = (msg ?? "") + " code=" + error.ErrorCode;
+        }
+        if (!string.IsNullOrWhiteSpace(originalData))
+        {
+            var t = originalData.Trim();
+            if (t.Length > 240) t = t[..240] + "…";
+            msg = string.IsNullOrWhiteSpace(msg) ? t : msg + " | " + t;
+        }
+        return string.IsNullOrWhiteSpace(msg) ? fallback : msg;
+    }
+
+    private bool IsSymbolCooling(string symbol, out TimeSpan remaining)
+    {
+        remaining = TimeSpan.Zero;
+        if (!_symbolCooldownUntil.TryGetValue(symbol, out var until))
+            return false;
+        var left = until - DateTime.UtcNow;
+        if (left <= TimeSpan.Zero)
+        {
+            _symbolCooldownUntil.TryRemove(symbol, out _);
+            return false;
+        }
+        remaining = left;
+        return true;
+    }
+
+    private void MarkSymbolCooldown(string symbol, string reason, TimeSpan forHowLong)
+    {
+        _symbolCooldownUntil[symbol] = DateTime.UtcNow.Add(forHowLong);
+        _logger.LogWarning("LIVE symbol cooldown {Sym} for {Sec:F0}s — {Reason}",
+            symbol, forHowLong.TotalSeconds, Trunc(reason, 160));
     }
 
     private bool IsCoolingDown(string exchange, out TimeSpan remaining)
