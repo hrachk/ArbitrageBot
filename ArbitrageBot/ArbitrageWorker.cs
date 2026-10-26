@@ -691,8 +691,12 @@ public class ArbitrageWorker : BackgroundService
         var snapRt = _runtime.Snapshot;
         var minV = snapRt.DynamicMinQuoteVolumeUsd > 0 ? snapRt.DynamicMinQuoteVolumeUsd : 8_000_000m;
         var maxV = snapRt.DynamicMaxQuoteVolumeUsd > 0 ? snapRt.DynamicMaxQuoteVolumeUsd : 500_000_000m;
+        var liveNow = _liveGuard.CanPlaceOrders;
+        var head = liveNow
+            ? $"LIVE: real orders. LONG cheap / SHORT rich. Min open {snapRt.MinProfitPercent:0.##}%, require RT edge, full fill, lev {snapRt.FuturesPaperLeverage:0.#}x, max notional {snapRt.LiveMaxNotionalUsd:0}."
+            : $"REALISTIC PAPER (= live gates): LONG cheap / SHORT rich. Min open {snapRt.MinProfitPercent:0.##}%, require RT edge, full fill, lev {snapRt.FuturesPaperLeverage:0.#}x, size {snapRt.QuoteSize:0}. Sparse signals expected. Stats valid for live decision.";
         _state.StrategyNote = snapRt.IsFuturesCross
-            ? $"REALISTIC PAPER (= live gates): LONG cheap / SHORT rich. Min open {snapRt.MinProfitPercent:0.##}%, require RT edge, full fill, lev {snapRt.FuturesPaperLeverage:0.#}x, size {snapRt.QuoteSize:0}. Sparse signals expected. Stats valid for live decision.\nhttp-tickers+depth — band {minV/1_000_000m:0}M–{maxV/1_000_000m:0}M; ≥2 venues; depth≥trade size; top-{topN}"
+            ? head + $"\nhttp-tickers+depth — band {minV/1_000_000m:0}M–{maxV/1_000_000m:0}M; ≥2 venues; depth≥trade size; top-{topN}"
             : _state.StrategyNote;
         try
         {

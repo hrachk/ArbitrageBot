@@ -21,16 +21,52 @@ AB.pages.dashboard = {
         if (Number.isFinite(v) && (best == null || v > best)) best = v;
       }
       html('d_best', best == null ? '—' : AB.fmtPct(best));
-      html('d_pnl', AB.fmtUsd(fp.realizedPnlUsd != null ? fp.realizedPnlUsd : (fp.realizedPnl != null ? fp.realizedPnl : 0)));
-      // Open count: paper + live ledger + real exchange legs
       const livePos = data.livePositions || {};
+      const modeStr = String(data.mode || data.Mode || '').toUpperCase();
+      const ls = data.liveStatus || data.LiveStatus || {};
+      const phase = String(ls.phase || ls.Phase || '').toUpperCase();
+      const canPlace = ls.canPlaceOrders === true || ls.CanPlaceOrders === true;
+      const isLive = canPlace
+        || (phase.indexOf('LIVE') >= 0 && phase.indexOf('PAPER') < 0)
+        || (modeStr.indexOf('LIVE') >= 0 && modeStr.indexOf('PAPER') < 0);
+      const closedLive = Array.isArray(livePos.closed) ? livePos.closed
+        : (Array.isArray(livePos.Closed) ? livePos.Closed : []);
+      const pnlOf = function (t) {
+        const v = t.realizedPnlUsd != null ? t.realizedPnlUsd : t.RealizedPnlUsd;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      let liveRealized = Number(livePos.realizedPnlUsd);
+      if (!Number.isFinite(liveRealized)) {
+        liveRealized = closedLive.reduce(function (s, t) {
+          const n = pnlOf(t); return n == null ? s : s + n;
+        }, 0);
+      }
+      let liveDay = 0;
+      closedLive.forEach(function (t) {
+        const when = String(t.closedAt || t.ClosedAt || '');
+        if (when.slice(0, 10) !== todayUtc) return;
+        const n = pnlOf(t);
+        if (n != null) liveDay += n;
+      });
+      const paperRealized = fp.realizedPnlUsd != null ? fp.realizedPnlUsd : (fp.realizedPnl != null ? fp.realizedPnl : 0);
+      html('d_pnl', AB.fmtUsd(isLive ? liveRealized : paperRealized));
+      // Open count: live ledger when the bot is placing orders, otherwise paper + ledger + legs
       const paperN = (fp.positions && fp.positions.length) || 0;
-      const ledgerN = livePos.openLedgerCount != null
-        ? livePos.openLedgerCount
-        : ((livePos.open && livePos.open.length) || (livePos.ledger && livePos.ledger.length) || 0);
+      const ledgerN = livePos.openCount != null ? livePos.openCount
+        : (livePos.openLedgerCount != null ? livePos.openLedgerCount
+        : ((livePos.open && livePos.open.length) || (livePos.ledger && livePos.ledger.length) || 0));
       const exLegs = Array.isArray(livePos.exchangeLegs) ? livePos.exchangeLegs : [];
       const exN = livePos.exchangeLegCount != null ? livePos.exchangeLegCount : exLegs.length;
-      text('d_open', paperN + 'p / ' + ledgerN + 'L / ' + exN + 'ex');
+      text('d_open', isLive ? (ledgerN + ' open · ' + exN + ' legs') : (paperN + 'p / ' + ledgerN + 'L / ' + exN + 'ex'));
+      const lbl = function (id, v) { const el = $(id); if (el) el.textContent = v; };
+      lbl('d_lbl_pnl', isLive ? 'Live realized' : 'Realized');
+      lbl('d_lbl_day', isLive ? 'Live UTC day' : 'Day PnL');
+      lbl('d_lbl_open', isLive ? 'Live open' : 'Open p/L/ex');
+      lbl('d_tradesTitle', isLive ? 'Live trades' : 'Recent trades');
+      lbl('d_qualityTitle', isLive ? 'Live quality' : 'Paper quality');
+      lbl('d_qualitySub', isLive ? 'live ledger' : 'ledger · skips');
 
       // Cross-exchange arb board (ranked like terminal UIs)
       const board = document.getElementById('d_arbBoard');
@@ -84,7 +120,7 @@ AB.pages.dashboard = {
       }
 
 
-      html('d_day', AB.fmtUsd(fp.dailyRealizedPnlUsd != null ? fp.dailyRealizedPnlUsd : 0));
+      html('d_day', AB.fmtUsd(isLive ? liveDay : (fp.dailyRealizedPnlUsd != null ? fp.dailyRealizedPnlUsd : 0)));
 
       const banner = $('d_banner');
       if (banner) {
@@ -115,7 +151,9 @@ AB.pages.dashboard = {
           (data.lastError ? ' · <span class="neg">' + data.lastError + '</span>' : '');
       }
 
-      text('d_strategy', data.strategyNote || data.strategyMode || 'FuturesCross');
+      let note = data.strategyNote || data.strategyMode || 'FuturesCross';
+      if (isLive) note = String(note).replace(/REALISTIC PAPER \(= live gates\)/i, 'LIVE — real orders');
+      text('d_strategy', note);
       text('d_discovery', [data.discoverySource, data.discoveryMessage].filter(Boolean).join(' — ') || '—');
 
       const pairsEl = $('d_pairs');
@@ -187,17 +225,27 @@ AB.pages.dashboard = {
 
       const tradeBody = $('d_tradeBody');
       if (tradeBody) {
-        const trades = fp.trades || [];
+        const trades = isLive ? closedLive : (fp.trades || []);
         if (trades.length) {
-          tradeBody.innerHTML = trades.slice(0, 12).map(function (t) {
-            const tme = t.openedAt || t.executedAt ? new Date(t.openedAt || t.executedAt).toLocaleTimeString() : '—';
+          const rows = isLive ? trades.slice() : trades;
+          if (isLive) rows.sort(function (a, b) {
+            const ta = Date.parse(a.closedAt || a.ClosedAt || a.openedAt || a.OpenedAt || '') || 0;
+            const tb = Date.parse(b.closedAt || b.ClosedAt || b.openedAt || b.OpenedAt || '') || 0;
+            return tb - ta;
+          });
+          tradeBody.innerHTML = rows.slice(0, 12).map(function (t) {
+            const stamp = t.closedAt || t.ClosedAt || t.openedAt || t.OpenedAt || t.executedAt;
+            const tme = stamp ? new Date(stamp).toLocaleTimeString() : '—';
+            const pnl = isLive ? pnlOf(t) : (t.realizedPnlUsd != null ? t.realizedPnlUsd : t.netPnlQuote);
+            const st = t.status || t.Status || '—';
             return '<tr><td class="muted mono">' + tme + '</td>' +
-              '<td class="mono" style="color:var(--blue)">' + t.symbol + '</td>' +
-              '<td>' + AB.fmtUsd(t.realizedPnlUsd != null ? t.realizedPnlUsd : t.netPnlQuote) + '</td>' +
-              '<td class="muted">' + (t.status || '—') + '</td></tr>';
+              '<td class="mono" style="color:var(--blue)">' + (t.symbol || t.Symbol || '') + '</td>' +
+              '<td>' + (pnl == null ? '—' : AB.fmtUsd(pnl)) + '</td>' +
+              '<td class="muted">' + st + '</td></tr>';
           }).join('');
         } else {
-          tradeBody.innerHTML = '<tr><td colspan="4" class="empty">No paper trades yet</td></tr>';
+          tradeBody.innerHTML = '<tr><td colspan="4" class="empty">' +
+            (isLive ? 'No live trades yet' : 'No paper trades yet') + '</td></tr>';
         }
       }
 
@@ -233,7 +281,7 @@ AB.pages.dashboard = {
             entries.push({ key: key, html: AB.posCardHtml(p, books), fields: AB.posFields(p, books) });
           });
         }
-        if (positions.length) {
+        if (positions.length && !isLive) {
           entries.push({ key: 'sec-paper', html: '<div class="section-label" data-k="sec-paper" style="margin:12px 0 8px">Paper hedges</div>' });
           positions.forEach(function (p) {
             const key = AB.positionKey(p);
@@ -241,7 +289,8 @@ AB.pages.dashboard = {
           });
         }
         if (!entries.length) {
-          entries.push({ key: 'empty', html: '<div class="empty" data-k="empty">No open hedges (paper / ledger / exchange)</div>' });
+          entries.push({ key: 'empty', html: '<div class="empty" data-k="empty">' +
+            (isLive ? 'No open live hedges' : 'No open hedges (paper / ledger / exchange)') + '</div>' });
         }
         AB.mountKeyed(posEl, entries);
       }
@@ -340,7 +389,26 @@ AB.pages.dashboard = {
       const sel = document.getElementById('d_skips');
       const pa = data.paperAnalytics || data.PaperAnalytics || {};
       const q = pa.quality || {};
-      if (qel) {
+      if (qel && isLive) {
+        const pnls = closedLive.map(pnlOf).filter(function (n) { return n != null; });
+        const wins = pnls.filter(function (n) { return n > 0; }).length;
+        const sum = pnls.reduce(function (s, n) { return s + n; }, 0);
+        const avg = pnls.length ? sum / pnls.length : 0;
+        const wr = pnls.length ? (wins / pnls.length * 100).toFixed(1) : '—';
+        let hold = 0, holdN = 0;
+        closedLive.forEach(function (t) {
+          const a = Date.parse(t.openedAt || t.OpenedAt || '');
+          const b = Date.parse(t.closedAt || t.ClosedAt || '');
+          if (Number.isFinite(a) && Number.isFinite(b) && b >= a) { hold += (b - a) / 1000; holdN++; }
+        });
+        qel.innerHTML =
+          'Win rate <b>' + wr + '%</b> · ' +
+          'closed ' + closedLive.length + ' · ' +
+          'avg PnL <b>' + AB.fmtUsd(avg) + '</b> · ' +
+          'avg hold ' + (holdN ? Math.round(hold / holdN) + 's' : '—') + '<br>' +
+          'open ' + ledgerN + ' · exchange legs ' + exN +
+          ' · realized ' + AB.fmtUsd(liveRealized);
+      } else if (qel) {
         qel.innerHTML =
           'Win rate <b>' + (q.winRate != null ? q.winRate : '—') + '%</b> · ' +
           'closed ' + (q.closed != null ? q.closed : (pa.closes != null ? pa.closes : '—')) + ' · ' +
@@ -351,7 +419,9 @@ AB.pages.dashboard = {
           ' · skips ' + (pa.skips != null ? pa.skips : '—') +
           ' · best RT seen ' + (pa.bestRtPctSeen != null ? AB.fmt(pa.bestRtPctSeen, 3) + '%' : '—');
       }
-      if (sel) {
+      if (sel && isLive) {
+        sel.innerHTML = '<span class="muted">Paper skip reasons hidden in Live. This block is the live trade ledger.</span>';
+      } else if (sel) {
         const reasons = pa.skipReasons || [];
         if (!reasons.length) sel.innerHTML = '<span class="muted">No skip reasons yet</span>';
         else {

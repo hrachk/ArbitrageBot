@@ -121,8 +121,18 @@ AB.onSnapshot = (data) => {
     if (AB.$('connText')) AB.$('connText').textContent = 'Live';
     if (AB.$('topHint')) {
       const n = (data.opportunities || []).length;
-      const open = (data.futuresPaper && data.futuresPaper.positions) ? data.futuresPaper.positions.length : 0;
-      AB.$('topHint').textContent = n + ' signals · ' + open + ' open · ' + (data.strategyMode || '');
+      const fp = data.futuresPaper || {};
+      const lp = data.livePositions || {};
+      const mode = String(data.mode || '').toUpperCase();
+      const ls = data.liveStatus || {};
+      const phase = String(ls.phase || '').toUpperCase();
+      const live = ls.canPlaceOrders === true
+        || (phase.indexOf('LIVE') >= 0 && phase.indexOf('PAPER') < 0)
+        || (mode.indexOf('LIVE') >= 0 && mode.indexOf('PAPER') < 0);
+      const open = live
+        ? (lp.openCount != null ? lp.openCount : ((lp.open && lp.open.length) || (lp.ledger && lp.ledger.length) || 0))
+        : ((fp.positions && fp.positions.length) || 0);
+      AB.$('topHint').textContent = n + ' signals · ' + open + ' open · ' + (live ? 'LIVE' : (data.strategyMode || ''));
     }
   } catch (e) {
     console.warn('topbar update', e);

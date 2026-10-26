@@ -57,9 +57,9 @@
           <div class="kpi"><div class="kpi-l">Scans</div><div class="kpi-v" id="d_scans">0</div></div>
           <div class="kpi"><div class="kpi-l">Signals</div><div class="kpi-v pos" id="d_opps">0</div></div>
           <div class="kpi"><div class="kpi-l">Best net</div><div class="kpi-v" id="d_best">—</div></div>
-          <div class="kpi"><div class="kpi-l">Realized</div><div class="kpi-v" id="d_pnl">—</div></div>
-          <div class="kpi"><div class="kpi-l">Open p/L/ex</div><div class="kpi-v" id="d_open" style="font-size:13px">0p / 0L / 0ex</div></div>
-          <div class="kpi"><div class="kpi-l">Day PnL</div><div class="kpi-v" id="d_day">—</div></div>
+          <div class="kpi"><div class="kpi-l" id="d_lbl_pnl">Realized</div><div class="kpi-v" id="d_pnl">—</div></div>
+          <div class="kpi"><div class="kpi-l" id="d_lbl_open">Open p/L/ex</div><div class="kpi-v" id="d_open" style="font-size:13px">0p / 0L / 0ex</div></div>
+          <div class="kpi"><div class="kpi-l" id="d_lbl_day">Day PnL</div><div class="kpi-v" id="d_day">—</div></div>
         </div>
 
         <div class="panel arb-board">
@@ -93,7 +93,7 @@
             </div>
           </div>
           <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Recent trades</h2></div>
+            <div class="panel-hd"><h2 class="panel-title" id="d_tradesTitle">Recent trades</h2></div>
             <div class="scroll-trades">
               <table class="data">
                 <thead><tr><th>Time</th><th>Symbol</th><th>PnL</th><th>Status</th></tr></thead>
@@ -104,7 +104,7 @@
         </div>
         <div class="g2" style="margin-top:12px">
           <div class="panel">
-            <div class="panel-hd"><h2 class="panel-title">Paper quality</h2><span class="panel-sub">ledger · skips</span></div>
+            <div class="panel-hd"><h2 class="panel-title" id="d_qualityTitle">Paper quality</h2><span class="panel-sub" id="d_qualitySub">ledger · skips</span></div>
             <div id="d_quality" class="muted" style="font-size:13px">—</div>
             <div id="d_skips" style="margin-top:10px;font-size:12px"></div>
           </div>
