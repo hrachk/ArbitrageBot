@@ -472,55 +472,36 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (qty <= 0) continue;
 
                     pairsCompared++;
-                    var longFee = _options.EstimatedTakerFees.GetValueOrDefault(longEx, 0.05m);
-                    var shortFee = _options.EstimatedTakerFees.GetValueOrDefault(shortEx, 0.05m);
+                    var snap = _runtime.Snapshot;
+                    var longFee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, longEx);
+                    var shortFee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, shortEx);
                     var gross = (shortVwap - longVwap) / longVwap * 100m;
                     var netOpen = gross - longFee - shortFee;
                     if (bestGross is null || gross > bestGross) bestGross = gross;
                     if (bestNet is null || netOpen > bestNet) bestNet = netOpen;
-                    // Round-trip: open long+short + close long+short (4 taker touches)
-                    var netRt = gross - 2m * (longFee + shortFee);
+                    var feeRt = ArbEconomics.RoundTripFeePercent(longFee, shortFee);
+                    var netRt = gross - feeRt;
 
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
-                    // Funding: positive rate => longs pay shorts. Hedge funding PnL % ≈ (FR_short - FR_long) * periods * 100
-                    var periods = _runtime.Snapshot.FuturesFundingPeriods > 0 ? _runtime.Snapshot.FuturesFundingPeriods : 1;
+                    var periods = snap.FuturesFundingPeriods > 0 ? snap.FuturesFundingPeriods : 1;
                     decimal fundPct = 0;
-                    if (_options.FuturesIncludeFunding && frLong is not null && frShort is not null)
+                    if (snap.FuturesIncludeFunding && frLong is not null && frShort is not null)
                         fundPct = (frShort.Value - frLong.Value) * periods * 100m;
 
+                    // Display only. Positive funding must not turn a losing price hedge into a buy.
                     var netAfterFund = netRt + fundPct;
-                    var ro = _runtime.Snapshot;
-                    var thresholdMetric = ro.FuturesRequireRoundTripEdge
-                        ? (ro.FuturesIncludeFunding ? netAfterFund : netRt)
-                        : netOpen;
+                    var pricePnl = ArbEconomics.ExpectedConvergeUsd(longVwap, shortVwap, qty, longFee, shortFee);
 
-                    var estPnl = (shortVwap - longVwap) * qty
-                        - longVwap * qty * (longFee / 100m) * 2m
-                        - shortVwap * qty * (shortFee / 100m) * 2m
-                        + notional * fundPct / 100m;
-
-                    // Rank ALL positive-gross routes for UI + bot (same list). Executable = passed gates.
                     if (gross <= 0) continue;
 
-                    var snap = _runtime.Snapshot;
-                    // QUALITY: always score on full round-trip (open+close fees).
-                    // Net-open-only entries were the "kopeck then give back" loss factory.
-                    var scalp = snap.SpatialScalpMode;
-                    if (snap.FuturesRequireRoundTripEdge)
-                        thresholdMetric = snap.FuturesIncludeFunding ? netAfterFund : netRt;
-                    else if (scalp)
-                        // Still require RT >= 0 so close fees are not ignored
-                        thresholdMetric = Math.Min(netOpen, netRt);
-                    else
-                        thresholdMetric = netOpen;
-
-                    var minEdge = snap.MinProfitPercent
-                                  + (snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0m);
-                    var minGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : 0.25m;
-                    // Hard floor: never EXEC if RT cannot cover close path
-                    if (netRt < minEdge * 0.5m)
-                        thresholdMetric = Math.Min(thresholdMetric, netRt);
+                    var buffer = snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0.04m;
+                    var minEdge = snap.MinProfitPercent + buffer;
+                    var feeFloor = feeRt + buffer;
+                    var minGross = Math.Max(snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeFloor, feeFloor);
+                    var minTp = snap.MinTakeProfitUsd > 0 ? snap.MinTakeProfitUsd : 0.50m;
+                    // Next funding interval would cost more than the price edge can carry.
+                    var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);
                     var edgeKey = $"{symbol}|{longEx}|{shortEx}";
 
                     var spreadingOk = true;
@@ -545,16 +526,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
                     var fillOk = !needFill || filled;
 
-                    // Executable only when gates pass (UI still shows ranked near-misses)
+                    // Price round-trip only. Funding is not allowed to buy the signal.
                     var executable = gross >= minGross
-                                     && thresholdMetric >= minEdge
+                                     && netRt >= minEdge
+                                     && pricePnl >= minTp
+                                     && fundingOk
                                      && spreadingOk
                                      && persistOk
                                      && fillOk;
 
-                    if (!executable && (gross < minGross * 0.5m || thresholdMetric < 0))
+                    if (!executable && (gross < minGross * 0.5m || netRt < 0))
                     {
-                        // too far from tradeable — keep ranking noise low
                         if (gross < 0.04m) continue;
                     }
 
@@ -575,7 +557,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         NetSpreadPercent = netOpen,
                         NetRoundTripPercent = netRt,
                         NetAfterFundingPercent = netAfterFund,
-                        EstNetPnlUsd = estPnl,
+                        EstNetPnlUsd = pricePnl,
                         LongFeePercent = longFee,
                         ShortFeePercent = shortFee,
                         SlippagePercent = buyFill.SlippagePercent + sellFill.SlippagePercent,
@@ -604,7 +586,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         // One ranked list for dashboard + execution (top by open-edge net)
         return list
             .OrderByDescending(x => x.IsExecutable)
-            .ThenByDescending(x => x.NetSpreadPercent)
+            .ThenByDescending(x => x.EstNetPnlUsd)
             .Take(20)
             .ToList();
     }

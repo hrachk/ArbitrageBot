@@ -145,9 +145,12 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Cooldown close {cooldown}ms");
 
             // QUALITY: reject if round-trip edge cannot cover close fees
-            var minEdge = R.MinProfitPercent + (R.OpenEdgeBufferPercent > 0 ? R.OpenEdgeBufferPercent : 0m);
+            var minEdge = R.MinProfitPercent + (R.OpenEdgeBufferPercent > 0 ? R.OpenEdgeBufferPercent : 0.04m);
             if (opp.NetRoundTripPercent < minEdge)
                 return Fail(opp, $"RT {opp.NetRoundTripPercent:F3}% < min {minEdge:F3}%");
+            var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.50m;
+            if (opp.EstNetPnlUsd < minTp)
+                return Fail(opp, $"edge ${opp.EstNetPnlUsd:F2} < ${minTp:F2} after 4 taker fees");
 
             if (R.PaperRequireFullFill && !opp.FullyFilled)
                 return Fail(opp, "Require full fill");
@@ -452,52 +455,35 @@ public class FuturesPaperService : IFuturesPaperService
                 pos.UnrealizedPnlUsd = pnl;
                 pos.CurrentWidthPercent = currentWidth;
 
-                var stop = R.FuturesStopLossUsd;
-                var stopHit = stop < 0 && pnl <= stop;
-
-                // ── PROFESSIONAL EXIT (spatial arb) ─────────────────────────
-                // NEVER close on a pure timer into red — that is forced -EV.
-                // Exit only when: (1) stop-loss, (2) take-profit / width converged in profit.
-                // Optional soft timer: ONLY if PnL >= scaled min TP (harvest green, not bleed).
-                // Hard max-hold: DISABLED unless FuturesHardMaxHoldMinutes > 0 explicitly.
+                var stopLevel = ArbEconomics.EffectiveStopUsd(R.FuturesStopLossUsd, openFees + closeFees);
+                var stopHit = pnl <= stopLevel;
 
                 var threshold = closeWhenNetBelowPercent;
-                var shrunkALot = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.35m;
+                var shrunk = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.55m;
                 var belowAbs = currentWidth <= threshold;
-                var widthConverged = belowAbs || shrunkALot;
 
                 var notional = pos.LongEntry * pos.BaseQty;
-                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.30m;
-                // Need at least ~0.15% of notional after fees to cover noise
+                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.50m;
                 var minTpScaled = Math.Max(minTp, notional * 0.0015m);
-                var takeProfit = pnl >= minTpScaled;
-                var convergeProfit = widthConverged && pnl >= minTpScaled * 0.85m;
-                var earlyTp = takeProfit && currentWidth <= pos.EntryWidthPercent * 0.55m;
+                // Bank only when the flatten price is green AND the cross has actually narrowed.
+                var takeProfit = pnl >= minTpScaled && (belowAbs || shrunk);
+                // Spread is gone and the trade is still red: the edge was smaller than the fees. Release margin.
+                var failedConverge = belowAbs && pnl < 0m;
 
                 var timedOut = false;
                 if (R.FuturesMaxHoldSeconds > 0)
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds >= R.FuturesMaxHoldSeconds;
                 else if (R.FuturesMaxHoldMinutes > 0)
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesMaxHoldMinutes;
-
-                // Soft clock: only exit if already at real TP — never "timeout at 0"
                 var timeoutHarvest = timedOut && pnl >= minTpScaled;
 
-                // Hard clock: off by default (0). If set, still require not worse than -tiny fee dust
-                // unless stop already hit. We do NOT force red exits.
-                var hardTimedOut = R.FuturesHardMaxHoldMinutes > 0
-                    && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesHardMaxHoldMinutes;
-                // Even hard hold only flattens if flat-or-green OR stop — never forced red dump
-                var hardExit = hardTimedOut && pnl >= 0m;
-
-                if (!stopHit && !convergeProfit && !earlyTp && !timeoutHarvest && !hardExit)
+                if (!stopHit && !takeProfit && !failedConverge && !timeoutHarvest)
                     continue;
 
                 var reason = stopHit ? "stop-loss"
-                    : earlyTp || (takeProfit && widthConverged) ? "take-profit"
-                    : convergeProfit ? "converge"
-                    : timeoutHarvest || hardExit ? "timeout-harvest"
-                    : "converge";
+                    : takeProfit ? "take-profit"
+                    : failedConverge ? "failed-converge"
+                    : "timeout-harvest";
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd
                     : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
@@ -535,8 +521,7 @@ public class FuturesPaperService : IFuturesPaperService
                         {
                             "stop-loss" => "Closed(stop)",
                             "take-profit" => "Closed(tp)",
-                            "timeout-hard" => "Closed(timeout-hard)",
-                            "timeout" => "Closed(timeout)",
+                            "failed-converge" => "Closed(failed)",
                             "timeout-harvest" => "Closed(timeout-harvest)",
                             _ => "Closed(converge)"
                         },

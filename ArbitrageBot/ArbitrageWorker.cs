@@ -334,7 +334,7 @@ public class ArbitrageWorker : BackgroundService
         {
             var openedThisCycle = 0;
             var maxPerCycle = Math.Max(1, snap.FuturesMaxOpenPositions);
-            foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.NetSpreadPercent))
+            foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.EstNetPnlUsd))
             {
                 if (openedThisCycle >= maxPerCycle) break;
 

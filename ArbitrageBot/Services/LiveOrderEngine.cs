@@ -152,23 +152,21 @@ public sealed class LiveOrderEngine
         if (estNotional < 20m)
             return SkipSymbol(req.Symbol, $"notional {estNotional:F2}$ below $20 after lot step — not sent", RejectCooldown);
 
-        // Do not open a hedge that is already red after both taker legs (open + close).
-        // Use the same min edge % as the scanner so an executable signal is not rejected by a different floor.
-        if (req.LongAsk is > 0 && req.ShortBid is > 0 && req.ShortBid > req.LongAsk)
+        // Spread must still be there at send time. A vanished cross is not a hedge, it is two market bets.
+        if (req.LongAsk is not > 0 || req.ShortBid is not > 0 || req.ShortBid <= req.LongAsk)
+            return SkipSymbol(req.Symbol, "spread gone before send", TimeSpan.FromSeconds(20));
+
+        var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
+        var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
+        var netOpen = grossOpen - feesOpen;
+        var minEdgePct = opt.MinProfitPercent + (opt.OpenEdgeBufferPercent > 0 ? opt.OpenEdgeBufferPercent : 0.04m);
+        var minTp = Math.Max(estNotional * minEdgePct / 100m, LiveMinNetUsd(estNotional));
+        if (netOpen < minTp)
         {
-            var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
-            var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
-            var netOpen = grossOpen - feesOpen;
-            var minEdgePct = opt.MinProfitPercent + (opt.OpenEdgeBufferPercent > 0 ? opt.OpenEdgeBufferPercent : 0m);
-            var minNetUsd = estNotional * minEdgePct / 100m;
-            var minTp = Math.Max(minNetUsd, LiveMinNetUsd(estNotional) * 0.5m); // floor at half the close TP so we don't open dust
-            if (netOpen < minTp)
-            {
-                _logger.LogInformation(
-                    "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2})",
-                    req.Symbol, netOpen, minTp, grossOpen, feesOpen);
-                return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min take-profit {minTp:F2}$ after fees — skip", TimeSpan.FromSeconds(45));
-            }
+            _logger.LogInformation(
+                "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2})",
+                req.Symbol, netOpen, minTp, grossOpen, feesOpen);
+            return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min {minTp:F2}$ after 4 taker fees", TimeSpan.FromSeconds(45));
         }
 
         var estMargin = lev > 0 ? estNotional / lev : estNotional;
@@ -376,16 +374,16 @@ public sealed class LiveOrderEngine
             var net = gross - fees;
             var notional = pos.LongEntry > 0 ? pos.LongEntry * pos.BaseQty : pos.NotionalUsd;
             var minTp = LiveMinNetUsd(notional);
-            // A normal exit must be green AFTER taker fees. Only the stop may book a loss.
-            var stop = stopLossUsd < 0 && net <= stopLossUsd;
-            var converged = width <= closeBelow || (entryWidth > 0 && width <= entryWidth * 0.35m);
+            var stopLevel = ArbEconomics.EffectiveStopUsd(stopLossUsd, fees);
+            var stop = net <= stopLevel;
+            var converged = width <= closeBelow;
             var shrunk = entryWidth > 0 && width <= entryWidth * 0.55m;
-            var green = net >= minTp;
-            var takeProfit = green && (converged || shrunk);
+            var takeProfit = net >= minTp && (converged || shrunk);
+            var failedConverge = converged && net < 0m;
             var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
-            var timeoutHarvest = timedOut && green;
+            var timeoutHarvest = timedOut && net >= minTp;
 
-            if (!stop && !takeProfit && !timeoutHarvest) continue;
+            if (!stop && !takeProfit && !failedConverge && !timeoutHarvest) continue;
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;
@@ -582,7 +580,7 @@ public sealed class LiveOrderEngine
     /// <summary>Minimum net USD (after open+close taker) before a live hedge may be closed green.</summary>
     private decimal LiveMinNetUsd(decimal notional)
     {
-        var floor = Opt.MinTakeProfitUsd > 0 ? Opt.MinTakeProfitUsd : 0.35m;
+        var floor = Opt.MinTakeProfitUsd > 0 ? Opt.MinTakeProfitUsd : 0.50m;
         var scaled = notional > 0 ? notional * 0.0015m : 0m;
         return Math.Max(floor, scaled);
     }
