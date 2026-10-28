@@ -524,7 +524,13 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (bestGross is null || gross > bestGross) bestGross = gross;
                     if (bestNet is null || netOpen > bestNet) bestNet = netOpen;
                     var feeRt = ArbEconomics.RoundTripFeePercent(longFee, shortFee);
-                    var netRt = gross - feeRt;
+                    // Closing still crosses each venue's own book. That cost is not profit.
+                    var exitCross = 99m;
+                    if (tickers.TryGetValue(longEx, out var longTk) && tickers.TryGetValue(shortEx, out var shortTk))
+                        exitCross = ArbEconomics.ExitCrossPercent(longTk.BestBid, longTk.BestAsk, shortTk.BestBid, shortTk.BestAsk);
+                    var netRt = gross - feeRt - exitCross;
+                    var pricePnl = ArbEconomics.ExpectedConvergeUsd(longVwap, shortVwap, qty, longFee, shortFee)
+                                   - exitCross / 100m * longVwap * qty;
 
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
@@ -535,7 +541,6 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     // Display only. Positive funding must not turn a losing price hedge into a buy.
                     var netAfterFund = netRt + fundPct;
-                    var pricePnl = ArbEconomics.ExpectedConvergeUsd(longVwap, shortVwap, qty, longFee, shortFee);
 
                     if (gross <= 0) continue;
 

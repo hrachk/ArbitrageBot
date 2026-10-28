@@ -353,11 +353,10 @@ public sealed class LiveOrderEngine
             var converged = width <= closeBelow;
             var shrunk = entryWidth > 0 && width <= entryWidth * 0.55m;
             var takeProfit = net >= minTp && (converged || shrunk);
-            var failedConverge = converged && net < 0m;
             var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
             var timeoutHarvest = timedOut && net >= minTp;
 
-            if (!stop && !takeProfit && !failedConverge && !timeoutHarvest) continue;
+            if (!stop && !takeProfit && !timeoutHarvest) continue;
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;

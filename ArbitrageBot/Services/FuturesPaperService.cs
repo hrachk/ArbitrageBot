@@ -467,8 +467,8 @@ public class FuturesPaperService : IFuturesPaperService
                 var minTpScaled = Math.Max(minTp, notional * 0.0015m);
                 // Bank only when the flatten price is green AND the cross has actually narrowed.
                 var takeProfit = pnl >= minTpScaled && (belowAbs || shrunk);
-                // Spread is gone and the trade is still red: the edge was smaller than the fees. Release margin.
-                var failedConverge = belowAbs && pnl < 0m;
+                // Do not flatten a red hedge just because the gap closed. That is how the book bleeds.
+                // A real blowout is the stop. A winner is take-profit only.
 
                 var timedOut = false;
                 if (R.FuturesMaxHoldSeconds > 0)
@@ -477,12 +477,11 @@ public class FuturesPaperService : IFuturesPaperService
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesMaxHoldMinutes;
                 var timeoutHarvest = timedOut && pnl >= minTpScaled;
 
-                if (!stopHit && !takeProfit && !failedConverge && !timeoutHarvest)
+                if (!stopHit && !takeProfit && !timeoutHarvest)
                     continue;
 
                 var reason = stopHit ? "stop-loss"
                     : takeProfit ? "take-profit"
-                    : failedConverge ? "failed-converge"
                     : "timeout-harvest";
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd

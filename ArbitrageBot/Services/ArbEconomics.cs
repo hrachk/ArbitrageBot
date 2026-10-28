@@ -28,6 +28,25 @@ public static class ArbEconomics
         };
     }
 
+    /// <summary>
+    /// Percent you still pay to flatten after the two venues meet:
+    /// you sell the long at its bid and buy the short at its ask.
+    /// A cross-exchange gap that is only these two book spreads is not a trade.
+    /// </summary>
+    public static decimal ExitCrossPercent(decimal longBid, decimal longAsk, decimal shortBid, decimal shortAsk)
+    {
+        var longSpread = BookSpreadPercent(longBid, longAsk);
+        var shortSpread = BookSpreadPercent(shortBid, shortAsk);
+        if (longSpread > 1.5m || shortSpread > 1.5m) return 99m;
+        return longSpread + shortSpread;
+    }
+
+    public static decimal BookSpreadPercent(decimal bid, decimal ask)
+    {
+        if (bid <= 0 || ask <= 0 || ask < bid) return 99m;
+        return (ask - bid) / bid * 100m;
+    }
+
     /// <summary>Four taker touches, in percent points.</summary>
     public static decimal RoundTripFeePercent(decimal longFeePct, decimal shortFeePct)
         => 2m * (longFeePct + shortFeePct);
