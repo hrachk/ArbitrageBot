@@ -178,64 +178,38 @@ public sealed class LiveOrderEngine
         var shortQty = QtyForExchange(req.ShortExchange, req.Symbol, roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
 
-        // 1) LONG — market, hedge mode: no reduceOnly / no timeInForce
-        var longReq = new PlaceFuturesOrderRequest(
-            sharedSym,
-            SharedOrderSide.Buy,
-            SharedOrderType.Market,
-            longQty,
-            price: null,
-            reduceOnly: null,
-            leverage: lev,
-            timeInForce: null,
-            positionSide: SharedPositionSide.Long,
-            marginMode: SharedMarginMode.Cross,
-            clientOrderId: clientId + "-L",
-            exchangeParameters: ExParams(req.LongExchange, isClose: false));
-
-        var longResult = await longClient.PlaceFuturesOrderAsync(req.LongExchange, longReq, ct).ConfigureAwait(false);
-        if (!longResult.Success)
+        // 1) LONG — hedge first; if the account is one-way, SendOrderAsync retries without positionSide.
+        var longResult = await SendOrderAsync(
+            longClient, req.LongExchange, sharedSym, SharedOrderSide.Buy, longQty, lev,
+            SharedPositionSide.Long, isClose: false, clientId + "-L", ct).ConfigureAwait(false);
+        if (!longResult.Ok)
         {
-            var err = DescribeFail(longResult.Error, longResult.OriginalData, "long order failed");
-            if (IsBalanceError(err))
-                MarkCooldown(req.LongExchange, err);
+            if (IsBalanceError(longResult.Error))
+                MarkCooldown(req.LongExchange, longResult.Error);
             _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}",
-                req.LongExchange, req.Symbol, err);
-            return SkipSymbol(req.Symbol, "LONG failed: " + err, RejectCooldown);
+                req.LongExchange, req.Symbol, longResult.Error);
+            return SkipSymbol(req.Symbol, "LONG failed: " + longResult.Error, RejectCooldown);
         }
 
-        var longOrderId = longResult.Data?.Id ?? "?";
+        var longOrderId = longResult.Id ?? "?";
         var longAvg = req.LongAsk ?? 0;
 
         // 2) SHORT — same size; on fail always unwind long
-        var shortReq = new PlaceFuturesOrderRequest(
-            sharedSym,
-            SharedOrderSide.Sell,
-            SharedOrderType.Market,
-            shortQty,
-            price: null,
-            reduceOnly: null,
-            leverage: lev,
-            timeInForce: null,
-            positionSide: SharedPositionSide.Short,
-            marginMode: SharedMarginMode.Cross,
-            clientOrderId: clientId + "-S",
-            exchangeParameters: ExParams(req.ShortExchange, isClose: false));
-
-        var shortResult = await shortClient.PlaceFuturesOrderAsync(req.ShortExchange, shortReq, ct).ConfigureAwait(false);
-        if (!shortResult.Success)
+        var shortResult = await SendOrderAsync(
+            shortClient, req.ShortExchange, sharedSym, SharedOrderSide.Sell, shortQty, lev,
+            SharedPositionSide.Short, isClose: false, clientId + "-S", ct).ConfigureAwait(false);
+        if (!shortResult.Ok)
         {
-            var err = DescribeFail(shortResult.Error, shortResult.OriginalData, "short order failed");
-            if (IsBalanceError(err))
-                MarkCooldown(req.ShortExchange, err);
+            if (IsBalanceError(shortResult.Error))
+                MarkCooldown(req.ShortExchange, shortResult.Error);
             _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long",
-                req.ShortExchange, req.Symbol, err);
+                req.ShortExchange, req.Symbol, shortResult.Error);
             await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
                 .ConfigureAwait(false);
-            return SkipSymbol(req.Symbol, "SHORT failed: " + err + " (long unwind attempted)", RejectCooldown);
+            return SkipSymbol(req.Symbol, "SHORT failed: " + shortResult.Error + " (long unwind attempted)", RejectCooldown);
         }
 
-        var shortOrderId = shortResult.Data?.Id ?? "?";
+        var shortOrderId = shortResult.Id ?? "?";
         var shortAvg = req.ShortBid ?? 0;
 
         var pos = new LiveHedgePosition
@@ -408,24 +382,12 @@ public sealed class LiveOrderEngine
             // Hedge mode (positionSide Long/Short): do NOT send reduceOnly.
             // Binance/Bitget reject reduceOnly in dual-side/hedge mode (-1106 / param errors).
             // Closing is expressed by opposite order side + same positionSide (+ Bitget tradeSide=close).
-            var req = new PlaceFuturesOrderRequest(
-                symbol,
-                side,
-                SharedOrderType.Market,
-                qty,
-                price: null,
-                reduceOnly: null,
-                leverage: null,
-                timeInForce: null, // MARKET: no TIF (Binance rejects timeInForce on market)
-                positionSide: posSide,
-                marginMode: SharedMarginMode.Cross,
-                clientOrderId: "ab-c-" + Guid.NewGuid().ToString("N")[..12],
-                exchangeParameters: ExParams(exchange, isClose: true));
-
-            var result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
-            if (!result.Success)
+            var sent = await SendOrderAsync(
+                client, exchange, symbol, side, qty, leverage: null, posSide, isClose: true,
+                "ab-c-" + Guid.NewGuid().ToString("N")[..12], ct).ConfigureAwait(false);
+            if (!sent.Ok)
             {
-                _logger.LogError("LIVE reduce fail {Ex}: {Err}", exchange, DescribeFail(result.Error, result.OriginalData, "reduce failed"));
+                _logger.LogError("LIVE reduce fail {Ex}: {Err}", exchange, sent.Error);
                 return false;
             }
             return true;
@@ -508,15 +470,76 @@ public sealed class LiveOrderEngine
         return rest;
     }
 
+    private async Task<(bool Ok, string Error, string? Id)> SendOrderAsync(
+        ExchangeRestClient client,
+        string exchange,
+        SharedSymbol symbol,
+        SharedOrderSide side,
+        SharedQuantity qty,
+        decimal? leverage,
+        SharedPositionSide? hedgeSide,
+        bool isClose,
+        string clientOrderId,
+        CancellationToken ct)
+    {
+        async Task<(bool Ok, string Error, string? Id)> Once(bool hedge)
+        {
+            var req = new PlaceFuturesOrderRequest(
+                symbol,
+                side,
+                SharedOrderType.Market,
+                qty,
+                price: null,
+                reduceOnly: null,
+                leverage: leverage,
+                timeInForce: null,
+                positionSide: hedge ? hedgeSide : null,
+                marginMode: SharedMarginMode.Cross,
+                clientOrderId: hedge ? clientOrderId : clientOrderId + "n",
+                exchangeParameters: ExParams(exchange, isClose, hedge));
+            var result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
+            if (result.Success)
+                return (true, "", result.Data?.Id?.ToString());
+            return (false, DescribeFail(result.Error, result.OriginalData, "order failed"), null);
+        }
+
+        var first = await Once(hedgeSide != null);
+        if (first.Ok || hedgeSide == null || !IsNetModeError(first.Error))
+            return first;
+        _logger.LogWarning("LIVE {Ex} retry without position side ({Err})", exchange, first.Error);
+        return await Once(false);
+    }
+
+    private static bool IsNetModeError(string err)
+    {
+        if (string.IsNullOrEmpty(err)) return false;
+        return err.Contains("posSide", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("positionSide", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("position side", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("position mode", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("positionIdx", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("tradeSide", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("one-way", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("oneway", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("dual", StringComparison.OrdinalIgnoreCase)
+            || err.Contains("hedge", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Exchange-specific parameters required by CryptoClients shared futures order API.
-    /// Bitget requires ProductType + MarginAsset/marginCoin; in hedge mode also tradeSide open/close.
+    /// Bitget requires ProductType + MarginAsset/marginCoin; hedge mode also needs tradeSide.
     /// </summary>
-    private static ExchangeParameters ExParams(string exchange, bool isClose = false)
+    private static ExchangeParameters ExParams(string exchange, bool isClose = false, bool hedge = true)
     {
         if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
         {
-            // hedge-mode default on Bitget: tradeSide required (open|close); reduceOnly is one-way only
+            if (!hedge)
+            {
+                return new ExchangeParameters(
+                    new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
+                    new ExchangeParameter("Bitget", "MarginAsset", "USDT"),
+                    new ExchangeParameter("Bitget", "marginCoin", "USDT"));
+            }
             return new ExchangeParameters(
                 new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
                 new ExchangeParameter("Bitget", "MarginAsset", "USDT"),

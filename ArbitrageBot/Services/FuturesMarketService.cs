@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text.Json;
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Models;
 using CryptoClients.Net.Interfaces;
@@ -37,6 +39,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private readonly ConcurrentDictionary<string, (decimal gross, DateTime utc)> _grossHistory = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _edgeFirstSeen = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _restSourced = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, decimal> _basePerContract = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(6) };
+    private readonly CancellationTokenSource _restCts = new();
     private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
     private DateTime _lastFundingRefreshUtc = DateTime.MinValue;
     private readonly SemaphoreSlim _fundingLock = new(1, 1);
@@ -112,7 +118,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     {
                         try
                         {
-                            book = _factory.Create(name, symbol, depth);
+                            book = _factory.Create(name, symbol, depth, BookParams(name));
                             if (book != null)
                             {
                                 if (!string.Equals(name, exchange, StringComparison.OrdinalIgnoreCase))
@@ -190,6 +196,41 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 kv.Value.Contains("book-ticker", StringComparison.OrdinalIgnoreCase));
             _logger.LogInformation("Exchange {Ex}: {Live}/{Total} streams live", exchange, live, keys.Count);
         }
+
+        // WS books on OKX/Bitget/Gate/KuCoin often never reach Synced (wrong product type,
+        // unsupported socket name). REST depth still lets those venues enter the scan.
+        _ = Task.Run(() => RestBooksLoop(_restCts.Token));
+    }
+
+    private static ExchangeParameters? BookParams(string exchange)
+    {
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("BitGet", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ExchangeParameters(
+                new ExchangeParameter("Bitget", "ProductType", "UsdtFutures"),
+                new ExchangeParameter("Bitget", "MarginAsset", "USDT"),
+                new ExchangeParameter("Bitget", "marginCoin", "USDT"));
+        }
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("GateIO", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("Gate", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ExchangeParameters(new ExchangeParameter("GateIo", "SettleAsset", "usdt"));
+        }
+        return null;
+    }
+
+    private static string SocketName(string exchange)
+    {
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase)) return "OKX";
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase)) return "Bitget";
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("Gate", StringComparison.OrdinalIgnoreCase)) return "GateIo";
+        if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase)) return "Kucoin";
+        if (exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase)) return "Bybit";
+        return "Binance";
     }
 
     private static IEnumerable<string> ExchangeNameVariants(string exchange)
@@ -233,7 +274,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         {
             string? lastErr = null;
             UpdateSubscription? sub = null;
-            foreach (var name in ExchangeNameVariants(exchange))
+            foreach (var name in new[] { SocketName(exchange) })
             {
                 try
                 {
@@ -301,7 +342,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     private void UpdateFromBook(string exchange, string symbolStr, ISymbolOrderBook book)
     {
-        _tickers[$"{exchange}:{symbolStr}"] = new BookTicker
+        var key = $"{exchange}:{symbolStr}";
+        _restSourced.TryRemove(key, out _);
+        _tickers[key] = new BookTicker
         {
             Exchange = exchange,
             Symbol = symbolStr,
@@ -325,7 +368,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             if (maxAge > 0 && t.Timestamp != default)
             {
                 var ageMs = (now - t.Timestamp).TotalMilliseconds;
-                if (ageMs > maxAge) continue; // stale
+                var limit = _restSourced.ContainsKey(key) ? Math.Max(maxAge, 8000) : maxAge;
+                if (ageMs > limit) continue;
             }
             result[ex] = t;
         }
@@ -362,7 +406,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private FillEstimate Estimate(string symbol, string exchange, decimal quoteUsd, bool isBuy)
     {
         var key = $"{exchange}:{symbol}";
-        if (_books.TryGetValue(key, out var book))
+        if (_books.TryGetValue(key, out var book) && !_restSourced.ContainsKey(key))
         {
             var levels = isBuy
                 ? book.Asks?.Select(x => (x.Price, x.Quantity)).ToList()
@@ -593,6 +637,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken ct = default)
     {
+        try { _restCts.Cancel(); } catch { /* already disposed */ }
         foreach (var kv in _books)
         {
             try { await kv.Value.StopAsync(); } catch { /* ignore */ }
@@ -700,6 +745,196 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         {
             _fundingLock.Release();
         }
+    }
+
+    private async Task RestBooksLoop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await PullMissingBooksAsync(ct); }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { _logger.LogDebug(ex, "REST book fill"); }
+            try { await Task.Delay(1200, ct); } catch { break; }
+        }
+    }
+
+    private async Task PullMissingBooksAsync(CancellationToken ct)
+    {
+        var jobs = new List<Task>();
+        using var gate = new SemaphoreSlim(8);
+        foreach (var symbol in _markets.Symbols)
+        {
+            foreach (var exchange in _markets.Exchanges)
+            {
+                if (!NeedsRestBook(exchange, symbol)) continue;
+                var sym = symbol;
+                var ex = exchange;
+                jobs.Add(Task.Run(async () =>
+                {
+                    await gate.WaitAsync(ct);
+                    try { await StoreRestBookAsync(ex, sym, ct); }
+                    catch (OperationCanceledException) { }
+                    catch (Exception exn) { _logger.LogDebug(exn, "REST book {Ex}:{Sym}", ex, sym); }
+                    finally { gate.Release(); }
+                }, ct));
+            }
+        }
+        if (jobs.Count > 0)
+            await Task.WhenAll(jobs);
+    }
+
+    private bool NeedsRestBook(string exchange, string symbol)
+    {
+        if (exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase)
+            || exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var key = $"{exchange}:{symbol}";
+        if (_status.TryGetValue(key, out var st)
+            && st.Contains("Synced", StringComparison.OrdinalIgnoreCase)
+            && !_restSourced.ContainsKey(key))
+            return false;
+        return true;
+    }
+
+    private async Task StoreRestBookAsync(string exchange, string symbol, CancellationToken ct)
+    {
+        var key = $"{exchange}:{symbol}";
+        var book = await FetchRestBookAsync(exchange, symbol, ct);
+        if (book == null) return;
+        var (bid, ask) = book.Value;
+        if (bid.Price <= 0 || ask.Price <= 0) return;
+        _tickers[key] = new BookTicker
+        {
+            Exchange = exchange,
+            Symbol = symbol,
+            BestBid = bid.Price,
+            BestAsk = ask.Price,
+            BidQuantity = bid.Qty,
+            AskQuantity = ask.Qty,
+            Timestamp = DateTime.UtcNow
+        };
+        _restSourced[key] = 1;
+        _status[key] = "rest-book";
+    }
+
+    private async Task<( (decimal Price, decimal Qty) Bid, (decimal Price, decimal Qty) Ask )?> FetchRestBookAsync(
+        string exchange, string symbol, CancellationToken ct)
+    {
+        if (!symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)) return null;
+        var baseAsset = symbol[..^4];
+        string? url = null;
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            url = "https://www.okx.com/api/v5/market/books?instId=" + baseAsset + "-USDT-SWAP&sz=5";
+        else if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+            url = "https://api.bitget.com/api/v2/mix/market/merge-depth?symbol=" + symbol + "&productType=USDT-FUTURES&limit=5";
+        else if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
+            url = "https://api.gateio.ws/api/v4/futures/usdt/order_book?contract=" + baseAsset + "_USDT&limit=5";
+        else if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase) || exchange.Equals("KuCoin", StringComparison.OrdinalIgnoreCase))
+            url = "https://api-futures.kucoin.com/api/v1/level2/depth20?symbol=" + KucoinContract(baseAsset);
+        else
+            return null;
+
+        using var resp = await _http.GetAsync(url, ct);
+        if (!resp.IsSuccessStatusCode) return null;
+        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        var root = doc.RootElement;
+        var mult = await BasePerContractAsync(exchange, symbol, baseAsset, ct);
+
+        if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!root.TryGetProperty("data", out var data) || data.GetArrayLength() == 0) return null;
+            var row = data[0];
+            return (Top(row, "bids", mult), Top(row, "asks", mult));
+        }
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!root.TryGetProperty("data", out var data)) return null;
+            return (Top(data, "bids", 1m), Top(data, "asks", 1m));
+        }
+        if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
+        {
+            return (TopObj(root, "bids", mult), TopObj(root, "asks", mult));
+        }
+        if (!root.TryGetProperty("data", out var kdata)) return null;
+        return (Top(kdata, "bids", mult), Top(kdata, "asks", mult));
+    }
+
+    private async Task<decimal> BasePerContractAsync(string exchange, string symbol, string baseAsset, CancellationToken ct)
+    {
+        if (exchange.Equals("Bitget", StringComparison.OrdinalIgnoreCase)) return 1m;
+        var key = exchange + ":" + symbol;
+        if (_basePerContract.TryGetValue(key, out var cached) && cached > 0) return cached;
+        try
+        {
+            if (exchange.Equals("OKX", StringComparison.OrdinalIgnoreCase))
+            {
+                using var resp = await _http.GetAsync("https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=" + baseAsset + "-USDT-SWAP", ct);
+                if (!resp.IsSuccessStatusCode) return 1m;
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                var ctVal = ReadNum(doc.RootElement.GetProperty("data")[0].GetProperty("ctVal"));
+                if (ctVal <= 0) ctVal = 1m;
+                _basePerContract[key] = ctVal;
+                return ctVal;
+            }
+            if (exchange.Equals("GateIo", StringComparison.OrdinalIgnoreCase))
+            {
+                using var resp = await _http.GetAsync("https://api.gateio.ws/api/v4/futures/usdt/contracts/" + baseAsset + "_USDT", ct);
+                if (!resp.IsSuccessStatusCode) return 1m;
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                var m = ReadNum(doc.RootElement.GetProperty("quanto_multiplier"));
+                if (m <= 0) m = 1m;
+                _basePerContract[key] = m;
+                return m;
+            }
+            if (exchange.Equals("Kucoin", StringComparison.OrdinalIgnoreCase))
+            {
+                using var resp = await _http.GetAsync("https://api-futures.kucoin.com/api/v1/contracts/" + KucoinContract(baseAsset), ct);
+                if (!resp.IsSuccessStatusCode) return 1m;
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                var m = ReadNum(doc.RootElement.GetProperty("data").GetProperty("multiplier"));
+                if (m <= 0) m = 1m;
+                _basePerContract[key] = m;
+                return m;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "contract size {Ex} {Sym}", exchange, symbol);
+        }
+        return 1m;
+    }
+
+    private static string KucoinContract(string baseAsset)
+        => (baseAsset.Equals("BTC", StringComparison.OrdinalIgnoreCase) ? "XBT" : baseAsset) + "USDTM";
+
+    private static (decimal Price, decimal Qty) Top(JsonElement parent, string side, decimal mult)
+    {
+        if (!parent.TryGetProperty(side, out var arr) || arr.ValueKind != JsonValueKind.Array || arr.GetArrayLength() == 0)
+            return (0, 0);
+        var row = arr[0];
+        var px = ReadNum(row[0]);
+        var qty = ReadNum(row[1]) * (mult > 0 ? mult : 1m);
+        return (px, qty);
+    }
+
+    private static (decimal Price, decimal Qty) TopObj(JsonElement parent, string side, decimal mult)
+    {
+        if (!parent.TryGetProperty(side, out var arr) || arr.ValueKind != JsonValueKind.Array || arr.GetArrayLength() == 0)
+            return (0, 0);
+        var row = arr[0];
+        var px = row.TryGetProperty("p", out var p) ? ReadNum(p) : 0m;
+        var qty = (row.TryGetProperty("s", out var s) ? ReadNum(s) : 0m) * (mult > 0 ? mult : 1m);
+        return (px, qty);
+    }
+
+    private static decimal ReadNum(JsonElement el)
+    {
+        if (el.ValueKind == JsonValueKind.Number) return el.GetDecimal();
+        if (el.ValueKind == JsonValueKind.String &&
+            decimal.TryParse(el.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var d))
+            return d;
+        return 0m;
     }
 
     private static bool IsMissingInstrument(string? msg)
