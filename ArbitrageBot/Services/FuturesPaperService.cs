@@ -145,12 +145,13 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Cooldown close {cooldown}ms");
 
             // QUALITY: reject if round-trip edge cannot cover close fees
-            var minEdge = R.MinProfitPercent + (R.OpenEdgeBufferPercent > 0 ? R.OpenEdgeBufferPercent : 0.04m);
+            var minEdge = ArbEconomics.RequiredNetPercent(R.MinProfitPercent);
             if (opp.NetRoundTripPercent < minEdge)
                 return Fail(opp, $"RT {opp.NetRoundTripPercent:F3}% < min {minEdge:F3}%");
-            var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.50m;
+            var minTp = ArbEconomics.RequiredTakeProfitUsd(
+                R.MinTakeProfitUsd, opp.NotionalUsd > 0 ? opp.NotionalUsd : (R.QuoteSize > 0 ? R.QuoteSize : 250m));
             if (opp.EstNetPnlUsd < minTp)
-                return Fail(opp, $"edge ${opp.EstNetPnlUsd:F2} < ${minTp:F2} after 4 taker fees");
+                return Fail(opp, $"edge ${opp.EstNetPnlUsd:F2} < ${minTp:F2} after fees, books and slip");
 
             if (R.PaperRequireFullFill && !opp.FullyFilled)
                 return Fail(opp, "Require full fill");
@@ -455,18 +456,16 @@ public class FuturesPaperService : IFuturesPaperService
                 pos.UnrealizedPnlUsd = pnl;
                 pos.CurrentWidthPercent = currentWidth;
 
-                var stopLevel = ArbEconomics.EffectiveStopUsd(R.FuturesStopLossUsd, openFees + closeFees);
+                var notional = pos.LongEntry * pos.BaseQty;
+                var minTp = ArbEconomics.RequiredTakeProfitUsd(R.MinTakeProfitUsd, notional);
+                var stopLevel = ArbEconomics.EffectiveStopUsd(R.FuturesStopLossUsd, openFees + closeFees, minTp);
                 var stopHit = pnl <= stopLevel;
 
                 var threshold = closeWhenNetBelowPercent;
-                var shrunk = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.55m;
-                var belowAbs = currentWidth <= threshold;
+                var shrunk = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.40m;
+                var belowAbs = currentWidth <= Math.Max(threshold, 0.05m);
 
-                var notional = pos.LongEntry * pos.BaseQty;
-                var minTp = R.MinTakeProfitUsd > 0 ? R.MinTakeProfitUsd : 0.50m;
-                var minTpScaled = Math.Max(minTp, notional * 0.0015m);
-                // Bank only when the flatten price is green AND the cross has actually narrowed.
-                var takeProfit = pnl >= minTpScaled && (belowAbs || shrunk);
+                var takeProfit = pnl >= minTp && (belowAbs || shrunk);
                 // Do not flatten a red hedge just because the gap closed. That is how the book bleeds.
                 // A real blowout is the stop. A winner is take-profit only.
 
@@ -475,7 +474,7 @@ public class FuturesPaperService : IFuturesPaperService
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds >= R.FuturesMaxHoldSeconds;
                 else if (R.FuturesMaxHoldMinutes > 0)
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesMaxHoldMinutes;
-                var timeoutHarvest = timedOut && pnl >= minTpScaled;
+                var timeoutHarvest = timedOut && pnl >= minTp;
 
                 if (!stopHit && !takeProfit && !timeoutHarvest)
                     continue;

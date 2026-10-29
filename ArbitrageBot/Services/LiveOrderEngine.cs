@@ -158,15 +158,17 @@ public sealed class LiveOrderEngine
 
         var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
         var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
-        var netOpen = grossOpen - feesOpen;
-        var minEdgePct = opt.MinProfitPercent + (opt.OpenEdgeBufferPercent > 0 ? opt.OpenEdgeBufferPercent : 0.04m);
-        var minTp = Math.Max(estNotional * minEdgePct / 100m, LiveMinNetUsd(estNotional));
-        if (netOpen < minTp)
+        var reserveUsd = estNotional * ArbEconomics.ExecutionReservePercent(opt.OpenEdgeBufferPercent) / 100m;
+        var netOpen = grossOpen - feesOpen - reserveUsd;
+        var minTp = ArbEconomics.RequiredTakeProfitUsd(opt.MinTakeProfitUsd, estNotional);
+        var minEdgeUsd = estNotional * ArbEconomics.RequiredNetPercent(opt.MinProfitPercent) / 100m;
+        var need = Math.Max(minTp, minEdgeUsd);
+        if (netOpen < need)
         {
             _logger.LogInformation(
-                "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2})",
-                req.Symbol, netOpen, minTp, grossOpen, feesOpen);
-            return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min {minTp:F2}$ after 4 taker fees", TimeSpan.FromSeconds(45));
+                "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2} slip {S:F2})",
+                req.Symbol, netOpen, need, grossOpen, feesOpen, reserveUsd);
+            return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min {need:F2}$ after fees and slip", TimeSpan.FromSeconds(45));
         }
 
         var estMargin = lev > 0 ? estNotional / lev : estNotional;
@@ -181,7 +183,8 @@ public sealed class LiveOrderEngine
         // 1) LONG — hedge first; if the account is one-way, SendOrderAsync retries without positionSide.
         var longResult = await SendOrderAsync(
             longClient, req.LongExchange, sharedSym, SharedOrderSide.Buy, longQty, lev,
-            SharedPositionSide.Long, isClose: false, clientId + "-L", ct).ConfigureAwait(false);
+            SharedPositionSide.Long, isClose: false, clientId + "-L", ct,
+            limitPrice: req.LongAsk.Value * 1.0004m).ConfigureAwait(false);
         if (!longResult.Ok)
         {
             if (IsBalanceError(longResult.Error))
@@ -197,7 +200,8 @@ public sealed class LiveOrderEngine
         // 2) SHORT — same size; on fail always unwind long
         var shortResult = await SendOrderAsync(
             shortClient, req.ShortExchange, sharedSym, SharedOrderSide.Sell, shortQty, lev,
-            SharedPositionSide.Short, isClose: false, clientId + "-S", ct).ConfigureAwait(false);
+            SharedPositionSide.Short, isClose: false, clientId + "-S", ct,
+            limitPrice: req.ShortBid.Value * 0.9996m).ConfigureAwait(false);
         if (!shortResult.Ok)
         {
             if (IsBalanceError(shortResult.Error))
@@ -347,8 +351,8 @@ public sealed class LiveOrderEngine
             var fees = RoundTripFees(pos, longBid, shortAsk);
             var net = gross - fees;
             var notional = pos.LongEntry > 0 ? pos.LongEntry * pos.BaseQty : pos.NotionalUsd;
-            var minTp = LiveMinNetUsd(notional);
-            var stopLevel = ArbEconomics.EffectiveStopUsd(stopLossUsd, fees);
+            var minTp = ArbEconomics.RequiredTakeProfitUsd(LiveMinNetUsd(notional), notional);
+            var stopLevel = ArbEconomics.EffectiveStopUsd(stopLossUsd, fees, minTp);
             var stop = net <= stopLevel;
             var converged = width <= closeBelow;
             var shrunk = entryWidth > 0 && width <= entryWidth * 0.55m;
@@ -479,19 +483,21 @@ public sealed class LiveOrderEngine
         SharedPositionSide? hedgeSide,
         bool isClose,
         string clientOrderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        decimal? limitPrice = null)
     {
         async Task<(bool Ok, string Error, string? Id)> Once(bool hedge)
         {
+            var limit = limitPrice is > 0;
             var req = new PlaceFuturesOrderRequest(
                 symbol,
                 side,
-                SharedOrderType.Market,
+                limit ? SharedOrderType.Limit : SharedOrderType.Market,
                 qty,
-                price: null,
+                price: limit ? limitPrice : null,
                 reduceOnly: null,
                 leverage: leverage,
-                timeInForce: null,
+                timeInForce: limit ? SharedTimeInForce.ImmediateOrCancel : null,
                 positionSide: hedge ? hedgeSide : null,
                 marginMode: SharedMarginMode.Cross,
                 clientOrderId: hedge ? clientOrderId : clientOrderId + "n",
@@ -602,9 +608,9 @@ public sealed class LiveOrderEngine
     /// <summary>Minimum net USD (after open+close taker) before a live hedge may be closed green.</summary>
     private decimal LiveMinNetUsd(decimal notional)
     {
-        var floor = Opt.MinTakeProfitUsd > 0 ? Opt.MinTakeProfitUsd : 0.50m;
-        var scaled = notional > 0 ? notional * 0.0015m : 0m;
-        return Math.Max(floor, scaled);
+        var floor = Opt.MinTakeProfitUsd > 0 ? Opt.MinTakeProfitUsd : 1.50m;
+        var scaled = notional > 0 ? notional * 0.006m : 1.50m;
+        return Math.Max(floor, Math.Max(scaled, 1.00m));
     }
 
     /// <summary>

@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.12m;
+    public decimal MinProfitPercent { get; set; } = 0.20m;
     public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
@@ -36,7 +36,7 @@ public class ArbitrageOptions
         ["ETH"] = 0.5m,
         ["SOL"] = 5m
     };
-    public int PaperCooldownMs { get; set; } = 15000;
+    public int PaperCooldownMs { get; set; } = 20000;
     public bool PaperRequireFullFill { get; set; } = true;
 
     public bool DynamicSymbols { get; set; } = true;
@@ -57,11 +57,11 @@ public class ArbitrageOptions
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
     public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.02m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.08m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 0.40m;
+    public decimal MinTakeProfitUsd { get; set; } = 1.50m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.36m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.55m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
@@ -79,18 +79,18 @@ public class ArbitrageOptions
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
     // Futures paper
-    public decimal FuturesPaperLeverage { get; set; } = 5m;
+    public decimal FuturesPaperLeverage { get; set; } = 3m;
     public int FuturesMaxOpenPositions { get; set; } = 2;
     public int FuturesMaxHoldMinutes { get; set; } = 5;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
-    public decimal FuturesCloseBelowNetPercent { get; set; } = 0.02m;
+    public decimal FuturesCloseBelowNetPercent { get; set; } = 0.05m;
 
     /// <summary>Max share of free margin on one exchange that a single new hedge may lock (0.25 = 25%).</summary>
     public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.20m;
     /// <summary>Force-close if unrealized PnL on a hedge drops below this (USD, negative).</summary>
     public decimal FuturesStopLossUsd { get; set; } = -3m;
     /// <summary>Stop opening new hedges if day realized PnL is below this.</summary>
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -12m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -9m;
     /// <summary>Refuse open if notional would exceed this (USD) even with leverage.</summary>
     public decimal FuturesMaxNotionalUsd { get; set; } = 250m;
 
@@ -120,7 +120,7 @@ public class ArbitrageOptions
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
     public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
-    public decimal LiveStopLossUsd { get; set; } = -4m;
+    public decimal LiveStopLossUsd { get; set; } = -3m;
     /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
     public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
     /// <summary>Reject live open if book status is not healthy (Synced/book-ticker).</summary>
@@ -133,7 +133,7 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 800;
+    public int MinSpreadPersistMs { get; set; } = 1500;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
     public int MaxBookAgeMs { get; set; } = 300;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>

@@ -52,6 +52,30 @@ public static class ArbEconomics
         => 2m * (longFeePct + shortFeePct);
 
     /// <summary>
+    /// Extra percent a market order pays beyond the book you already measured.
+    /// A saved buffer of 0.02 is one tick and is not enough; the floor is 0.08.
+    /// </summary>
+    public static decimal ExecutionReservePercent(decimal configured)
+        => Math.Max(configured > 0 ? configured : 0m, 0.08m);
+
+    /// <summary>Net edge that must remain after fees, both book spreads, and the reserve.</summary>
+    public const decimal MinNetAfterCostsPercent = 0.20m;
+
+    public static decimal RequiredNetPercent(decimal minProfit)
+        => Math.Max(minProfit, MinNetAfterCostsPercent);
+
+    /// <summary>
+    /// Dollar target. Never below 0.60% of notional and never below $1.
+    /// A $0.40 target against a $6 stop is how the book bleeds.
+    /// </summary>
+    public static decimal RequiredTakeProfitUsd(decimal configured, decimal notional)
+    {
+        var byNotional = notional > 0 ? notional * 0.006m : 1.50m;
+        var cfg = configured > 0 ? configured : 1.50m;
+        return Math.Max(cfg, Math.Max(byNotional, 1.00m));
+    }
+
+    /// <summary>
     /// Dollars left if the cross spread later converges to zero.
     /// Independent of the meeting price: (shortBid - longAsk) * qty minus both open and both close fees.
     /// </summary>
@@ -81,14 +105,17 @@ public static class ArbEconomics
     }
 
     /// <summary>
-    /// Stop must sit outside the fee bill. A -$3 stop on a trade whose round trip costs $8
-    /// closes the hedge on the entry cross itself and books a guaranteed loss.
+    /// Stop sits outside the fee bill, and no wider than 1.6× the take-profit.
+    /// Risking $6 to make $0.40 needs a 94% win rate. This book does not have that.
     /// </summary>
-    public static decimal EffectiveStopUsd(decimal configuredStop, decimal roundTripFeesUsd)
+    public static decimal EffectiveStopUsd(decimal configuredStop, decimal roundTripFeesUsd, decimal minTakeProfitUsd = 1.5m)
     {
         var noise = -(Math.Abs(roundTripFeesUsd) * 2m);
-        if (noise > -1m) noise = -1m;
-        if (configuredStop >= 0) return noise;
-        return Math.Min(configuredStop, noise);
+        if (noise > -1.5m) noise = -1.5m;
+        var reward = minTakeProfitUsd > 0 ? minTakeProfitUsd : 1.5m;
+        var band = -(reward * 1.6m);
+        var chosen = configuredStop < 0 ? Math.Max(configuredStop, band) : band;
+        if (chosen > noise) chosen = noise;
+        return chosen;
     }
 }

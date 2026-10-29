@@ -524,13 +524,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (bestGross is null || gross > bestGross) bestGross = gross;
                     if (bestNet is null || netOpen > bestNet) bestNet = netOpen;
                     var feeRt = ArbEconomics.RoundTripFeePercent(longFee, shortFee);
-                    // Closing still crosses each venue's own book. That cost is not profit.
+                    // Closing still crosses each venue's own book. Market orders then pay a reserve on top.
                     var exitCross = 99m;
                     if (tickers.TryGetValue(longEx, out var longTk) && tickers.TryGetValue(shortEx, out var shortTk))
                         exitCross = ArbEconomics.ExitCrossPercent(longTk.BestBid, longTk.BestAsk, shortTk.BestBid, shortTk.BestAsk);
-                    var netRt = gross - feeRt - exitCross;
+                    var reserve = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
+                    var netRt = gross - feeRt - exitCross - reserve;
                     var pricePnl = ArbEconomics.ExpectedConvergeUsd(longVwap, shortVwap, qty, longFee, shortFee)
-                                   - exitCross / 100m * longVwap * qty;
+                                   - (exitCross + reserve) / 100m * longVwap * qty;
 
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
@@ -542,13 +543,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     // Display only. Positive funding must not turn a losing price hedge into a buy.
                     var netAfterFund = netRt + fundPct;
 
-                    if (gross <= 0) continue;
+                    if (gross <= 0)
+                    {
+                        _edgeFirstSeen.TryRemove($"{symbol}|{longEx}|{shortEx}", out _);
+                        continue;
+                    }
 
-                    var buffer = snap.OpenEdgeBufferPercent > 0 ? snap.OpenEdgeBufferPercent : 0.04m;
-                    var minEdge = snap.MinProfitPercent + buffer;
-                    var feeFloor = feeRt + buffer;
+                    var reserveNow = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
+                    var minEdge = ArbEconomics.RequiredNetPercent(snap.MinProfitPercent);
+                    var feeFloor = feeRt + reserveNow + minEdge;
                     var minGross = Math.Max(snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeFloor, feeFloor);
-                    var minTp = snap.MinTakeProfitUsd > 0 ? snap.MinTakeProfitUsd : 0.50m;
+                    var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, notional);
                     // Next funding interval would cost more than the price edge can carry.
                     var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);
                     var edgeKey = $"{symbol}|{longEx}|{shortEx}";
@@ -564,25 +569,30 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         _grossHistory[edgeKey] = (gross, now);
                     }
 
-                    var persistMs = snap.MinSpreadPersistMs;
-                    var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
-                    var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
-                    var persistOk = persistMs <= 0 || heldMs >= persistMs;
-                    if (!persistOk)
-                        LastScanPersistPending++;
-
                     var filled = buyFill.FullyFilled && sellFill.FullyFilled;
                     var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
                     var fillOk = !needFill || filled;
 
-                    // Price round-trip only. Funding is not allowed to buy the signal.
-                    var executable = gross >= minGross
-                                     && netRt >= minEdge
-                                     && pricePnl >= minTp
-                                     && fundingOk
-                                     && spreadingOk
-                                     && persistOk
-                                     && fillOk;
+                    // Persist counts only while the trade is actually good. A pair seen earlier at 0.05%
+                    // must not make a one-tick 0.5% spike look "held for 800ms".
+                    var gateNow = gross >= minGross && netRt >= minEdge && pricePnl >= minTp && fundingOk && fillOk && spreadingOk;
+                    bool persistOk;
+                    if (!gateNow)
+                    {
+                        _edgeFirstSeen.TryRemove(edgeKey, out _);
+                        persistOk = false;
+                    }
+                    else
+                    {
+                        var persistMs = snap.MinSpreadPersistMs > 0 ? Math.Max(snap.MinSpreadPersistMs, 1200) : 1200;
+                        var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
+                        var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
+                        persistOk = heldMs >= persistMs;
+                        if (!persistOk)
+                            LastScanPersistPending++;
+                    }
+
+                    var executable = gateNow && persistOk;
 
                     if (!executable && (gross < minGross * 0.5m || netRt < 0))
                     {

@@ -33,20 +33,20 @@ public class TradingUiSettings
     public string StrategyMode { get; set; } = "FuturesCross";
     public bool PaperTrading { get; set; } = true;
     public bool PaperAutoExecute { get; set; } = true;
-    /// <summary>Min net open edge % after fees — same for PAPER and LIVE.</summary>
-    public decimal MinProfitPercent { get; set; } = 0.12m;
+    /// <summary>Min net edge % after fees, both books and slip. Same gate for paper and live.</summary>
+    public decimal MinProfitPercent { get; set; } = 0.20m;
     /// <summary>Notional per leg (USDT). Paper + Live share this (LiveMaxNotional synced).</summary>
     public decimal QuoteSize { get; set; } = 250m;
-    public decimal FuturesPaperLeverage { get; set; } = 5m;
+    public decimal FuturesPaperLeverage { get; set; } = 3m;
     public int FuturesMaxOpenPositions { get; set; } = 2;
     public decimal FuturesStopLossUsd { get; set; } = -3m;
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -12m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -9m;
     /// <summary>0 = no soft hold timer (professional: exit on converge/TP/SL only).</summary>
     public int MaxHoldMinutes { get; set; } = 0;
-    public decimal CloseBelowNetPercent { get; set; } = 0.02m;
+    public decimal CloseBelowNetPercent { get; set; } = 0.05m;
     public decimal MaxMarginUsagePercent { get; set; } = 0.20m;
     public decimal MaxNotionalUsd { get; set; } = 250m;
-    public int PaperCooldownMs { get; set; } = 15000;
+    public int PaperCooldownMs { get; set; } = 20000;
     public bool PaperRequireFullFill { get; set; } = true;
     public bool RequireRoundTripEdge { get; set; } = true;
     public bool IncludeFunding { get; set; } = true;
@@ -57,18 +57,18 @@ public class TradingUiSettings
     public decimal LiveMaxNotionalUsd { get; set; } = 250m;
     public int LiveMaxOpenPositions { get; set; } = 2;
     public decimal LiveStopLossUsd { get; set; } = -3m;
-    public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -9m;
 
-    public decimal MinGrossSpreadPercent { get; set; } = 0.36m;
-    public decimal MinTakeProfitUsd { get; set; } = 0.40m;
-    public int MinSpreadPersistMs { get; set; } = 800;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.55m;
+    public decimal MinTakeProfitUsd { get; set; } = 1.50m;
+    public int MinSpreadPersistMs { get; set; } = 1500;
     public int MaxBookAgeMs { get; set; } = 300;
     public int ScanIntervalMs { get; set; } = 250;
     public int FuturesMaxHoldSeconds { get; set; } = 0;
     public bool SpatialScalpMode { get; set; } = false;
     public bool RequireSpreadingEdge { get; set; } = true;
     public decimal PaperCloseFeeFactor { get; set; } = 1m;
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.02m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.08m;
     public bool RequireDepthFullFill { get; set; } = true;
     public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
     public int MaxLegsPerVenue { get; set; } = 2;
