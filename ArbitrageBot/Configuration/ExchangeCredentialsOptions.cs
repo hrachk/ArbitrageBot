@@ -59,9 +59,9 @@ public class TradingUiSettings
     public decimal LiveStopLossUsd { get; set; } = -3m;
     public decimal LiveDailyLossLimitUsd { get; set; } = -9m;
 
-    public decimal MinGrossSpreadPercent { get; set; } = 0.55m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.60m;
     public decimal MinTakeProfitUsd { get; set; } = 1.50m;
-    public int MinSpreadPersistMs { get; set; } = 1500;
+    public int MinSpreadPersistMs { get; set; } = 2000;
     public int MaxBookAgeMs { get; set; } = 300;
     public int ScanIntervalMs { get; set; } = 250;
     public int FuturesMaxHoldSeconds { get; set; } = 0;

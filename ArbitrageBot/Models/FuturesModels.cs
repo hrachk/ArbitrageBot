@@ -15,6 +15,11 @@ public record FuturesOpportunity
     /// <summary>Passed all open gates (fees, persist, depth).</summary>
     public bool IsExecutable { get; init; }
     public decimal GrossSpreadPercent { get; init; }
+    /// <summary>This directed pair's own fair cross, percent. Not profit.</summary>
+    public decimal FairBasisPercent { get; init; }
+    /// <summary>Gross minus fair basis. Only this can revert.</summary>
+    public decimal ExcessPercent { get; init; }
+    public bool BasisReady { get; init; }
     /// <summary>Open fees only (legacy view).</summary>
     public decimal NetSpreadPercent { get; init; }
     /// <summary>Open+close taker fees both legs.</summary>
@@ -68,12 +73,16 @@ public class FuturesPaperPosition
     public DateTime OpenedAt { get; set; }
     public Guid TradeId { get; set; }
     public decimal EntryWidthPercent { get; set; }
+    /// <summary>Fair cross learned at entry. Take-profit aims here, not at zero.</summary>
+    public decimal FairBasisPercent { get; set; }
     public decimal UnrealizedPnlUsd { get; set; }
     public decimal LongUnrealizedPnlUsd { get; set; }
     public decimal ShortUnrealizedPnlUsd { get; set; }
     public decimal MarkLongBid { get; set; }
     public decimal MarkShortAsk { get; set; }
     public decimal CurrentWidthPercent { get; set; }
+    /// <summary>Consecutive marks at or through the stop. One bad print must not flatten.</summary>
+    public int AdverseMarks { get; set; }
     public decimal LockedMarginUsd { get; set; }
     public decimal Leverage { get; set; }
     // HoldDecisionEngine output — updated each scan cycle

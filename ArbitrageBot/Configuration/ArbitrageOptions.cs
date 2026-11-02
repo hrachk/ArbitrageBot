@@ -41,7 +41,7 @@ public class ArbitrageOptions
 
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 12;
-    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 15_000_000m;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 30_000_000m;
     public string DynamicQuoteAsset { get; set; } = "USDT";
     public int DynamicRefreshMinutes { get; set; } = 15;
     /// <summary>Skip these base assets (majors with near-zero cross-exchange edge).</summary>
@@ -61,7 +61,7 @@ public class ArbitrageOptions
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
     public decimal MinTakeProfitUsd { get; set; } = 1.50m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.55m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.60m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
@@ -81,7 +81,7 @@ public class ArbitrageOptions
     // Futures paper
     public decimal FuturesPaperLeverage { get; set; } = 3m;
     public int FuturesMaxOpenPositions { get; set; } = 2;
-    public int FuturesMaxHoldMinutes { get; set; } = 5;
+    public int FuturesMaxHoldMinutes { get; set; } = 0;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.05m;
 
@@ -133,7 +133,7 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 1500;
+    public int MinSpreadPersistMs { get; set; } = 2000;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
     public int MaxBookAgeMs { get; set; } = 300;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
@@ -144,7 +144,7 @@ public class ArbitrageOptions
     public bool RequireDepthFullFill { get; set; } = true;
 
     /// <summary>Leverage used for live orders (separate from paper simulation).</summary>
-    public decimal LivePaperLeverage { get; set; } = 5m;
+    public decimal LivePaperLeverage { get; set; } = 3m;
 
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);

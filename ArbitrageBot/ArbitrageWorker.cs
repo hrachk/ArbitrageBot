@@ -37,6 +37,7 @@ public class ArbitrageWorker : BackgroundService
                    || r.Contains("Cooldown", StringComparison.OrdinalIgnoreCase)
                    || r.Contains("RT ", StringComparison.OrdinalIgnoreCase)
                    || r.Contains("min ", StringComparison.OrdinalIgnoreCase)
+                   || r.Contains("Banned", StringComparison.OrdinalIgnoreCase)
                    || r.Contains("no-candidates", StringComparison.OrdinalIgnoreCase);
         if (!routine) return true;
         var key = symbol + "|" + (r.Length > 40 ? r[..40] : r);
@@ -317,7 +318,7 @@ public class ArbitrageWorker : BackgroundService
                 "Futures scan: ranked={N} EXEC={E} best open={Open:F3}% RT={Best:F3}% | top={Top}",
                 opps.Count, nExec, bestOpen, bestRt,
                 string.Join(", ", opps.Take(5).Select(x =>
-                    $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} {x.NetSpreadPercent:F3}%{(x.IsExecutable ? "*" : "")}")));
+                    $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} xs {x.ExcessPercent:F3}%{(x.IsExecutable ? "*" : "")}")));
         }
         else if ((DateTime.UtcNow - _lastNoCandDiagUtc).TotalSeconds >= 30)
         {
@@ -350,6 +351,7 @@ public class ArbitrageWorker : BackgroundService
                         NotionalUsd = o.NotionalUsd,
                         LongAsk = o.LongAskVwap,
                         ShortBid = o.ShortBidVwap,
+                        FairBasisPercent = o.FairBasisPercent,
                         Leverage = snap.FuturesPaperLeverage > 0 ? snap.FuturesPaperLeverage : 5m
                     };
                     var liveRes = await _liveExec.TryOpenHedgeAsync(liveReq, ct);

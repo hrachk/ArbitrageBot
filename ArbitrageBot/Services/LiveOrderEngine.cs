@@ -36,6 +36,7 @@ public sealed class LiveOrderEngine
     /// <summary>Exchange → UTC until which we skip live orders (balance / hard rejects).</summary>
     private readonly ConcurrentDictionary<string, DateTime> _venueCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _symbolCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<Guid, int> _adverseMarks = new();
     private static readonly TimeSpan BalanceCooldown = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan RejectCooldown = TimeSpan.FromSeconds(90);
 
@@ -152,14 +153,26 @@ public sealed class LiveOrderEngine
         if (estNotional < 20m)
             return SkipSymbol(req.Symbol, $"notional {estNotional:F2}$ below $20 after lot step — not sent", RejectCooldown);
 
+        if (TradeBan.IsRouteBanned(req.Symbol, req.LongExchange, req.ShortExchange))
+            return SkipSymbol(req.Symbol, "banned after stop, dead book, or structural basis", TimeSpan.FromMinutes(30));
+
         // Spread must still be there at send time. A vanished cross is not a hedge, it is two market bets.
         if (req.LongAsk is not > 0 || req.ShortBid is not > 0 || req.ShortBid <= req.LongAsk)
             return SkipSymbol(req.Symbol, "spread gone before send", TimeSpan.FromSeconds(20));
 
         var grossOpen = (req.ShortBid.Value - req.LongAsk.Value) * roundedQty;
+        var grossPct = req.LongAsk.Value > 0
+            ? (req.ShortBid.Value - req.LongAsk.Value) / req.LongAsk.Value * 100m
+            : 0m;
+        if (grossPct > ArbEconomics.MaxSaneGrossPercent)
+            return SkipSymbol(req.Symbol, $"gross {grossPct:F2}% is a broken feed, not an arb", TimeSpan.FromMinutes(10));
+        if (req.FairBasisPercent >= ArbEconomics.StructuralBasisPercent)
+            return SkipSymbol(req.Symbol, $"structural basis {req.FairBasisPercent:F2}%", TimeSpan.FromHours(6));
         var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
         var reserveUsd = estNotional * ArbEconomics.ExecutionReservePercent(opt.OpenEdgeBufferPercent) / 100m;
-        var netOpen = grossOpen - feesOpen - reserveUsd;
+        // Fair basis is not profit. Only the excess over it can revert.
+        var basisUsd = estNotional * (req.FairBasisPercent > 0 ? req.FairBasisPercent : 0m) / 100m;
+        var netOpen = grossOpen - basisUsd - feesOpen - reserveUsd;
         var minTp = ArbEconomics.RequiredTakeProfitUsd(opt.MinTakeProfitUsd, estNotional);
         var minEdgeUsd = estNotional * ArbEconomics.RequiredNetPercent(opt.MinProfitPercent) / 100m;
         var need = Math.Max(minTp, minEdgeUsd);
@@ -353,14 +366,21 @@ public sealed class LiveOrderEngine
             var notional = pos.LongEntry > 0 ? pos.LongEntry * pos.BaseQty : pos.NotionalUsd;
             var minTp = ArbEconomics.RequiredTakeProfitUsd(LiveMinNetUsd(notional), notional);
             var stopLevel = ArbEconomics.EffectiveStopUsd(stopLossUsd, fees, minTp);
-            var stop = net <= stopLevel;
+            var widened = entryWidth > 0 && width >= entryWidth + 0.30m;
+            var disaster = net <= -Math.Max(8m, notional * 0.035m);
+            var adverse = net <= stopLevel && (widened || disaster)
+                ? _adverseMarks.AddOrUpdate(pos.Id, 1, (_, n) => n + 1)
+                : ResetAdverse(pos.Id);
+            var stop = (disaster && adverse >= 2) || adverse >= 6;
             var converged = width <= closeBelow;
-            var shrunk = entryWidth > 0 && width <= entryWidth * 0.55m;
+            var shrunk = entryWidth > 0 && width <= entryWidth * 0.40m;
             var takeProfit = net >= minTp && (converged || shrunk);
             var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
             var timeoutHarvest = timedOut && net >= minTp;
 
             if (!stop && !takeProfit && !timeoutHarvest) continue;
+            if (stop) TradeBan.Ban(pos.Symbol, TimeSpan.FromHours(6));
+            _adverseMarks.TryRemove(pos.Id, out _);
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;
@@ -369,6 +389,12 @@ public sealed class LiveOrderEngine
                 pos.Symbol, width, net, gross, fees, minTp, stop, takeProfit, timeoutHarvest);
         }
         return closed;
+    }
+
+    private int ResetAdverse(Guid id)
+    {
+        _adverseMarks.TryRemove(id, out _);
+        return 0;
     }
 
     private async Task<bool> TryReduceAsync(

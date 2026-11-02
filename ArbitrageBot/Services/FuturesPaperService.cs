@@ -137,6 +137,14 @@ public class FuturesPaperService : IFuturesPaperService
             if (!R.PaperTrading) return Fail(opp, "Paper disabled");
             if (R.IsExcludedSymbol(opp.Symbol))
                 return Fail(opp, $"Toxic/excluded {opp.Symbol}");
+            if (TradeBan.IsRouteBanned(opp.Symbol, opp.LongExchange, opp.ShortExchange))
+                return Fail(opp, $"Banned {opp.Symbol} after stop, dead book, or structural basis");
+            if (!opp.BasisReady)
+                return Fail(opp, "Basis not learned yet");
+            if (opp.FairBasisPercent >= ArbEconomics.StructuralBasisPercent)
+                return Fail(opp, $"Structural basis {opp.FairBasisPercent:F3}%");
+            if (opp.ExcessPercent < 0.18m)
+                return Fail(opp, $"Excess {opp.ExcessPercent:F3}% is noise");
 
             var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
             if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
@@ -251,7 +259,7 @@ public class FuturesPaperService : IFuturesPaperService
                 OpenFeesUsd = openFees,
                 IsOpen = true,
                 Status = "Open",
-                Message = $"Hedge opened | size {notional:F0}$ open {opp.NetSpreadPercent:F3}% RT {opp.NetRoundTripPercent:F3}%"
+                Message = $"Hedge opened | size {notional:F0}$ excess {opp.ExcessPercent:F3}% RT {opp.NetRoundTripPercent:F3}% basis {opp.FairBasisPercent:F3}%"
             };
 
             _analytics.RecordOpen(trade, opp);
@@ -274,6 +282,7 @@ public class FuturesPaperService : IFuturesPaperService
                 EntryWidthPercent = opp.LongAskVwap > 0
                     ? (opp.ShortBidVwap - opp.LongAskVwap) / opp.LongAskVwap * 100m
                     : 0m,
+                FairBasisPercent = opp.FairBasisPercent,
                 LockedMarginUsd = marginEach,
                 Leverage = leverage,
                 EntryFundingDeltaRate = entryDelta,
@@ -397,16 +406,26 @@ public class FuturesPaperService : IFuturesPaperService
                 var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
                 if (marks == null || marks.Value.longBid <= 0 || marks.Value.shortAsk <= 0)
                 {
-                    // No live book → cannot manage risk. After 8 minutes orphan the row
-                    // (return locked margin, no fictional fill PnL) so UI stops lying "4 open".
-                    if ((DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= 8)
+                    // No live book → the quote that opened this hedge is gone.
+                    // Three minutes, then book the open fee and ban the name for 6h.
+                    // An 8-minute $0 orphan was how AKE reloaded twenty times.
+                    if ((DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= 3)
                     {
                         var marginEachOrphan = pos.LockedMarginUsd > 0
                             ? pos.LockedMarginUsd
                             : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
                         _margin.AddOrUpdate(pos.LongExchange, marginEachOrphan, (_, v) => v + marginEachOrphan);
                         _margin.AddOrUpdate(pos.ShortExchange, marginEachOrphan, (_, v) => v + marginEachOrphan);
+                        // Open fees already left the wallet. Book them. A $0 orphan was hiding
+                        // the cost and immediately reloading the same symbol.
                         var tr = _trades.FirstOrDefault(x => x.Id == pos.TradeId);
+                        var openFeesOrphan = tr?.OpenFeesUsd ?? 0m;
+                        var stalePnl = -openFeesOrphan;
+                        RealizedPnlUsd += stalePnl;
+                        if (DateTime.UtcNow.Date != _dayUtc) { _dayUtc = DateTime.UtcNow.Date; DailyRealizedPnlUsd = 0; }
+                        DailyRealizedPnlUsd += stalePnl;
+                        TradeBan.Ban(pos.Symbol, TimeSpan.FromHours(6));
+                        _lastCloseUtc = DateTime.UtcNow;
                         if (tr != null)
                         {
                             var idx = _trades.IndexOf(tr);
@@ -415,14 +434,15 @@ public class FuturesPaperService : IFuturesPaperService
                                 ClosedAt = DateTime.UtcNow,
                                 IsOpen = false,
                                 Status = "Closed(stale-no-book)",
-                                Message = "Orphaned: no marks on both legs for 8m — margin returned, no exit fill",
-                                RealizedPnlUsd = 0
+                                Message = $"Dead book 3m — fees {stalePnl:F2}, symbol banned 6h",
+                                RealizedPnlUsd = stalePnl
                             };
+                            _analytics.RecordClose(_trades[idx]);
                         }
                         _positions.Remove(pos);
                         closed++;
-                        _logger.LogWarning("Paper orphan close {Sym} {L}/{S} — no book marks",
-                            pos.Symbol, pos.LongExchange, pos.ShortExchange);
+                        _logger.LogWarning("Paper orphan close {Sym} {L}/{S} pnl={Pnl:F2} — banned 6h",
+                            pos.Symbol, pos.LongExchange, pos.ShortExchange, stalePnl);
                     }
                     continue;
                 }
@@ -459,13 +479,19 @@ public class FuturesPaperService : IFuturesPaperService
                 var notional = pos.LongEntry * pos.BaseQty;
                 var minTp = ArbEconomics.RequiredTakeProfitUsd(R.MinTakeProfitUsd, notional);
                 var stopLevel = ArbEconomics.EffectiveStopUsd(R.FuturesStopLossUsd, openFees + closeFees, minTp);
-                var stopHit = pnl <= stopLevel;
+                var widened = pos.EntryWidthPercent > 0 && currentWidth >= pos.EntryWidthPercent + 0.30m;
+                var disaster = pnl <= -Math.Max(8m, notional * 0.035m);
+                if (pnl <= stopLevel && (widened || disaster)) pos.AdverseMarks++;
+                else pos.AdverseMarks = 0;
+                // Six scans. A flicker inside the entry book is not a stop; a real widening is.
+                var stopHit = (disaster && pos.AdverseMarks >= 2) || pos.AdverseMarks >= 6;
 
                 var threshold = closeWhenNetBelowPercent;
+                var fair = pos.FairBasisPercent;
+                var reverted = currentWidth <= Math.Max(fair + 0.08m, Math.Max(threshold, 0.05m));
                 var shrunk = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.40m;
-                var belowAbs = currentWidth <= Math.Max(threshold, 0.05m);
 
-                var takeProfit = pnl >= minTp && (belowAbs || shrunk);
+                var takeProfit = pnl >= minTp && (reverted || shrunk);
                 // Do not flatten a red hedge just because the gap closed. That is how the book bleeds.
                 // A real blowout is the stop. A winner is take-profit only.
 
@@ -482,6 +508,8 @@ public class FuturesPaperService : IFuturesPaperService
                 var reason = stopHit ? "stop-loss"
                     : takeProfit ? "take-profit"
                     : "timeout-harvest";
+                if (stopHit)
+                    TradeBan.Ban(pos.Symbol, TimeSpan.FromHours(6));
                 var marginEach = pos.LockedMarginUsd > 0
                     ? pos.LockedMarginUsd
                     : pos.LongEntry * pos.BaseQty / (pos.Leverage > 0 ? pos.Leverage : 5m);
@@ -1052,6 +1080,7 @@ public class FuturesPaperService : IFuturesPaperService
                         OpenedAt = p.OpenedAt,
                         TradeId = p.TradeId,
                         EntryWidthPercent = p.EntryWidthPercent,
+                        FairBasisPercent = p.FairBasisPercent,
                         LockedMarginUsd = p.LockedMarginUsd,
                         Leverage = p.Leverage,
                         UnrealizedPnlUsd = p.UnrealizedPnlUsd,
