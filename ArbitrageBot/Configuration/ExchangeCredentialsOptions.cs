@@ -72,10 +72,10 @@ public class TradingUiSettings
     public bool RequireDepthFullFill { get; set; } = true;
     public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
     public int MaxLegsPerVenue { get; set; } = 2;
-    public decimal MaxWidthExpansionPercent { get; set; } = 0.08m;
+    public decimal MaxWidthExpansionPercent { get; set; } = 0.06m;
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 12;
-    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 15_000_000m;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 30_000_000m;
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 500_000_000m;
     public int DynamicRefreshMinutes { get; set; } = 15;
     public decimal PaperStartingQuote { get; set; } = 1000m;

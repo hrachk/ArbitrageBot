@@ -29,7 +29,7 @@ AB.pages.settings = {
       openEdgeBufferPercent: 0.08,
       requireSpreadingEdge: true,
       minSpreadPersistMs: 2000,
-      maxBookAgeMs: 350,
+      maxBookAgeMs: 300,
       maxLegsPerVenue: 2,
       minDepthScoreForUniverse: 1.0,
       maxWidthExpansionPercent: 0.06,

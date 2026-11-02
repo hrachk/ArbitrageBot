@@ -26,7 +26,7 @@
     "MinGrossSpreadPercent": 0.60,
     "MinTakeProfitUsd": 1.50,
     "MinSpreadPersistMs": 2000,
-    "MaxBookAgeMs": 350,
+    "MaxBookAgeMs": 300,
     "ScanIntervalMs": 250,
     "FuturesMaxHoldSeconds": 0,
     "SpatialScalpMode": false,
@@ -45,5 +45,5 @@
     "PaperStartingQuote": 1000
   },
   "exchanges": {},
-  "savedUtc": "2026-10-26T18:34:00Z"
+  "savedUtc": "2026-11-02T16:10:00Z"
 }

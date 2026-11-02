@@ -114,11 +114,11 @@ public class ArbitrageOptions
     /// <summary>
     /// Free USDT margin on EACH exchange. $100 deposit → notional = equity × leverage × usage, capped at LiveMaxNotionalUsd.
     /// </summary>
-    public decimal LiveEquityPerExchangeUsd { get; set; } = 100m;
+    public decimal LiveEquityPerExchangeUsd { get; set; } = 1000m;
     /// <summary>Fraction of per-exchange equity locked as margin. 0.25 of $100 at 5x = $125, then capped by max notional.</summary>
     public decimal LiveMarginUsageFraction { get; set; } = 0.20m;
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
-    public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -9m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
     public decimal LiveStopLossUsd { get; set; } = -3m;
     /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
@@ -139,7 +139,7 @@ public class ArbitrageOptions
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
     public int MaxLegsPerVenue { get; set; } = 2;
     /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>
-    public decimal MaxWidthExpansionPercent { get; set; } = 0.08m;
+    public decimal MaxWidthExpansionPercent { get; set; } = 0.06m;
     /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
     public bool RequireDepthFullFill { get; set; } = true;
 
