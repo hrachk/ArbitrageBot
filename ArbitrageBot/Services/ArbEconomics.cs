@@ -102,17 +102,26 @@ public static class ArbEconomics
     public const decimal MinNetAfterCostsPercent = 0.20m;
 
     public static decimal RequiredNetPercent(decimal minProfit)
-        => Math.Max(minProfit, MinNetAfterCostsPercent);
+    {
+        var v = minProfit > 0 ? minProfit : MinNetAfterCostsPercent;
+        if (v < MinNetAfterCostsPercent) v = MinNetAfterCostsPercent;
+        // A saved 0.20 on top of four taker fees asked for a spike this market does not print.
+        if (v > 0.15m) v = 0.15m;
+        return v;
+    }
 
     /// <summary>
-    /// Dollar target. Never below 0.60% of notional and never below $1.
-    /// A $0.40 target against a $6 stop is how the book bleeds.
+    /// Dollar form of the net gate. Do not add another 0.60% of notional on top of fees:
+    /// that stack is why a whole day produced zero entries.
     /// </summary>
     public static decimal RequiredTakeProfitUsd(decimal configured, decimal notional)
     {
-        var byNotional = notional > 0 ? notional * 0.006m : 1.50m;
-        var cfg = configured > 0 ? configured : 1.50m;
-        return Math.Max(cfg, Math.Max(byNotional, 1.00m));
+        var fromEdge = notional > 0 ? notional * MinNetAfterCostsPercent / 100m : 0.35m;
+        if (fromEdge < 0.35m) fromEdge = 0.35m;
+        if (configured <= 0) return fromEdge;
+        var cap = notional > 0 ? Math.Max(notional * 0.0020m, fromEdge) : configured;
+        if (configured > cap) return cap;
+        return Math.Max(configured, fromEdge);
     }
 
     /// <summary>

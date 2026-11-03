@@ -143,7 +143,7 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, "Basis not learned yet");
             if (opp.FairBasisPercent >= ArbEconomics.StructuralBasisPercent)
                 return Fail(opp, $"Structural basis {opp.FairBasisPercent:F3}%");
-            if (opp.ExcessPercent < 0.18m)
+            if (opp.ExcessPercent < 0.10m)
                 return Fail(opp, $"Excess {opp.ExcessPercent:F3}% is noise");
 
             var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;

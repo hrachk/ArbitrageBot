@@ -34,7 +34,7 @@ public class TradingUiSettings
     public bool PaperTrading { get; set; } = true;
     public bool PaperAutoExecute { get; set; } = true;
     /// <summary>Min net edge % after fees, both books and slip. Same gate for paper and live.</summary>
-    public decimal MinProfitPercent { get; set; } = 0.20m;
+    public decimal MinProfitPercent { get; set; } = 0.12m;
     /// <summary>Notional per leg (USDT). Paper + Live share this (LiveMaxNotional synced).</summary>
     public decimal QuoteSize { get; set; } = 250m;
     public decimal FuturesPaperLeverage { get; set; } = 3m;
@@ -59,23 +59,23 @@ public class TradingUiSettings
     public decimal LiveStopLossUsd { get; set; } = -3m;
     public decimal LiveDailyLossLimitUsd { get; set; } = -9m;
 
-    public decimal MinGrossSpreadPercent { get; set; } = 0.60m;
-    public decimal MinTakeProfitUsd { get; set; } = 1.50m;
-    public int MinSpreadPersistMs { get; set; } = 2000;
-    public int MaxBookAgeMs { get; set; } = 300;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.40m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.50m;
+    public int MinSpreadPersistMs { get; set; } = 800;
+    public int MaxBookAgeMs { get; set; } = 1500;
     public int ScanIntervalMs { get; set; } = 250;
     public int FuturesMaxHoldSeconds { get; set; } = 0;
     public bool SpatialScalpMode { get; set; } = false;
     public bool RequireSpreadingEdge { get; set; } = true;
     public decimal PaperCloseFeeFactor { get; set; } = 1m;
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.08m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.04m;
     public bool RequireDepthFullFill { get; set; } = true;
     public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
     public int MaxLegsPerVenue { get; set; } = 2;
     public decimal MaxWidthExpansionPercent { get; set; } = 0.06m;
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 12;
-    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 30_000_000m;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 500_000_000m;
     public int DynamicRefreshMinutes { get; set; } = 15;
     public decimal PaperStartingQuote { get; set; } = 1000m;

@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.20m;
+    public decimal MinProfitPercent { get; set; } = 0.12m;
     public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
@@ -41,7 +41,7 @@ public class ArbitrageOptions
 
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 12;
-    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 30_000_000m;
+    public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;
     public string DynamicQuoteAsset { get; set; } = "USDT";
     public int DynamicRefreshMinutes { get; set; } = 15;
     /// <summary>Skip these base assets (majors with near-zero cross-exchange edge).</summary>
@@ -57,11 +57,11 @@ public class ArbitrageOptions
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
     public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.08m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.04m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 1.50m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.50m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.60m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.40m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
@@ -133,9 +133,9 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 2000;
+    public int MinSpreadPersistMs { get; set; } = 800;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
-    public int MaxBookAgeMs { get; set; } = 300;
+    public int MaxBookAgeMs { get; set; } = 1500;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
     public int MaxLegsPerVenue { get; set; } = 2;
     /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>

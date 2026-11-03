@@ -46,6 +46,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private readonly CancellationTokenSource _restCts = new();
     private static readonly TimeSpan FundingCacheTtl = TimeSpan.FromMinutes(45);
     private DateTime _lastFundingRefreshUtc = DateTime.MinValue;
+    private long _lastScanLogMs;
     private readonly SemaphoreSlim _fundingLock = new(1, 1);
 
     public IReadOnlyDictionary<string, string> ConnectionStatus => _status;
@@ -370,7 +371,12 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             {
                 var ageMs = (now - t.Timestamp).TotalMilliseconds;
                 // REST is a fallback, not a 8-second-old price. One missed poll and the quote is dead.
-                var limit = _restSourced.ContainsKey(key) ? Math.Max(maxAge, 1500) : maxAge;
+                // A quiet book ticker does not resend. 300ms of silence is not a dead feed.
+                // REST is polled about every 2–3s, so 1.5s made OKX/Bitget/Gate/Kucoin vanish
+                // and the 3-venue rule then skipped every symbol.
+                var wsLimit = Math.Max(maxAge, 1500);
+                var restLimit = 4000;
+                var limit = _restSourced.ContainsKey(key) ? restLimit : wsLimit;
                 if (ageMs > limit) continue;
             }
             result[ex] = t;
@@ -496,8 +502,20 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             var mids = new List<decimal>(tickers.Count);
             foreach (var t in tickers.Values)
             {
+                if (t.BestBid <= 0 || t.BestAsk <= 0) continue;
                 if (ArbEconomics.BookSpreadPercent(t.BestBid, t.BestAsk) > 0.35m) continue;
                 mids.Add((t.BestBid + t.BestAsk) / 2m);
+            }
+            // A third venue can be a bit wide and still be a fair reference. The traded legs stay tight.
+            if (mids.Count < 3)
+            {
+                mids.Clear();
+                foreach (var t in tickers.Values)
+                {
+                    if (t.BestBid <= 0 || t.BestAsk <= 0) continue;
+                    if (ArbEconomics.BookSpreadPercent(t.BestBid, t.BestAsk) > 0.80m) continue;
+                    mids.Add((t.BestBid + t.BestAsk) / 2m);
+                }
             }
             if (mids.Count < 3) continue;
             mids.Sort();
@@ -584,7 +602,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var reserveNow = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var minEdge = ArbEconomics.RequiredNetPercent(snap.MinProfitPercent);
                     var feeFloor = feeRt + reserveNow + minEdge;
-                    var minGross = Math.Max(snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeFloor, feeFloor);
+                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeFloor;
+                    // A saved 0.60% floor, on top of fees, is why the book sat idle for a day.
+                    if (configuredGross > 0.45m) configuredGross = 0.45m;
+                    var minGross = Math.Max(configuredGross, feeFloor);
                     var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, notional);
                     // Next funding interval would cost more than the price edge can carry.
                     var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);
@@ -614,7 +635,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var banned = TradeBan.IsRouteBanned(symbol, longEx, shortEx);
                     // A wiggle inside this pair's own noise is not a dislocation.
-                    var spikeOk = excess >= Math.Max(dev * 2.5m, 0.18m);
+                    var noise = dev * 1.2m;
+                    if (noise < 0.10m) noise = 0.10m;
+                    if (noise > 0.22m) noise = 0.22m;
+                    var spikeOk = excess >= noise;
                     var sane = gross > 0m && gross <= ArbEconomics.MaxSaneGrossPercent;
 
                     // Persist counts only while the trade is actually good. A pair seen earlier at 0.05%
@@ -630,7 +654,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     }
                     else
                     {
-                        var persistMs = Math.Max(snap.MinSpreadPersistMs, 1800);
+                        var persistMs = snap.MinSpreadPersistMs;
+                        if (persistMs < 600) persistMs = 600;
+                        if (persistMs > 1000) persistMs = 1000;
                         var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
                         var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
                         persistOk = heldMs >= persistMs;
@@ -695,6 +721,18 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         LastScanBestNetOpen = bestNet;
         LastScanBooksReady = booksReady;
         LastScanPairsCompared = pairsCompared;
+        var nowMs = Environment.TickCount64;
+        if (nowMs - _lastScanLogMs > 60_000)
+        {
+            _lastScanLogMs = nowMs;
+            var execN = list.Count(x => x.IsExecutable);
+            _logger.LogInformation(
+                "Scan: exec={E} shown={S} books={B} pairs={P} bestGross={G} bestNetOpen={N} persistWait={W}",
+                execN, list.Count, booksReady, pairsCompared,
+                bestGross?.ToString("F3") ?? "none",
+                bestNet?.ToString("F3") ?? "none",
+                LastScanPersistPending);
+        }
 
         // One ranked list for dashboard + execution (top by open-edge net)
         return list
@@ -904,8 +942,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     private (decimal Fair, decimal Dev, bool Ready) ReadBasis(string key)
     {
-        if (!_basis.TryGetValue(key, out var s) || s.N < 18) return (0m, 0m, false);
-        if (s.LastMs - s.FirstMs < 90_000) return (s.Ema, s.Dev, false);
+        if (!_basis.TryGetValue(key, out var s) || s.N < 12) return (0m, 0m, false);
+        if (s.LastMs - s.FirstMs < 45_000) return (s.Ema, s.Dev, false);
         return (s.Ema, s.Dev, true);
     }
 

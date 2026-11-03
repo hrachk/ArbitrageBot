@@ -1,7 +1,7 @@
 AB.pages.settings = {
   presets: {
     professional: {
-      minProfitPercent: 0.20,
+      minProfitPercent: 0.12,
       quoteSize: 250,
       leverage: 3,
       maxOpenPositions: 2,
@@ -16,8 +16,8 @@ AB.pages.settings = {
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
-      minGrossSpreadPercent: 0.60,
-      minTakeProfitUsd: 1.50,
+      minGrossSpreadPercent: 0.40,
+      minTakeProfitUsd: 0.50,
       spatialScalpMode: false,
       paperStartingQuote: 1000,
       liveEquityPerExchangeUsd: 1000,
@@ -26,15 +26,15 @@ AB.pages.settings = {
       liveMaxOpenPositions: 2,
       liveStopLossUsd: -3,
       paperCloseFeeFactor: 1,
-      openEdgeBufferPercent: 0.08,
+      openEdgeBufferPercent: 0.04,
       requireSpreadingEdge: true,
-      minSpreadPersistMs: 2000,
-      maxBookAgeMs: 300,
+      minSpreadPersistMs: 800,
+      maxBookAgeMs: 1500,
       maxLegsPerVenue: 2,
       minDepthScoreForUniverse: 1.0,
       maxWidthExpansionPercent: 0.06,
       dynamicTopN: 12,
-      dynamicMinQuoteVolumeUsd: 30000000,
+      dynamicMinQuoteVolumeUsd: 8000000,
       dynamicRefreshMinutes: 15
     },
     micro5: {
