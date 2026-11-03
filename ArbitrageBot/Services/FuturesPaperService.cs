@@ -141,8 +141,6 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Banned {opp.Symbol} after stop, dead book, or structural basis");
             if (!opp.BasisReady)
                 return Fail(opp, "Basis not learned yet");
-            if (opp.FairBasisPercent >= ArbEconomics.StructuralBasisPercent)
-                return Fail(opp, $"Structural basis {opp.FairBasisPercent:F3}%");
             if (opp.ExcessPercent < 0.10m)
                 return Fail(opp, $"Excess {opp.ExcessPercent:F3}% is noise");
 

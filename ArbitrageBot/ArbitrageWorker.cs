@@ -318,7 +318,7 @@ public class ArbitrageWorker : BackgroundService
                 "Futures scan: ranked={N} EXEC={E} best open={Open:F3}% RT={Best:F3}% | top={Top}",
                 opps.Count, nExec, bestOpen, bestRt,
                 string.Join(", ", opps.Take(5).Select(x =>
-                    $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} xs {x.ExcessPercent:F3}%{(x.IsExecutable ? "*" : "")}")));
+                    $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} xs {x.ExcessPercent:F3}%{(x.IsExecutable ? "*" : " " + x.GateNote)}")));
         }
         else if ((DateTime.UtcNow - _lastNoCandDiagUtc).TotalSeconds >= 30)
         {

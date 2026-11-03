@@ -616,7 +616,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         var now = DateTime.UtcNow;
                         if (_grossHistory.TryGetValue(edgeKey, out var prev)
                             && (now - prev.utc).TotalMilliseconds is >= 400 and <= 3000
-                            && gross + 0.015m < prev.gross)
+                            && gross + 0.08m < prev.gross)
                             spreadingOk = false;
                         _grossHistory[edgeKey] = (gross, now);
                     }
@@ -624,14 +624,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var filled = buyFill.FullyFilled && sellFill.FullyFilled;
                     var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
                     var fillOk = !needFill || filled;
-                    if (basisReady && fair >= ArbEconomics.StructuralBasisPercent
-                        && !TradeBan.IsRouteBanned(symbol, longEx, shortEx))
-                    {
-                        TradeBan.BanRoute(symbol, longEx, shortEx, TimeSpan.FromHours(6));
-                        _logger.LogInformation(
-                            "Structural basis {Sym} {L}->{S} fair={F:F3}% — route banned 6h",
-                            symbol, longEx, shortEx, fair);
-                    }
+                    // A high fair basis is not a ban. The excess above it is the only profit,
+                    // and a spike on a rich pair is still a trade. Banning it for 6h is why
+                    // AKE printed RT +0.66% all evening and never opened.
 
                     var banned = TradeBan.IsRouteBanned(symbol, longEx, shortEx);
                     // A wiggle inside this pair's own noise is not a dislocation.
@@ -644,7 +639,6 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     // Persist counts only while the trade is actually good. A pair seen earlier at 0.05%
                     // must not make a one-tick 0.5% spike look "held for 800ms".
                     var gateNow = basisReady && !banned && spikeOk && widthOk && touchOk && twoSided && sane
-                        && fair < ArbEconomics.StructuralBasisPercent
                         && gross >= minGross && netRt >= minEdge && pricePnl >= minTp && fundingOk && fillOk && spreadingOk;
                     bool persistOk;
                     if (!gateNow)
@@ -655,8 +649,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     else
                     {
                         var persistMs = snap.MinSpreadPersistMs;
-                        if (persistMs < 600) persistMs = 600;
-                        if (persistMs > 1000) persistMs = 1000;
+                        if (persistMs < 400) persistMs = 400;
+                        if (persistMs > 800) persistMs = 800;
                         var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
                         var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
                         persistOk = heldMs >= persistMs;
@@ -665,6 +659,19 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     }
 
                     var executable = gateNow && persistOk;
+                    var gateNote = executable ? null
+                        : !basisReady ? "basis"
+                        : banned ? "ban"
+                        : !spikeOk ? "spike"
+                        : !touchOk ? "touch"
+                        : gross < minGross ? "gross"
+                        : netRt < minEdge ? "rt"
+                        : pricePnl < minTp ? "tp"
+                        : !fundingOk ? "fund"
+                        : !fillOk ? "fill"
+                        : !spreadingOk ? "fade"
+                        : !persistOk ? "persist"
+                        : "gate";
 
                     // A one-sided or wide print is not a candidate. Showing it as a signal
                     // is how a broken Bitget book looked like a 1% trade all night.
@@ -689,6 +696,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         BaseQty = qty,
                         FullyFilled = filled,
                         IsExecutable = executable,
+                        GateNote = gateNote,
                         GrossSpreadPercent = gross,
                         FairBasisPercent = fair,
                         ExcessPercent = excess,

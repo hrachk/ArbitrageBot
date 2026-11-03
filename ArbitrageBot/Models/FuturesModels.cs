@@ -14,6 +14,8 @@ public record FuturesOpportunity
     public bool FullyFilled { get; init; }
     /// <summary>Passed all open gates (fees, persist, depth).</summary>
     public bool IsExecutable { get; init; }
+    /// <summary>Why this row is not executable. Empty when it is.</summary>
+    public string? GateNote { get; init; }
     public decimal GrossSpreadPercent { get; init; }
     /// <summary>This directed pair's own fair cross, percent. Not profit.</summary>
     public decimal FairBasisPercent { get; init; }

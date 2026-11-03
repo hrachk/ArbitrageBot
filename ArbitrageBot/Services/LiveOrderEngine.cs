@@ -166,8 +166,6 @@ public sealed class LiveOrderEngine
             : 0m;
         if (grossPct > ArbEconomics.MaxSaneGrossPercent)
             return SkipSymbol(req.Symbol, $"gross {grossPct:F2}% is a broken feed, not an arb", TimeSpan.FromMinutes(10));
-        if (req.FairBasisPercent >= ArbEconomics.StructuralBasisPercent)
-            return SkipSymbol(req.Symbol, $"structural basis {req.FairBasisPercent:F2}%", TimeSpan.FromHours(6));
         var feesOpen = EstimateRoundTripFees(req.LongExchange, req.ShortExchange, req.LongAsk.Value, req.ShortBid.Value, roundedQty);
         var reserveUsd = estNotional * ArbEconomics.ExecutionReservePercent(opt.OpenEdgeBufferPercent) / 100m;
         // Fair basis is not profit. Only the excess over it can revert.
