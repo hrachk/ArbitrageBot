@@ -235,6 +235,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
         var cred = _settings.GetCredential(exchange);
         if (cred == null || string.IsNullOrWhiteSpace(cred.ApiKey) || string.IsNullOrWhiteSpace(cred.ApiSecret))
         {
+            LiveOrderEngine.NoteVenueUsdt(exchange, 0);
             return (false, 0, new
             {
                 exchange,
@@ -293,6 +294,11 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 .Where(b => b.asset.Equals("USDT", StringComparison.OrdinalIgnoreCase)
                             || b.asset.Equals("USD", StringComparison.OrdinalIgnoreCase))
                 .Sum(b => b.total);
+            var free = native.balances
+                .Where(b => b.asset.Equals("USDT", StringComparison.OrdinalIgnoreCase)
+                            || b.asset.Equals("USD", StringComparison.OrdinalIgnoreCase))
+                .Sum(b => b.available);
+            LiveOrderEngine.NoteVenueUsdt(exchange, free);
 
             var payload = new
             {

@@ -185,6 +185,13 @@ public sealed class LiveOrderEngine
         }
 
         var estMargin = lev > 0 ? estNotional / lev : estNotional;
+        // A venue we already know is empty must not be tried, and must not
+        // freeze the symbol: Binance↔Bybit still trades if the other four are at 0.
+        if (VenueTooPoor(req.LongExchange, estMargin, out var poorLong))
+            return new { ok = false, error = poorLong };
+        if (VenueTooPoor(req.ShortExchange, estMargin, out var poorShort))
+            return new { ok = false, error = poorShort };
+
         _logger.LogInformation(
             "LIVE size {Sym} qty={Q} notional≈{N:F2}$ margin≈{M:F2}$ (equity={E}$ lev={L}x usage={U:P0} scanQty={Scan})",
             req.Symbol, roundedQty, estNotional, estMargin, equity, lev, usage, scanQty);
@@ -197,11 +204,17 @@ public sealed class LiveOrderEngine
         var longResult = await SendOrderAsync(
             longClient, req.LongExchange, sharedSym, SharedOrderSide.Buy, longQty, lev,
             SharedPositionSide.Long, isClose: false, clientId + "-L", ct,
-            limitPrice: req.LongAsk.Value * 1.0004m).ConfigureAwait(false);
+            limitPrice: SnapLimit(req.LongAsk.Value, req.LongAsk.Value * 1.0004m, up: true)).ConfigureAwait(false);
         if (!longResult.Ok)
         {
             if (IsBalanceError(longResult.Error))
+            {
+                NoteVenueUsdt(req.LongExchange, 0);
                 MarkCooldown(req.LongExchange, longResult.Error);
+                _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}",
+                    req.LongExchange, req.Symbol, longResult.Error);
+                return new { ok = false, error = "no margin on " + req.LongExchange };
+            }
             _logger.LogError("LIVE LONG fail {Ex} {Sym}: {Err}",
                 req.LongExchange, req.Symbol, longResult.Error);
             return SkipSymbol(req.Symbol, "LONG failed: " + longResult.Error, RejectCooldown);
@@ -214,15 +227,20 @@ public sealed class LiveOrderEngine
         var shortResult = await SendOrderAsync(
             shortClient, req.ShortExchange, sharedSym, SharedOrderSide.Sell, shortQty, lev,
             SharedPositionSide.Short, isClose: false, clientId + "-S", ct,
-            limitPrice: req.ShortBid.Value * 0.9996m).ConfigureAwait(false);
+            limitPrice: SnapLimit(req.ShortBid.Value, req.ShortBid.Value * 0.9996m, up: false)).ConfigureAwait(false);
         if (!shortResult.Ok)
         {
             if (IsBalanceError(shortResult.Error))
+            {
+                NoteVenueUsdt(req.ShortExchange, 0);
                 MarkCooldown(req.ShortExchange, shortResult.Error);
+            }
             _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long",
                 req.ShortExchange, req.Symbol, shortResult.Error);
             await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
                 .ConfigureAwait(false);
+            if (IsBalanceError(shortResult.Error))
+                return new { ok = false, error = "no margin on " + req.ShortExchange + " (long unwind attempted)" };
             return SkipSymbol(req.Symbol, "SHORT failed: " + shortResult.Error + " (long unwind attempted)", RejectCooldown);
         }
 
@@ -884,6 +902,56 @@ public sealed class LiveOrderEngine
             return string.IsNullOrWhiteSpace(message) ? t : message + " | " + t;
         }
         return string.IsNullOrWhiteSpace(message) ? fallback : message;
+    }
+
+    /// <summary>Last known free USDT per venue. Missing key means "not checked yet", not "empty".</summary>
+    private static readonly ConcurrentDictionary<string, decimal> VenueFreeUsdt = new(StringComparer.OrdinalIgnoreCase);
+
+    public static void NoteVenueUsdt(string exchange, decimal available)
+    {
+        if (string.IsNullOrWhiteSpace(exchange)) return;
+        VenueFreeUsdt[exchange.Trim()] = available;
+    }
+
+    private static bool VenueTooPoor(string exchange, decimal needUsd, out string why)
+    {
+        why = "";
+        if (!VenueFreeUsdt.TryGetValue(exchange, out var free)) return false;
+        if (free + 0.5m >= needUsd) return false;
+        why = $"no margin on {exchange} (free {free:F2}$, need {needUsd:F2}$)";
+        return true;
+    }
+
+    /// <summary>
+    /// Put a bumped limit back on the touch's own tick.
+    /// ask * 1.0004 on AKE (0.002166) becomes 0.0021668664 and Binance rejects it with -1111.
+    /// </summary>
+    public static decimal SnapLimit(decimal touch, decimal bumped, bool up)
+    {
+        if (bumped <= 0) return 0;
+        var scale = PriceScale(touch > 0 ? touch : bumped);
+        var factor = 1m;
+        for (var i = 0; i < scale; i++) factor *= 10m;
+        var ticks = bumped * factor;
+        var snapped = up ? Math.Ceiling(ticks - 0.0000001m) : Math.Floor(ticks + 0.0000001m);
+        if (snapped < 1) snapped = 1;
+        return snapped / factor;
+    }
+
+    private static int PriceScale(decimal price)
+    {
+        if (price <= 0) return 2;
+        var text = price.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture);
+        var dot = text.IndexOf('.');
+        var scale = dot < 0 ? 0 : text.Length - dot - 1;
+        if (scale < 1)
+        {
+            if (price >= 1000m) scale = 1;
+            else if (price >= 1m) scale = 2;
+            else scale = 4;
+        }
+        if (scale > 8) scale = 8;
+        return scale;
     }
 
     /// <summary>
