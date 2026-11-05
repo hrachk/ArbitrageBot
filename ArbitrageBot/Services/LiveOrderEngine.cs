@@ -37,6 +37,8 @@ public sealed class LiveOrderEngine
     private readonly ConcurrentDictionary<string, DateTime> _venueCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _symbolCooldownUntil = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<Guid, int> _adverseMarks = new();
+    private readonly ConcurrentDictionary<Guid, decimal> _peakPnl = new();
+    private readonly ConcurrentDictionary<Guid, int> _profitMarks = new();
     private static readonly TimeSpan BalanceCooldown = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan RejectCooldown = TimeSpan.FromSeconds(90);
 
@@ -370,15 +372,26 @@ public sealed class LiveOrderEngine
                 ? _adverseMarks.AddOrUpdate(pos.Id, 1, (_, n) => n + 1)
                 : ResetAdverse(pos.Id);
             var stop = (disaster && adverse >= 2) || adverse >= 6;
+            var peak = net > 0m
+                ? _peakPnl.AddOrUpdate(pos.Id, net, (_, p) => net > p ? net : p)
+                : _peakPnl.GetOrAdd(pos.Id, 0m);
+            var profitMarks = net >= minTp
+                ? _profitMarks.AddOrUpdate(pos.Id, 1, (_, n) => n + 1)
+                : ResetProfit(pos.Id);
             var converged = width <= closeBelow;
             var shrunk = entryWidth > 0 && width <= entryWidth * 0.40m;
-            var takeProfit = net >= minTp && (converged || shrunk);
+            var locked = peak >= minTp;
+            var trailFloor = Math.Max(0.05m, peak * 0.45m);
+            var trailHit = locked && net > 0m && net <= trailFloor && profitMarks == 0;
+            var takeProfit = profitMarks >= 3 || (net >= minTp && (converged || shrunk)) || trailHit;
             var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
             var timeoutHarvest = timedOut && net >= minTp;
 
             if (!stop && !takeProfit && !timeoutHarvest) continue;
             if (stop) TradeBan.Ban(pos.Symbol, TimeSpan.FromHours(6));
             _adverseMarks.TryRemove(pos.Id, out _);
+            _peakPnl.TryRemove(pos.Id, out _);
+            _profitMarks.TryRemove(pos.Id, out _);
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
             closed++;
@@ -392,6 +405,12 @@ public sealed class LiveOrderEngine
     private int ResetAdverse(Guid id)
     {
         _adverseMarks.TryRemove(id, out _);
+        return 0;
+    }
+
+    private int ResetProfit(Guid id)
+    {
+        _profitMarks.TryRemove(id, out _);
         return 0;
     }
 

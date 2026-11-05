@@ -85,6 +85,10 @@ public class FuturesPaperPosition
     public decimal CurrentWidthPercent { get; set; }
     /// <summary>Consecutive marks at or through the stop. One bad print must not flatten.</summary>
     public int AdverseMarks { get; set; }
+    /// <summary>Best flatten-PnL seen. A winner is not allowed to turn into the stop.</summary>
+    public decimal PeakPnlUsd { get; set; }
+    /// <summary>Consecutive marks already at the take-profit. One tick is not a fill.</summary>
+    public int ProfitMarks { get; set; }
     public decimal LockedMarginUsd { get; set; }
     public decimal Leverage { get; set; }
     // HoldDecisionEngine output — updated each scan cycle

@@ -484,12 +484,21 @@ public class FuturesPaperService : IFuturesPaperService
                 // Six scans. A flicker inside the entry book is not a stop; a real widening is.
                 var stopHit = (disaster && pos.AdverseMarks >= 2) || pos.AdverseMarks >= 6;
 
+                if (pnl > pos.PeakPnlUsd) pos.PeakPnlUsd = pnl;
+                if (pnl >= minTp) pos.ProfitMarks++;
+                else pos.ProfitMarks = 0;
+
                 var threshold = closeWhenNetBelowPercent;
                 var fair = pos.FairBasisPercent;
                 var reverted = currentWidth <= Math.Max(fair + 0.08m, Math.Max(threshold, 0.05m));
                 var shrunk = pos.EntryWidthPercent > 0 && currentWidth <= pos.EntryWidthPercent * 0.40m;
 
-                var takeProfit = pnl >= minTp && (reverted || shrunk);
+                // The dollar mark already is the flatten. Do not also wait for the width to die:
+                // that wait is how a green hedge rides back into the stop.
+                var locked = pos.PeakPnlUsd >= minTp;
+                var trailFloor = Math.Max(0.05m, pos.PeakPnlUsd * 0.45m);
+                var trailHit = locked && pnl > 0m && pnl <= trailFloor && pos.ProfitMarks == 0;
+                var takeProfit = pos.ProfitMarks >= 3 || (pnl >= minTp && (reverted || shrunk)) || trailHit;
                 // Do not flatten a red hedge just because the gap closed. That is how the book bleeds.
                 // A real blowout is the stop. A winner is take-profit only.
 
@@ -504,6 +513,7 @@ public class FuturesPaperService : IFuturesPaperService
                     continue;
 
                 var reason = stopHit ? "stop-loss"
+                    : trailHit ? "trail-lock"
                     : takeProfit ? "take-profit"
                     : "timeout-harvest";
                 if (stopHit)
@@ -545,6 +555,7 @@ public class FuturesPaperService : IFuturesPaperService
                         {
                             "stop-loss" => "Closed(stop)",
                             "take-profit" => "Closed(tp)",
+                            "trail-lock" => "Closed(trail)",
                             "failed-converge" => "Closed(failed)",
                             "timeout-harvest" => "Closed(timeout-harvest)",
                             _ => "Closed(converge)"
