@@ -59,46 +59,69 @@ AB.pages.settings = {
       liveStopLossUsd: -25
     },
     conservative: {
-      minProfitPercent: 0.12,
-      quoteSize: 50,
+      minProfitPercent: 0.10,
+      quoteSize: 150,
       leverage: 3,
       maxOpenPositions: 1,
-      stopLossUsd: -8,
-      dailyLossLimitUsd: -25,
+      stopLossUsd: -3,
+      dailyLossLimitUsd: -9,
       maxHoldMinutes: 0,
-      closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.30,
-      maxNotionalUsd: 50,
-      paperCooldownMs: 20000,
-      paperRequireFullFill: true,
-      requireRoundTripEdge: true,
-      includeFunding: true,
-      liveEquityPerExchangeUsd: 2500,
-      liveMarginUsageFraction: 0.30,
-      liveMaxNotionalUsd: 50,
-      liveMaxOpenPositions: 1,
-      liveStopLossUsd: -8
-    },
-    balanced: {
-      minProfitPercent: 0.10,
-      quoteSize: 500,
-      leverage: 5,
-      maxOpenPositions: 3,
-      stopLossUsd: -25,
-      dailyLossLimitUsd: -80,
-      maxHoldMinutes: 0,
-      closeBelowNetPercent: 0.02,
-      maxMarginUsagePercent: 0.35,
-      maxNotionalUsd: 500,
+      futuresMaxHoldSeconds: 0,
+      closeBelowNetPercent: 0.05,
+      maxMarginUsagePercent: 0.20,
+      maxNotionalUsd: 150,
       paperCooldownMs: 15000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
-      liveEquityPerExchangeUsd: 2500,
-      liveMarginUsageFraction: 0.35,
-      liveMaxNotionalUsd: 500,
-      liveMaxOpenPositions: 3,
-      liveStopLossUsd: -25
+      minGrossSpreadPercent: 0.32,
+      minTakeProfitUsd: 0.25,
+      spatialScalpMode: false,
+      paperStartingQuote: 1000,
+      liveEquityPerExchangeUsd: 1000,
+      liveMarginUsageFraction: 0.20,
+      liveMaxNotionalUsd: 150,
+      liveMaxOpenPositions: 1,
+      liveStopLossUsd: -3,
+      paperCloseFeeFactor: 1,
+      openEdgeBufferPercent: 0.04,
+      requireSpreadingEdge: true,
+      requireDepthFullFill: true,
+      minSpreadPersistMs: 800,
+      maxBookAgeMs: 1500,
+      scanIntervalMs: 250,
+      maxLegsPerVenue: 1,
+      minDepthScoreForUniverse: 1,
+      maxWidthExpansionPercent: 0.08,
+      dynamicTopN: 12,
+      dynamicMinQuoteVolumeUsd: 15000000,
+      dynamicMaxQuoteVolumeUsd: 500000000,
+      dynamicRefreshMinutes: 15
+    },
+    balanced: {
+      minProfitPercent: 0.08,
+      quoteSize: 250,
+      leverage: 3,
+      maxOpenPositions: 2,
+      stopLossUsd: -4,
+      dailyLossLimitUsd: -12,
+      maxHoldMinutes: 0,
+      futuresMaxHoldSeconds: 0,
+      closeBelowNetPercent: 0.05,
+      maxMarginUsagePercent: 0.25,
+      maxNotionalUsd: 250,
+      paperCooldownMs: 12000,
+      paperRequireFullFill: true,
+      requireRoundTripEdge: true,
+      includeFunding: true,
+      minGrossSpreadPercent: 0.30,
+      minTakeProfitUsd: 0.30,
+      spatialScalpMode: false,
+      liveEquityPerExchangeUsd: 1000,
+      liveMarginUsageFraction: 0.25,
+      liveMaxNotionalUsd: 250,
+      liveMaxOpenPositions: 2,
+      liveStopLossUsd: -4
     }
   },
 
@@ -130,10 +153,13 @@ AB.pages.settings = {
     try {
       const r = await AB.api.get('/api/settings/risk');
       this.fillRisk(r);
-      if (r && (r.minProfitPercent == null || r.minProfitPercent === 0)) {
+      const gross = Number(AB.$('s_minGross')?.value);
+      const edge = Number(AB.$('s_minProfit')?.value);
+      const tp = Number(AB.$('s_minTp')?.value);
+      if (gross >= 0.36 || edge >= 0.11 || tp >= 0.45) {
         this.applyPreset('professional');
-        if (AB.$('s_paper')) AB.$('s_paper').checked = true;
-        if (AB.$('s_auto')) AB.$('s_auto').checked = true;
+        this._updateModeHint(s);
+        return;
       }
     } catch (_) {}
     this._updateModeHint(s);

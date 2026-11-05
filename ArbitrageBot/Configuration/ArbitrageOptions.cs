@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.12m;
+    public decimal MinProfitPercent { get; set; } = 0.08m;
     public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
@@ -36,11 +36,11 @@ public class ArbitrageOptions
         ["ETH"] = 0.5m,
         ["SOL"] = 5m
     };
-    public int PaperCooldownMs { get; set; } = 20000;
+    public int PaperCooldownMs { get; set; } = 12000;
     public bool PaperRequireFullFill { get; set; } = true;
 
     public bool DynamicSymbols { get; set; } = true;
-    public int DynamicTopN { get; set; } = 12;
+    public int DynamicTopN { get; set; } = 16;
     public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;
     public string DynamicQuoteAsset { get; set; } = "USDT";
     public int DynamicRefreshMinutes { get; set; } = 15;
@@ -55,13 +55,13 @@ public class ArbitrageOptions
         "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
     ];
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
-    public decimal MinDepthScoreForUniverse { get; set; } = 1.0m;
+    public decimal MinDepthScoreForUniverse { get; set; } = 0.8m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
     public decimal OpenEdgeBufferPercent { get; set; } = 0.04m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 0.50m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.30m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.40m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.30m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
@@ -86,11 +86,11 @@ public class ArbitrageOptions
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.05m;
 
     /// <summary>Max share of free margin on one exchange that a single new hedge may lock (0.25 = 25%).</summary>
-    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.20m;
+    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.25m;
     /// <summary>Force-close if unrealized PnL on a hedge drops below this (USD, negative).</summary>
-    public decimal FuturesStopLossUsd { get; set; } = -3m;
+    public decimal FuturesStopLossUsd { get; set; } = -4m;
     /// <summary>Stop opening new hedges if day realized PnL is below this.</summary>
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -9m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -12m;
     /// <summary>Refuse open if notional would exceed this (USD) even with leverage.</summary>
     public decimal FuturesMaxNotionalUsd { get; set; } = 250m;
 
@@ -116,11 +116,11 @@ public class ArbitrageOptions
     /// </summary>
     public decimal LiveEquityPerExchangeUsd { get; set; } = 1000m;
     /// <summary>Fraction of per-exchange equity locked as margin. 0.25 of $100 at 5x = $125, then capped by max notional.</summary>
-    public decimal LiveMarginUsageFraction { get; set; } = 0.20m;
+    public decimal LiveMarginUsageFraction { get; set; } = 0.25m;
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
-    public decimal LiveDailyLossLimitUsd { get; set; } = -9m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
-    public decimal LiveStopLossUsd { get; set; } = -3m;
+    public decimal LiveStopLossUsd { get; set; } = -4m;
     /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
     public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
     /// <summary>Reject live open if book status is not healthy (Synced/book-ticker).</summary>
@@ -133,13 +133,13 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 800;
+    public int MinSpreadPersistMs { get; set; } = 600;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
     public int MaxBookAgeMs { get; set; } = 1500;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>
     public int MaxLegsPerVenue { get; set; } = 2;
     /// <summary>Skip open if current width already expanded vs entry estimate by this % (abs points).</summary>
-    public decimal MaxWidthExpansionPercent { get; set; } = 0.06m;
+    public decimal MaxWidthExpansionPercent { get; set; } = 0.10m;
     /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
     public bool RequireDepthFullFill { get; set; } = true;
 
