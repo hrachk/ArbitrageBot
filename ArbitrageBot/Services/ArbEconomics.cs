@@ -93,20 +93,26 @@ public static class ArbEconomics
 
     /// <summary>
     /// Extra percent a market order pays beyond the book you already measured.
-    /// A saved buffer of 0.02 is one tick and is not enough; the floor is 0.08.
+    /// The two book widths are already charged as the exit cross.
+    /// A saved 0.08 on top of that is why a session can produce zero entries.
     /// </summary>
     public static decimal ExecutionReservePercent(decimal configured)
-        => Math.Max(configured > 0 ? configured : 0m, 0.08m);
+    {
+        var v = configured > 0 ? configured : 0.04m;
+        if (v < 0.03m) v = 0.03m;
+        if (v > 0.05m) v = 0.05m;
+        return v;
+    }
 
     /// <summary>Net edge that must remain after fees, both book spreads, and the reserve.</summary>
-    public const decimal MinNetAfterCostsPercent = 0.20m;
+    public const decimal MinNetAfterCostsPercent = 0.08m;
 
     public static decimal RequiredNetPercent(decimal minProfit)
     {
         var v = minProfit > 0 ? minProfit : MinNetAfterCostsPercent;
-        if (v < MinNetAfterCostsPercent) v = MinNetAfterCostsPercent;
+        if (v < 0.06m) v = 0.06m;
         // A saved 0.20 on top of four taker fees asked for a spike this market does not print.
-        if (v > 0.15m) v = 0.15m;
+        if (v > 0.10m) v = 0.10m;
         return v;
     }
 

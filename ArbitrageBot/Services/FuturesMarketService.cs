@@ -496,8 +496,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             if (ct.IsCancellationRequested) break;
             if (_runtime.Snapshot.IsExcludedSymbol(symbol)) continue;
             var tickers = GetBookTickers(symbol);
-            // One pair is not a market. Need a third venue so a single bad feed cannot be the signal.
-            if (tickers.Count < 3) continue;
+            // Two fresh books are a hedge. A dead Gate/OKX socket must not blank the symbol.
+            if (tickers.Count < 2) continue;
 
             var mids = new List<decimal>(tickers.Count);
             foreach (var t in tickers.Values)
@@ -507,7 +507,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 mids.Add((t.BestBid + t.BestAsk) / 2m);
             }
             // A third venue can be a bit wide and still be a fair reference. The traded legs stay tight.
-            if (mids.Count < 3)
+            if (mids.Count < 2)
             {
                 mids.Clear();
                 foreach (var t in tickers.Values)
@@ -517,7 +517,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     mids.Add((t.BestBid + t.BestAsk) / 2m);
                 }
             }
-            if (mids.Count < 3) continue;
+            if (mids.Count < 2) continue;
             mids.Sort();
             var median = mids.Count % 2 == 1
                 ? mids[mids.Count / 2]
