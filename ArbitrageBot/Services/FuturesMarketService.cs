@@ -601,11 +601,12 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var reserveNow = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var minEdge = ArbEconomics.RequiredNetPercent(snap.MinProfitPercent);
-                    var feeFloor = feeRt + reserveNow + minEdge;
-                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeFloor;
-                    // A saved 0.60% floor, on top of fees, is why the book sat idle for a day.
-                    if (configuredGross > 0.45m) configuredGross = 0.45m;
-                    var minGross = Math.Max(configuredGross, feeFloor);
+                    // No third price: the two-venue median sits between the legs, so demand a thicker excess.
+                    if (mids.Count < 3) minEdge += 0.04m;
+                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeRt + 0.08m;
+                    // Do not add minEdge again here. netRt already has to clear it, and stacking both is a dead book.
+                    if (configuredGross > 0.32m) configuredGross = 0.32m;
+                    var minGross = Math.Max(configuredGross, feeRt + reserveNow);
                     var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, notional);
                     // Next funding interval would cost more than the price edge can carry.
                     var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);

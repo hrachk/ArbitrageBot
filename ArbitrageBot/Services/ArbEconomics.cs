@@ -51,7 +51,7 @@ public static class ArbEconomics
     }
 
     /// <summary>A book wider than this is noise, not a hedgeable touch. Percent points.</summary>
-    public const decimal MaxBookWidthPercent = 0.15m;
+    public const decimal MaxBookWidthPercent = 0.22m;
 
     /// <summary>Above this the print is a bad contract or a broken feed, not an arb.</summary>
     public const decimal MaxSaneGrossPercent = 2.2m;
@@ -116,10 +116,10 @@ public static class ArbEconomics
     /// </summary>
     public static decimal RequiredTakeProfitUsd(decimal configured, decimal notional)
     {
-        var fromEdge = notional > 0 ? notional * MinNetAfterCostsPercent / 100m : 0.35m;
-        if (fromEdge < 0.35m) fromEdge = 0.35m;
+        var fromEdge = notional > 0 ? notional * MinNetAfterCostsPercent / 100m : 0.20m;
+        if (fromEdge < 0.20m) fromEdge = 0.20m;
         if (configured <= 0) return fromEdge;
-        var cap = notional > 0 ? Math.Max(notional * 0.0020m, fromEdge) : configured;
+        var cap = notional > 0 ? Math.Max(notional * 0.0012m, fromEdge) : configured;
         if (configured > cap) return cap;
         return Math.Max(configured, fromEdge);
     }
