@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.04m;
+    public decimal MinProfitPercent { get; set; } = 0.02m;
     public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
@@ -61,7 +61,7 @@ public class ArbitrageOptions
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
     public decimal MinTakeProfitUsd { get; set; } = 0.15m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.24m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.16m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>

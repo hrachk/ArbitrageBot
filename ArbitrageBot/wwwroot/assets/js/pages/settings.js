@@ -1,7 +1,7 @@
 AB.pages.settings = {
   presets: {
     professional: {
-      minProfitPercent: 0.04,
+      minProfitPercent: 0.02,
       quoteSize: 250,
       leverage: 3,
       maxOpenPositions: 2,
@@ -16,7 +16,7 @@ AB.pages.settings = {
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
-      minGrossSpreadPercent: 0.24,
+      minGrossSpreadPercent: 0.16,
       minTakeProfitUsd: 0.15,
       spatialScalpMode: false,
       paperStartingQuote: 1000,

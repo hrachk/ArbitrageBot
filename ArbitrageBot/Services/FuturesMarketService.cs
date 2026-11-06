@@ -554,7 +554,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (widthOk && grossNow < ArbEconomics.MaxSaneGrossPercent && grossNow > -ArbEconomics.MaxSaneGrossPercent)
                         NoteBasis(edgeKey, grossNow);
                     if (shortVwap <= longVwap) continue;
-                    var twoSided = ArbEconomics.TwoSidedDislocation(median, longVwap, shortVwap);
+                    var twoSided = mids.Count < 3 || ArbEconomics.TwoSidedDislocation(median, longVwap, shortVwap);
                     var longTouch = longTk.AskQuantity > 0 ? longTk.BestAsk * longTk.AskQuantity : decimal.MaxValue;
                     var shortTouch = shortTk.BidQuantity > 0 ? shortTk.BestBid * shortTk.BidQuantity : decimal.MaxValue;
                     var touchOk = longTouch >= notional * 0.25m && shortTouch >= notional * 0.25m;
@@ -576,17 +576,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var exitCross = ArbEconomics.ExitCrossPercent(longTk.BestBid, longTk.BestAsk, shortTk.BestBid, shortTk.BestAsk);
                     var reserve = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var (fairRaw, dev, basisReady) = ReadBasis(edgeKey);
-                    // Until the baseline is known, assume a small structural premium so a
-                    // raw print is not treated as pure edge, but do not block the symbol.
-                    var fair = basisReady ? (fairRaw > 0 ? fairRaw : 0m) : 0.05m;
-                    // Capturable is the part above this pair's own baseline.
+                    var fair = basisReady && fairRaw > 0 ? fairRaw : 0m;
                     var excess = gross - fair;
-                    if (excess < 0m) excess = 0m;
-                    // A converging exit does not pay the full current book width.
-                    var exitAllowance = exitCross * 0.5m;
-                    var netRt = excess - feeRt - exitAllowance - reserve;
-                    var pricePnl = ArbEconomics.ExpectedRevertUsd(
-                        excess, longVwap * qty, longFee, shortFee, exitAllowance, reserve);
+                    // Lock the current cross. Open pays two takers. Close is posted, so
+                    // charge a maker-sized close, not a second pair of takers. Basis is
+                    // only a filter below: a print that is the pair's normal basis is not a trade.
+                    var openFees = longFee + shortFee;
+                    var closeFees = openFees * 0.4m;
+                    var exitAllowance = exitCross * 0.3m;
+                    var netRt = gross - openFees - closeFees - exitAllowance - reserve;
+                    var pricePnl = ArbEconomics.ExpectedConvergeUsd(
+                        longVwap, shortVwap, qty, longFee * 0.7m, shortFee * 0.7m);
 
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
@@ -606,10 +606,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var reserveNow = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var minEdge = ArbEconomics.RequiredNetPercent(snap.MinProfitPercent);
-                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeRt + 0.04m;
-                    // Cap a saved floor so it cannot ask for a print the market does not make.
-                    if (configuredGross > 0.28m) configuredGross = 0.28m;
-                    var minGross = Math.Max(configuredGross, feeRt + reserveNow);
+                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : openFees + 0.04m;
+                    if (configuredGross > 0.22m) configuredGross = 0.22m;
+                    var minGross = Math.Max(configuredGross, openFees + 0.02m);
                     var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, notional);
                     // Next funding interval would cost more than the price edge can carry.
                     var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);
@@ -626,8 +625,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     }
 
                     var filled = buyFill.FullyFilled && sellFill.FullyFilled;
+                    var fillRatio = Math.Min(
+                        buyFill.FilledQuoteQty / Math.Max(notional, 1m),
+                        sellFill.FilledQuoteQty / Math.Max(notional, 1m));
                     var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
-                    var fillOk = !needFill || filled;
+                    var fillOk = !needFill || filled || fillRatio >= 0.6m;
                     // A high fair basis is not a ban. The excess above it is the only profit,
                     // and a spike on a rich pair is still a trade. Banning it for 6h is why
                     // AKE printed RT +0.66% all evening and never opened.
@@ -635,8 +637,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var banned = TradeBan.IsRouteBanned(symbol, longEx, shortEx);
                     // A wiggle inside this pair's own noise is not a dislocation.
                     var noise = dev * 1.2m;
-                    if (noise < 0.04m) noise = 0.04m;
-                    if (noise > 0.16m) noise = 0.16m;
+                    if (noise < 0.015m) noise = 0.015m;
+                    if (noise > 0.12m) noise = 0.12m;
                     var spikeOk = excess >= noise;
                     var sane = gross > 0m && gross <= ArbEconomics.MaxSaneGrossPercent;
 

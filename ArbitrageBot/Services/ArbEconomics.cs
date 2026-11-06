@@ -105,14 +105,14 @@ public static class ArbEconomics
     }
 
     /// <summary>Net edge that must remain after fees and a realistic exit allowance.</summary>
-    public const decimal MinNetAfterCostsPercent = 0.04m;
+    public const decimal MinNetAfterCostsPercent = 0.02m;
 
     public static decimal RequiredNetPercent(decimal minProfit)
     {
         var v = minProfit > 0 ? minProfit : MinNetAfterCostsPercent;
-        if (v < 0.03m) v = 0.03m;
+        if (v < 0.015m) v = 0.015m;
         // A saved 0.20 on top of four taker fees asked for a spike this market does not print.
-        if (v > 0.06m) v = 0.06m;
+        if (v > 0.04m) v = 0.04m;
         return v;
     }
 

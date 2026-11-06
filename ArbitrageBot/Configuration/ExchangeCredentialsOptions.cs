@@ -34,7 +34,7 @@ public class TradingUiSettings
     public bool PaperTrading { get; set; } = true;
     public bool PaperAutoExecute { get; set; } = true;
     /// <summary>Min net edge % after fees, both books and slip. Same gate for paper and live.</summary>
-    public decimal MinProfitPercent { get; set; } = 0.04m;
+    public decimal MinProfitPercent { get; set; } = 0.02m;
     /// <summary>Notional per leg (USDT). Paper + Live share this (LiveMaxNotional synced).</summary>
     public decimal QuoteSize { get; set; } = 250m;
     public decimal FuturesPaperLeverage { get; set; } = 3m;
@@ -59,7 +59,7 @@ public class TradingUiSettings
     public decimal LiveStopLossUsd { get; set; } = -4m;
     public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
 
-    public decimal MinGrossSpreadPercent { get; set; } = 0.24m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.16m;
     public decimal MinTakeProfitUsd { get; set; } = 0.15m;
     public int MinSpreadPersistMs { get; set; } = 300;
     public int MaxBookAgeMs { get; set; } = 1500;
