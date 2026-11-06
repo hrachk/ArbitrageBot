@@ -987,6 +987,80 @@ public sealed class LiveOrderEngine
         return rounded > 0 ? rounded : 0;
     }
 
+    /// <summary>
+    /// One directional leg for the scalp mode. Limit IOC, one tick through the touch.
+    /// Does not touch the hedge ledger.
+    /// </summary>
+    public async Task<(bool Ok, string Error, string? Id)> PlaceScalpLegAsync(
+        string exchange, string symbol, bool isLong, decimal qty, decimal limitPrice,
+        decimal leverage, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(exchange) || string.IsNullOrWhiteSpace(symbol) || qty <= 0 || limitPrice <= 0)
+            return (false, "bad scalp request", null);
+        if (IsCoolingDown(exchange, out var cd))
+            return (false, $"cooldown {exchange} {cd.TotalSeconds:F0}s", null);
+        if (IsSymbolCooling(symbol, out var symCd))
+            return (false, $"cooldown {symbol} {symCd.TotalSeconds:F0}s", null);
+
+        var client = CreateClient(exchange);
+        if (client == null)
+            return (false, "no credentials for " + exchange, null);
+
+        var baseAsset = symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
+            ? symbol[..^4] : symbol;
+        var shared = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
+        var rounded = RoundBaseQty(qty, limitPrice);
+        if (rounded <= 0)
+            return (false, "qty rounded to zero", null);
+
+        if (IsOkx(exchange))
+        {
+            await EnsureOkxLotsAsync(ct).ConfigureAwait(false);
+            var aligned = AlignOkxBase(symbol, rounded, out var lotWhy);
+            if (aligned <= 0)
+                return (false, lotWhy ?? "OKX lot reject", null);
+            rounded = aligned;
+        }
+
+        var side = isLong ? SharedOrderSide.Buy : SharedOrderSide.Sell;
+        var posSide = isLong ? SharedPositionSide.Long : SharedPositionSide.Short;
+        var snapped = SnapLimit(limitPrice, limitPrice, isLong);
+        var sent = await SendOrderAsync(
+            client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded), leverage, posSide, isClose: false,
+            "ab-s-" + Guid.NewGuid().ToString("N")[..12], ct, snapped).ConfigureAwait(false);
+        if (!sent.Ok)
+        {
+            if (IsBalanceError(sent.Error))
+                NoteVenueUsdt(exchange, 0);
+            else
+                MarkSymbolCooldown(symbol, sent.Error, RejectCooldown);
+            _logger.LogWarning("SCALP open fail {Ex} {Sym} {Side}: {Err}", exchange, symbol, isLong ? "L" : "S", sent.Error);
+            return (false, sent.Error, null);
+        }
+        _logger.LogInformation("SCALP open {Ex} {Sym} {Side} qty={Q} @ {P}", exchange, symbol, isLong ? "L" : "S", rounded, snapped);
+        return (true, "", sent.Id);
+    }
+
+    /// <summary>Flatten one scalp leg. Opposite side, same position side.</summary>
+    public async Task<(bool Ok, string Error)> CloseScalpLegAsync(
+        string exchange, string symbol, bool wasLong, decimal qty, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(exchange) || string.IsNullOrWhiteSpace(symbol) || qty <= 0)
+            return (false, "bad scalp close");
+        var client = CreateClient(exchange);
+        if (client == null)
+            return (false, "no credentials for " + exchange);
+        var baseAsset = symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
+            ? symbol[..^4] : symbol;
+        var shared = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
+        var rounded = RoundBaseQty(qty, 0);
+        if (rounded <= 0) rounded = qty;
+        var side = wasLong ? SharedOrderSide.Sell : SharedOrderSide.Buy;
+        var posSide = wasLong ? SharedPositionSide.Long : SharedPositionSide.Short;
+        var ok = await TryReduceAsync(client, exchange, shared, QtyForExchange(exchange, symbol, rounded), side, posSide, ct).ConfigureAwait(false);
+        return ok ? (true, "") : (false, "reduce failed");
+    }
+
     private void TryLoad()
     {
         try

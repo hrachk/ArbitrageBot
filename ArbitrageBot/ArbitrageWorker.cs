@@ -25,6 +25,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ILiveExecutionService _liveExec;
     private readonly FundingRateService _fundingRates;
     private readonly HoldDecisionEngine _holdEngine;
+    private readonly ScalpEngine _scalp;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
     private DateTime _lastHeartbeatLogUtc = DateTime.MinValue;
@@ -69,7 +70,8 @@ public class ArbitrageWorker : BackgroundService
         LiveTradingGuard liveGuard,
         ILiveExecutionService liveExec,
         FundingRateService fundingRates,
-        HoldDecisionEngine holdEngine)
+        HoldDecisionEngine holdEngine,
+        ScalpEngine scalp)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -88,6 +90,7 @@ public class ArbitrageWorker : BackgroundService
         _liveExec = liveExec;
         _fundingRates = fundingRates;
         _holdEngine = holdEngine;
+        _scalp = scalp;
 
         _state.StrategyMode = _options.StrategyMode;
         _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE" : (_liveGuard.IsEnabled ? "LIVE-RO" : "PAPER");
@@ -394,6 +397,8 @@ public class ArbitrageWorker : BackgroundService
         _state.PaperRecentSkips = _analytics.GetRecentSkips(25);
 
         PushFuturesPaper();
+        if (_runtime.Snapshot.SpatialScalpMode)
+            await _scalp.TickAsync(ct);
     }
 
     private async Task RunSpotCycleAsync(CancellationToken ct)
