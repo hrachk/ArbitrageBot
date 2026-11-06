@@ -139,10 +139,6 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Toxic/excluded {opp.Symbol}");
             if (TradeBan.IsRouteBanned(opp.Symbol, opp.LongExchange, opp.ShortExchange))
                 return Fail(opp, $"Banned {opp.Symbol} after stop, dead book, or structural basis");
-            if (!opp.BasisReady)
-                return Fail(opp, "Basis not learned yet");
-            if (opp.ExcessPercent < 0.10m)
-                return Fail(opp, $"Excess {opp.ExcessPercent:F3}% is noise");
 
             var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
             if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)

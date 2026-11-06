@@ -63,7 +63,7 @@ public static class ArbEconomics
     public const decimal StructuralBasisPercent = 0.45m;
 
     /// <summary>Each leg must own at least this fraction of the gap versus the venue median.</summary>
-    public const decimal MinLegShare = 0.28m;
+    public const decimal MinLegShare = 0.18m;
 
     public static bool BooksTradable(decimal longBid, decimal longAsk, decimal shortBid, decimal shortAsk)
     {
@@ -81,7 +81,7 @@ public static class ArbEconomics
         if (median <= 0 || longAsk <= 0 || shortBid <= longAsk) return false;
         var cheap = (median - longAsk) / median * 100m;
         var rich = (shortBid - median) / median * 100m;
-        if (cheap <= 0.02m || rich <= 0.02m) return false;
+        if (cheap <= 0.008m || rich <= 0.008m) return false;
         var gross = (shortBid - longAsk) / longAsk * 100m;
         var floor = gross * MinLegShare;
         return cheap >= floor && rich >= floor;
@@ -98,21 +98,21 @@ public static class ArbEconomics
     /// </summary>
     public static decimal ExecutionReservePercent(decimal configured)
     {
-        var v = configured > 0 ? configured : 0.04m;
-        if (v < 0.03m) v = 0.03m;
-        if (v > 0.05m) v = 0.05m;
+        var v = configured > 0 ? configured : 0.03m;
+        if (v < 0.02m) v = 0.02m;
+        if (v > 0.04m) v = 0.04m;
         return v;
     }
 
-    /// <summary>Net edge that must remain after fees, both book spreads, and the reserve.</summary>
-    public const decimal MinNetAfterCostsPercent = 0.08m;
+    /// <summary>Net edge that must remain after fees and a realistic exit allowance.</summary>
+    public const decimal MinNetAfterCostsPercent = 0.04m;
 
     public static decimal RequiredNetPercent(decimal minProfit)
     {
         var v = minProfit > 0 ? minProfit : MinNetAfterCostsPercent;
-        if (v < 0.06m) v = 0.06m;
+        if (v < 0.03m) v = 0.03m;
         // A saved 0.20 on top of four taker fees asked for a spike this market does not print.
-        if (v > 0.10m) v = 0.10m;
+        if (v > 0.06m) v = 0.06m;
         return v;
     }
 
@@ -122,10 +122,10 @@ public static class ArbEconomics
     /// </summary>
     public static decimal RequiredTakeProfitUsd(decimal configured, decimal notional)
     {
-        var fromEdge = notional > 0 ? notional * MinNetAfterCostsPercent / 100m : 0.20m;
-        if (fromEdge < 0.20m) fromEdge = 0.20m;
+        var fromEdge = notional > 0 ? notional * MinNetAfterCostsPercent / 100m : 0.10m;
+        if (fromEdge < 0.10m) fromEdge = 0.10m;
         if (configured <= 0) return fromEdge;
-        var cap = notional > 0 ? Math.Max(notional * 0.0012m, fromEdge) : configured;
+        var cap = notional > 0 ? Math.Max(notional * 0.0008m, fromEdge) : configured;
         if (configured > cap) return cap;
         return Math.Max(configured, fromEdge);
     }

@@ -576,12 +576,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var exitCross = ArbEconomics.ExitCrossPercent(longTk.BestBid, longTk.BestAsk, shortTk.BestBid, shortTk.BestAsk);
                     var reserve = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var (fairRaw, dev, basisReady) = ReadBasis(edgeKey);
-                    var fair = fairRaw > 0 ? fairRaw : 0m;
-                    // Only the spike above this pair's own basis can revert. The basis itself is not profit.
+                    // Until the baseline is known, assume a small structural premium so a
+                    // raw print is not treated as pure edge, but do not block the symbol.
+                    var fair = basisReady ? (fairRaw > 0 ? fairRaw : 0m) : 0.05m;
+                    // Capturable is the part above this pair's own baseline.
                     var excess = gross - fair;
-                    var netRt = excess - feeRt - exitCross - reserve;
+                    if (excess < 0m) excess = 0m;
+                    // A converging exit does not pay the full current book width.
+                    var exitAllowance = exitCross * 0.5m;
+                    var netRt = excess - feeRt - exitAllowance - reserve;
                     var pricePnl = ArbEconomics.ExpectedRevertUsd(
-                        excess, longVwap * qty, longFee, shortFee, exitCross, reserve);
+                        excess, longVwap * qty, longFee, shortFee, exitAllowance, reserve);
 
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
@@ -601,11 +606,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var reserveNow = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var minEdge = ArbEconomics.RequiredNetPercent(snap.MinProfitPercent);
-                    // No third price: the two-venue median sits between the legs, so demand a thicker excess.
-                    if (mids.Count < 3) minEdge += 0.04m;
-                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeRt + 0.08m;
-                    // Do not add minEdge again here. netRt already has to clear it, and stacking both is a dead book.
-                    if (configuredGross > 0.32m) configuredGross = 0.32m;
+                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : feeRt + 0.04m;
+                    // Cap a saved floor so it cannot ask for a print the market does not make.
+                    if (configuredGross > 0.28m) configuredGross = 0.28m;
                     var minGross = Math.Max(configuredGross, feeRt + reserveNow);
                     var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, notional);
                     // Next funding interval would cost more than the price edge can carry.
@@ -632,14 +635,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var banned = TradeBan.IsRouteBanned(symbol, longEx, shortEx);
                     // A wiggle inside this pair's own noise is not a dislocation.
                     var noise = dev * 1.2m;
-                    if (noise < 0.10m) noise = 0.10m;
-                    if (noise > 0.22m) noise = 0.22m;
+                    if (noise < 0.04m) noise = 0.04m;
+                    if (noise > 0.16m) noise = 0.16m;
                     var spikeOk = excess >= noise;
                     var sane = gross > 0m && gross <= ArbEconomics.MaxSaneGrossPercent;
 
                     // Persist counts only while the trade is actually good. A pair seen earlier at 0.05%
                     // must not make a one-tick 0.5% spike look "held for 800ms".
-                    var gateNow = basisReady && !banned && spikeOk && widthOk && touchOk && twoSided && sane
+                    var gateNow = !banned && spikeOk && widthOk && touchOk && twoSided && sane
                         && gross >= minGross && netRt >= minEdge && pricePnl >= minTp && fundingOk && fillOk && spreadingOk;
                     bool persistOk;
                     if (!gateNow)
@@ -650,8 +653,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     else
                     {
                         var persistMs = snap.MinSpreadPersistMs;
-                        if (persistMs < 400) persistMs = 400;
-                        if (persistMs > 800) persistMs = 800;
+                        if (persistMs < 200) persistMs = 200;
+                        if (persistMs > 500) persistMs = 500;
                         var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
                         var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
                         persistOk = heldMs >= persistMs;
@@ -951,8 +954,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     private (decimal Fair, decimal Dev, bool Ready) ReadBasis(string key)
     {
-        if (!_basis.TryGetValue(key, out var s) || s.N < 12) return (0m, 0m, false);
-        if (s.LastMs - s.FirstMs < 45_000) return (s.Ema, s.Dev, false);
+        if (!_basis.TryGetValue(key, out var s) || s.N < 4) return (0m, 0m, false);
+        if (s.LastMs - s.FirstMs < 12_000) return (s.Ema, s.Dev, false);
         return (s.Ema, s.Dev, true);
     }
 

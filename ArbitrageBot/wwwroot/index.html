@@ -824,12 +824,12 @@
                     </div>
                     <div class="field">
                       <label>Мин. edge % (после open fees)</label>
-                      <input id="s_minProfit" type="number" step="0.005" min="0"/>
+                      <input id="s_minProfit" type="number" step="0.005" min="0" value="0.04"/>
                       <div class="hint">Порог входа. Пример: 0.10 = 0.10%</div>
                     </div>
                     <div class="field">
                       <label>Мин. gross спред %</label>
-                      <input id="s_minGross" type="number" step="0.01" min="0" value="0.30"/>
+                      <input id="s_minGross" type="number" step="0.01" min="0" value="0.24"/>
                       <div class="hint">До fees. Выше 0.32 движок всё равно обрежет</div>
                     </div>
                     <div class="field">
@@ -917,7 +917,7 @@
                     </div>
                     <div class="field">
                       <label>Take-profit USD</label>
-                      <input id="s_minTp" type="number" step="0.05" min="0" value="0.30"/>
+                      <input id="s_minTp" type="number" step="0.05" min="0" value="0.15"/>
                       <div class="hint">На $250 движок не возьмёт выше ~$0.30</div>
                     </div>
                     <div class="field">
@@ -927,7 +927,7 @@
                     </div>
                     <div class="field">
                       <label>Open edge buffer %</label>
-                      <input id="s_edgeBuffer" type="number" step="0.005" min="0" value="0.04"/>
+                      <input id="s_edgeBuffer" type="number" step="0.005" min="0" value="0.03"/>
                       <div class="hint">Запас на проскальзывание. Движок держит 0.03–0.05</div>
                     </div>
                     <div class="field">
@@ -972,7 +972,7 @@
                   <div class="settings-grid">
                     <div class="field">
                       <label>Persist спреда мс</label>
-                      <input id="s_persistMs" type="number" step="50" min="0" value="600"/>
+                      <input id="s_persistMs" type="number" step="50" min="0" value="300"/>
                       <div class="hint">Движок держит 400–800 мс</div>
                     </div>
                     <div class="field">

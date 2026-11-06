@@ -10,7 +10,7 @@ public class ArbitrageOptions
     public List<string> Symbols { get; set; } = [];
     public List<string> Exchanges { get; set; } = [];
 
-    public decimal MinProfitPercent { get; set; } = 0.08m;
+    public decimal MinProfitPercent { get; set; } = 0.04m;
     public int ScanIntervalMs { get; set; } = 200;
     public bool PaperTrading { get; set; } = true;
 
@@ -57,11 +57,11 @@ public class ArbitrageOptions
     /// <summary>Min Binance depthScore (depthUsd/QuoteSize) to enter universe.</summary>
     public decimal MinDepthScoreForUniverse { get; set; } = 0.8m;
     /// <summary>Extra buffer on top of MinProfitPercent for open (bps as percent points).</summary>
-    public decimal OpenEdgeBufferPercent { get; set; } = 0.04m;
+    public decimal OpenEdgeBufferPercent { get; set; } = 0.03m;
     /// <summary>Close on converge only if projected PnL ≥ this (else wait timeout/stop).</summary>
-    public decimal MinTakeProfitUsd { get; set; } = 0.30m;
+    public decimal MinTakeProfitUsd { get; set; } = 0.15m;
     /// <summary>Minimum gross width % at entry (must exceed ~4 taker fees + buffer).</summary>
-    public decimal MinGrossSpreadPercent { get; set; } = 0.30m;
+    public decimal MinGrossSpreadPercent { get; set; } = 0.24m;
     /// <summary>True: short-hold spatial scalp (seconds), fast TP, net-open entry.</summary>
     public bool SpatialScalpMode { get; set; } = false;
     /// <summary>Max hold in seconds when SpatialScalpMode (soft clock — red positions are NOT flattened).</summary>
@@ -133,7 +133,7 @@ public class ArbitrageOptions
     public List<string> LiveAllowedExchanges { get; set; } = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
 
     /// <summary>Opportunity must stay above min edge this many ms before open (anti-flash).</summary>
-    public int MinSpreadPersistMs { get; set; } = 600;
+    public int MinSpreadPersistMs { get; set; } = 300;
     /// <summary>Ignore book quotes older than this (ms). 0 = disabled.</summary>
     public int MaxBookAgeMs { get; set; } = 1500;
     /// <summary>Max open hedge legs touching the same venue (long or short side).</summary>

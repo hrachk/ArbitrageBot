@@ -1,40 +1,44 @@
 AB.pages.settings = {
   presets: {
     professional: {
-      minProfitPercent: 0.12,
+      minProfitPercent: 0.04,
       quoteSize: 250,
       leverage: 3,
       maxOpenPositions: 2,
-      stopLossUsd: -3,
-      dailyLossLimitUsd: -9,
+      stopLossUsd: -4,
+      dailyLossLimitUsd: -12,
       maxHoldMinutes: 0,
       futuresMaxHoldSeconds: 0,
       closeBelowNetPercent: 0.05,
-      maxMarginUsagePercent: 0.20,
+      maxMarginUsagePercent: 0.25,
       maxNotionalUsd: 250,
-      paperCooldownMs: 20000,
+      paperCooldownMs: 12000,
       paperRequireFullFill: true,
       requireRoundTripEdge: true,
       includeFunding: true,
-      minGrossSpreadPercent: 0.40,
-      minTakeProfitUsd: 0.50,
+      minGrossSpreadPercent: 0.24,
+      minTakeProfitUsd: 0.15,
       spatialScalpMode: false,
       paperStartingQuote: 1000,
       liveEquityPerExchangeUsd: 1000,
-      liveMarginUsageFraction: 0.20,
+      liveMarginUsageFraction: 0.25,
       liveMaxNotionalUsd: 250,
       liveMaxOpenPositions: 2,
-      liveStopLossUsd: -3,
+      liveStopLossUsd: -4,
       paperCloseFeeFactor: 1,
-      openEdgeBufferPercent: 0.04,
+      openEdgeBufferPercent: 0.03,
       requireSpreadingEdge: true,
-      minSpreadPersistMs: 800,
+      requireDepthFullFill: true,
+      dynamicSymbols: true,
+      minSpreadPersistMs: 300,
       maxBookAgeMs: 1500,
+      scanIntervalMs: 250,
       maxLegsPerVenue: 2,
-      minDepthScoreForUniverse: 1.0,
-      maxWidthExpansionPercent: 0.06,
-      dynamicTopN: 12,
+      minDepthScoreForUniverse: 0.8,
+      maxWidthExpansionPercent: 0.10,
+      dynamicTopN: 16,
       dynamicMinQuoteVolumeUsd: 8000000,
+      dynamicMaxQuoteVolumeUsd: 500000000,
       dynamicRefreshMinutes: 15
     },
     micro5: {
@@ -156,7 +160,7 @@ AB.pages.settings = {
       const gross = Number(AB.$('s_minGross')?.value);
       const edge = Number(AB.$('s_minProfit')?.value);
       const tp = Number(AB.$('s_minTp')?.value);
-      if (gross >= 0.36 || edge >= 0.11 || tp >= 0.45) {
+      if (gross >= 0.28 || edge >= 0.07 || tp >= 0.25) {
         this.applyPreset('professional');
         this._updateModeHint(s);
         return;
