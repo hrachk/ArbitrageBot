@@ -177,6 +177,7 @@ public sealed class RuntimeRiskConfig
         DynamicRefreshMinutes = o.DynamicRefreshMinutes,
         ExcludeMajorBases = o.ExcludeMajorBases?.ToList() ?? [],
         FuturesPaperLeverage = o.FuturesPaperLeverage,
+        LivePaperLeverage = o.LivePaperLeverage,
         FuturesMaxOpenPositions = o.FuturesMaxOpenPositions,
         FuturesMaxHoldMinutes = o.FuturesMaxHoldMinutes,
         FuturesCloseBelowNetPercent = o.FuturesCloseBelowNetPercent,

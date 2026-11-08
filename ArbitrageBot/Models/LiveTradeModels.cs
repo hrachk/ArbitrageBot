@@ -7,6 +7,10 @@ public sealed class LiveHedgePosition
     public string LongExchange { get; set; } = "";
     public string ShortExchange { get; set; } = "";
     public decimal BaseQty { get; set; }
+    /// <summary>Remaining filled base quantity on each leg; zero values fall back to BaseQty for old ledgers.</summary>
+    public decimal LongBaseQty { get; set; }
+    public decimal ShortBaseQty { get; set; }
+    public bool HasPerLegQuantities { get; set; }
     public decimal NotionalUsd { get; set; }
     public decimal LongEntry { get; set; }
     public decimal ShortEntry { get; set; }
@@ -14,6 +18,8 @@ public sealed class LiveHedgePosition
     public string? ShortOrderId { get; set; }
     public DateTime OpenedAt { get; set; } = DateTime.UtcNow;
     public bool IsOpen { get; set; } = true;
+    /// <summary>Order state could not be confirmed; automatic close decisions must stop until reconciled.</summary>
+    public bool NeedsReconciliation { get; set; }
     public string Status { get; set; } = "Open";
     public string? Message { get; set; }
     public decimal? RealizedPnlUsd { get; set; }

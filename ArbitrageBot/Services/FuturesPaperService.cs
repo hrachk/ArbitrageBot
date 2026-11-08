@@ -139,6 +139,8 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Toxic/excluded {opp.Symbol}");
             if (TradeBan.IsRouteBanned(opp.Symbol, opp.LongExchange, opp.ShortExchange))
                 return Fail(opp, $"Banned {opp.Symbol} after stop, dead book, or structural basis");
+            if (!opp.IsExecutable || !opp.BasisReady)
+                return Fail(opp, "Opportunity did not pass executable gates or fair-basis warmup");
 
             var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
             if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
@@ -200,14 +202,12 @@ public class FuturesPaperService : IFuturesPaperService
             if (desired < 5m) desired = 5m;
             var baseQty = opp.BaseQty;
             var notional = opp.NotionalUsd > 0 ? opp.NotionalUsd : desired;
-            if (notional > 0 && baseQty > 0 && Math.Abs(notional - desired) > 0.01m)
+            // Settings may cap a larger scan opportunity, but never scale a shallow-book
+            // partial fill upward to the requested size.
+            if (notional > desired && baseQty > 0)
             {
                 var scale = desired / notional;
                 baseQty *= scale;
-                notional = desired;
-            }
-            else
-            {
                 notional = desired;
             }
             if (baseQty <= 0 || notional <= 0)
@@ -235,6 +235,15 @@ public class FuturesPaperService : IFuturesPaperService
             }
             if (baseQty <= 0)
                 return Fail(opp, $"Margin leg > {usage:P0} free (cannot clamp)");
+
+            // Margin clamping changes dollar expectancy. Do not keep a trade whose
+            // reduced size no longer clears the minimum net take-profit in dollars.
+            var scaledExpectedPnl = opp.NotionalUsd > 0
+                ? opp.EstNetPnlUsd * (notional / opp.NotionalUsd)
+                : opp.EstNetPnlUsd;
+            var scaledMinTp = ArbEconomics.RequiredTakeProfitUsd(R.MinTakeProfitUsd, notional);
+            if (scaledExpectedPnl < scaledMinTp)
+                return Fail(opp, $"Margin-clamped edge ${scaledExpectedPnl:F2} < ${scaledMinTp:F2} minimum net target");
 
             var openFees = opp.LongAskVwap * baseQty * (opp.LongFeePercent / 100m)
                            + opp.ShortBidVwap * baseQty * (opp.ShortFeePercent / 100m);
@@ -377,15 +386,6 @@ public class FuturesPaperService : IFuturesPaperService
             return closedTrade;
         }
 
-        FuturesPaperTrade FailClose(string msg) => new()
-        {
-            Symbol = "?",
-            LongExchange = "?",
-            ShortExchange = "?",
-            Status = "Skipped",
-            Message = msg,
-            IsOpen = false
-        };
     }
 
     public int TryCloseConverged(
@@ -434,6 +434,7 @@ public class FuturesPaperService : IFuturesPaperService
                             _analytics.RecordClose(_trades[idx]);
                         }
                         _positions.Remove(pos);
+                        SaveOpenState();
                         closed++;
                         _logger.LogWarning("Paper orphan close {Sym} {L}/{S} pnl={Pnl:F2} — banned 6h",
                             pos.Symbol, pos.LongExchange, pos.ShortExchange, stalePnl);
@@ -504,13 +505,16 @@ public class FuturesPaperService : IFuturesPaperService
                 else if (R.FuturesMaxHoldMinutes > 0)
                     timedOut = (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesMaxHoldMinutes;
                 var timeoutHarvest = timedOut && pnl >= minTp;
+                var hardTimeout = R.FuturesHardMaxHoldMinutes > 0
+                    && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= R.FuturesHardMaxHoldMinutes;
 
-                if (!stopHit && !takeProfit && !timeoutHarvest)
+                if (!stopHit && !takeProfit && !timeoutHarvest && !hardTimeout)
                     continue;
 
                 var reason = stopHit ? "stop-loss"
                     : trailHit ? "trail-lock"
                     : takeProfit ? "take-profit"
+                    : hardTimeout ? "hard-timeout"
                     : "timeout-harvest";
                 if (stopHit)
                     TradeBan.Ban(pos.Symbol, TimeSpan.FromHours(6));

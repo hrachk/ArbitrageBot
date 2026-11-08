@@ -26,6 +26,8 @@ public record FuturesOpportunity
     public decimal NetSpreadPercent { get; init; }
     /// <summary>Open+close taker fees both legs.</summary>
     public decimal NetRoundTripPercent { get; init; }
+    /// <summary>Current exit cross across both venues, percent, charged by the live entry gate.</summary>
+    public decimal ExitCrossPercent { get; init; }
     /// <summary>Net after round-trip fees and expected funding over hold horizon.</summary>
     public decimal NetAfterFundingPercent { get; init; }
     public decimal EstNetPnlUsd { get; init; }

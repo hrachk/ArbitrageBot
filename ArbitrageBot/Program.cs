@@ -595,6 +595,7 @@ try
             NotionalUsd   = notional,
             LongAsk       = longAsk,
             ShortBid      = shortBid,
+            ExitCrossPercent = ArbEconomics.ExitCrossPercent(longBook.BestBid, longAsk, shortBid, shortBook.BestAsk),
             Leverage      = body.Leverage > 0 ? body.Leverage : 3m
         };
         var result = await live.TryOpenHedgeAsync(req2, ct);

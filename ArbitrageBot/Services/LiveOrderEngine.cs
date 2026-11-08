@@ -16,6 +16,10 @@ using Kucoin.Net;
 
 namespace ArbitrageBot.Services;
 
+public sealed record LiveLegOrderResult(
+    bool Ok, string Error, string? Id, bool Accepted, bool Verified,
+    decimal FilledBaseQty, decimal AveragePrice);
+
 /// <summary>
 /// Phase 3: place/close dual-leg USDT-M hedges via shared PlaceFuturesOrderAsync.
 /// Guard must allow CanPlaceOrders before any call.
@@ -27,8 +31,10 @@ public sealed class LiveOrderEngine
     private readonly RuntimeRiskConfig _runtime;
     private readonly ILogger<LiveOrderEngine> _logger;
     private readonly LiveSafetyService _safety;
+    private readonly IFuturesMarketService _market;
     private readonly IWebHostEnvironment _env;
     private readonly object _lock = new();
+    private readonly SemaphoreSlim _orderGate = new(1, 1);
     private readonly List<LiveHedgePosition> _open = [];
     private readonly List<LiveHedgePosition> _closed = [];
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
@@ -43,6 +49,9 @@ public sealed class LiveOrderEngine
     private static readonly TimeSpan RejectCooldown = TimeSpan.FromSeconds(90);
 
     private sealed record OkxLot(decimal CtVal, decimal LotSz, decimal MinSz);
+    private sealed record OrderExecution(
+        bool Ok, string Error, string? Id, bool Accepted, bool Verified,
+        decimal FilledBaseQty, decimal AveragePrice, string? Status = null);
     private static readonly ConcurrentDictionary<string, OkxLot> OkxLots = new(StringComparer.OrdinalIgnoreCase);
     private static DateTime _okxLotsAt = DateTime.MinValue;
     private static readonly SemaphoreSlim OkxLotLock = new(1, 1);
@@ -57,6 +66,7 @@ public sealed class LiveOrderEngine
         RuntimeRiskConfig runtime,
         IWebHostEnvironment env,
         LiveSafetyService safety,
+        IFuturesMarketService market,
         ILogger<LiveOrderEngine> logger)
     {
         _settings = settings;
@@ -64,6 +74,7 @@ public sealed class LiveOrderEngine
         _runtime = runtime;
         _env = env;
         _safety = safety;
+        _market = market;
         _logger = logger;
         TryLoad();
     }
@@ -76,7 +87,14 @@ public sealed class LiveOrderEngine
 
     public async Task<object> TryOpenAsync(LiveHedgeRequest req, CancellationToken ct)
     {
-        var check = _guard.CheckOpenAllowed(_open.Count, req.NotionalUsd);
+        await _orderGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await TryOpenCoreAsync(req, ct).ConfigureAwait(false); }
+        finally { _orderGate.Release(); }
+    }
+
+    private async Task<object> TryOpenCoreAsync(LiveHedgeRequest req, CancellationToken ct)
+    {
+        var check = _guard.CheckOpenAllowed(_open.Count + _guard.AdditionalOpenPositions, req.NotionalUsd);
         if (!check.ok)
             return new { ok = false, error = check.reason };
 
@@ -86,6 +104,21 @@ public sealed class LiveOrderEngine
 
         if (req.BaseQty <= 0 || string.IsNullOrWhiteSpace(req.Symbol))
             return new { ok = false, error = "invalid qty/symbol" };
+
+        var liveBooks = _market.GetBookTickers(req.Symbol);
+        if (!liveBooks.TryGetValue(req.LongExchange, out var longBook)
+            || !liveBooks.TryGetValue(req.ShortExchange, out var shortBook)
+            || longBook.BestAsk <= 0 || longBook.BestBid <= 0
+            || shortBook.BestBid <= 0 || shortBook.BestAsk <= 0)
+            return new { ok = false, error = "fresh live books are unavailable for both requested legs" };
+        req.LongAsk = longBook.BestAsk;
+        req.ShortBid = shortBook.BestBid;
+        req.ExitCrossPercent = ArbEconomics.ExitCrossPercent(
+            longBook.BestBid, longBook.BestAsk, shortBook.BestBid, shortBook.BestAsk);
+        var minTouchUsd = req.NotionalUsd * 0.25m;
+        if ((longBook.AskQuantity <= 0 || longBook.AskQuantity * longBook.BestAsk < minTouchUsd)
+            || (shortBook.BidQuantity <= 0 || shortBook.BidQuantity * shortBook.BestBid < minTouchUsd))
+            return new { ok = false, error = "top-of-book liquidity is below 25% of requested notional" };
 
         // Same symbol already open
         lock (_lock)
@@ -117,8 +150,9 @@ public sealed class LiveOrderEngine
         var refPrice  = req.LongAsk ?? req.ShortBid ?? 0m;
         var scanQty = RoundBaseQty(req.BaseQty, refPrice);
         // Use live-specific leverage (separate from paper leverage)
-        var lev = req.Leverage > 0 ? req.Leverage
-                : (Opt.LivePaperLeverage > 0 ? Opt.LivePaperLeverage : 3m);
+        var lev = Math.Clamp(
+            req.Leverage > 0 ? req.Leverage : (Opt.LivePaperLeverage > 0 ? Opt.LivePaperLeverage : 3m),
+            1m, 10m);
 
         // The settings size (scan notional) is the order. Do not shrink it to equity × usage.
         // LiveMaxNotional is only a ceiling, and Save raises it to the size.
@@ -126,9 +160,9 @@ public sealed class LiveOrderEngine
         var equity = opt.LiveEquityPerExchangeUsd > 0 ? opt.LiveEquityPerExchangeUsd : 100m;
         var usage  = opt.LiveMarginUsageFraction  > 0 ? opt.LiveMarginUsageFraction  : 0.25m;
         usage = Math.Clamp(usage, 0.15m, 0.50m);
-        var target = req.NotionalUsd >= 20m
-            ? req.NotionalUsd
-            : equity * lev * usage;
+        if (req.NotionalUsd <= 0)
+            return new { ok = false, error = "notional must be positive" };
+        var target = req.NotionalUsd;
         if (opt.LiveMaxNotionalUsd > 0 && target > opt.LiveMaxNotionalUsd)
             target = opt.LiveMaxNotionalUsd;
         if (target < 20m)
@@ -172,19 +206,25 @@ public sealed class LiveOrderEngine
         var reserveUsd = estNotional * ArbEconomics.ExecutionReservePercent(opt.OpenEdgeBufferPercent) / 100m;
         // Fair basis is not profit. Only the excess over it can revert.
         var basisUsd = estNotional * (req.FairBasisPercent > 0 ? req.FairBasisPercent : 0m) / 100m;
-        var netOpen = grossOpen - basisUsd - feesOpen - reserveUsd;
+        var exitCrossUsd = estNotional * Math.Max(0m, req.ExitCrossPercent) / 100m;
+        var netOpen = grossOpen - basisUsd - feesOpen - reserveUsd - exitCrossUsd;
         var minTp = ArbEconomics.RequiredTakeProfitUsd(opt.MinTakeProfitUsd, estNotional);
         var minEdgeUsd = estNotional * ArbEconomics.RequiredNetPercent(opt.MinProfitPercent) / 100m;
         var need = Math.Max(minTp, minEdgeUsd);
         if (netOpen < need)
         {
             _logger.LogInformation(
-                "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2} slip {S:F2})",
-                req.Symbol, netOpen, need, grossOpen, feesOpen, reserveUsd);
-            return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min {need:F2}$ after fees and slip", TimeSpan.FromSeconds(45));
+                "LIVE skip {Sym}: RT net {Net:F2}$ < min {Min:F2}$ (gross {G:F2} fees {F:F2} exit {X:F2} reserve {S:F2})",
+                req.Symbol, netOpen, need, grossOpen, feesOpen, exitCrossUsd, reserveUsd);
+            return SkipSymbol(req.Symbol, $"RT net {netOpen:F2}$ < min {need:F2}$ after fees, exit cross and reserve", TimeSpan.FromSeconds(45));
         }
 
         var estMargin = lev > 0 ? estNotional / lev : estNotional;
+        var configuredMarginLimit = equity * usage;
+        if (estMargin > configuredMarginLimit)
+            return SkipSymbol(req.Symbol,
+                $"estimated margin {estMargin:F2}$ exceeds configured per-venue budget {configuredMarginLimit:F2}$",
+                TimeSpan.FromMinutes(2));
         // A venue we already know is empty must not be tried, and must not
         // freeze the symbol: Binance↔Bybit still trades if the other four are at 0.
         if (VenueTooPoor(req.LongExchange, estMargin, out var poorLong))
@@ -196,17 +236,65 @@ public sealed class LiveOrderEngine
             "LIVE size {Sym} qty={Q} notional≈{N:F2}$ margin≈{M:F2}$ (equity={E}$ lev={L}x usage={U:P0} scanQty={Scan})",
             req.Symbol, roundedQty, estNotional, estMargin, equity, lev, usage, scanQty);
 
+        // Reserve the global and per-venue interval before the first leg, including
+        // rejected/partially filled attempts, so repeated errors cannot order-spam.
         var longQty = QtyForExchange(req.LongExchange, req.Symbol, roundedQty);
         var shortQty = QtyForExchange(req.ShortExchange, req.Symbol, roundedQty);
         var clientId = "ab-" + Guid.NewGuid().ToString("N")[..16];
+        var pendingPosition = new LiveHedgePosition
+        {
+            Symbol = req.Symbol.ToUpperInvariant(),
+            LongExchange = req.LongExchange,
+            ShortExchange = req.ShortExchange,
+            BaseQty = roundedQty,
+            LongBaseQty = roundedQty,
+            ShortBaseQty = roundedQty,
+            HasPerLegQuantities = true,
+            NotionalUsd = estNotional,
+            LongEntry = req.LongAsk.Value,
+            ShortEntry = req.ShortBid.Value,
+            IsOpen = true,
+            NeedsReconciliation = true,
+            Status = "Opening",
+            Message = "Opening intent persisted before first live order"
+        };
+        lock (_lock)
+        {
+            _open.Add(pendingPosition);
+            SaveUnlocked();
+        }
+        var reserved = _safety.TryReserveOrderAttempt(req.Symbol, req.LongExchange, req.ShortExchange, estNotional);
+        if (!reserved.ok)
+        {
+            RemoveOpeningIntent(pendingPosition);
+            return new { ok = false, error = "safety: " + reserved.reason };
+        }
 
         // 1) LONG — hedge first; if the account is one-way, SendOrderAsync retries without positionSide.
         var longResult = await SendOrderAsync(
             longClient, req.LongExchange, sharedSym, SharedOrderSide.Buy, longQty, lev,
             SharedPositionSide.Long, isClose: false, clientId + "-L", ct,
-            limitPrice: SnapLimit(req.LongAsk.Value, req.LongAsk.Value * 1.0004m, up: true)).ConfigureAwait(false);
+            limitPrice: SnapLimit(req.LongAsk.Value, req.LongAsk.Value * 1.0004m, up: true),
+            expectedBaseQty: roundedQty).ConfigureAwait(false);
         if (!longResult.Ok)
         {
+            if (longResult.Accepted && !longResult.Verified)
+            {
+                QuarantineUnknownOrder(req, roundedQty, "long", longResult.Error);
+                return new { ok = false, error = "long order accepted but fill could not be verified; live killed for reconciliation" };
+            }
+            if (longResult.Verified && longResult.FilledBaseQty > 0)
+            {
+                var unwind = await TryReduceAsync(longClient, req.LongExchange, sharedSym,
+                    QtyForExchange(req.LongExchange, req.Symbol, longResult.FilledBaseQty),
+                    SharedOrderSide.Sell, SharedPositionSide.Long, ct, longResult.FilledBaseQty).ConfigureAwait(false);
+                if (!unwind.Ok)
+                {
+                    QuarantineUnknownOrder(req, longResult.FilledBaseQty, "long partial fill unwind", unwind.Error);
+                    return new { ok = false, error = "partial long fill could not be safely unwound" };
+                }
+            }
+            RemoveOpeningIntent(pendingPosition);
             if (IsBalanceError(longResult.Error))
             {
                 NoteVenueUsdt(req.LongExchange, 0);
@@ -221,13 +309,41 @@ public sealed class LiveOrderEngine
         }
 
         var longOrderId = longResult.Id ?? "?";
-        var longAvg = req.LongAsk ?? 0;
+        var longAvg = longResult.AveragePrice > 0 ? longResult.AveragePrice : req.LongAsk ?? 0;
+        pendingPosition.LongBaseQty = longResult.FilledBaseQty;
+        pendingPosition.ShortBaseQty = 0m;
+        pendingPosition.BaseQty = longResult.FilledBaseQty;
+        pendingPosition.LongEntry = longAvg;
+        pendingPosition.LongOrderId = longOrderId;
+        pendingPosition.Status = "OpeningShort";
+        pendingPosition.Message = "Long fill confirmed; short leg is being submitted";
+        lock (_lock) SaveUnlocked();
+        if (longResult.AveragePrice <= 0)
+        {
+            var unwind = await TryReduceAsync(longClient, req.LongExchange, sharedSym,
+                QtyForExchange(req.LongExchange, req.Symbol, longResult.FilledBaseQty),
+                SharedOrderSide.Sell, SharedPositionSide.Long, ct, longResult.FilledBaseQty).ConfigureAwait(false);
+            if (!unwind.Ok) QuarantineUnknownOrder(req, longResult.FilledBaseQty, "long fill price missing; unwind failed", unwind.Error);
+            else RemoveOpeningIntent(pendingPosition);
+            return new { ok = false, error = "long fill confirmed but average price missing; hedge unwound or reconciliation required" };
+        }
 
         // 2) SHORT — same size; on fail always unwind long
         var shortResult = await SendOrderAsync(
             shortClient, req.ShortExchange, sharedSym, SharedOrderSide.Sell, shortQty, lev,
             SharedPositionSide.Short, isClose: false, clientId + "-S", ct,
-            limitPrice: SnapLimit(req.ShortBid.Value, req.ShortBid.Value * 0.9996m, up: false)).ConfigureAwait(false);
+            limitPrice: SnapLimit(req.ShortBid.Value, req.ShortBid.Value * 0.9996m, up: false),
+            expectedBaseQty: roundedQty).ConfigureAwait(false);
+        if (shortResult.Verified && shortResult.FilledBaseQty > 0)
+        {
+            pendingPosition.ShortBaseQty = shortResult.FilledBaseQty;
+            pendingPosition.ShortOrderId = shortResult.Id;
+            pendingPosition.ShortEntry = shortResult.AveragePrice;
+            pendingPosition.BaseQty = Math.Max(pendingPosition.LongBaseQty, pendingPosition.ShortBaseQty);
+            pendingPosition.Status = "OpeningReconcile";
+            pendingPosition.Message = "Both leg fill state is being reconciled";
+            lock (_lock) SaveUnlocked();
+        }
         if (!shortResult.Ok)
         {
             if (IsBalanceError(shortResult.Error))
@@ -237,38 +353,102 @@ public sealed class LiveOrderEngine
             }
             _logger.LogError("LIVE SHORT fail {Ex} {Sym}: {Err} — unwinding long",
                 req.ShortExchange, req.Symbol, shortResult.Error);
-            await TryReduceAsync(longClient, req.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
-                .ConfigureAwait(false);
+            if (shortResult.Accepted && !shortResult.Verified)
+            {
+                QuarantineUnknownOrder(req, roundedQty, "short", shortResult.Error);
+                return new { ok = false, error = "short order accepted but fill could not be verified; live killed for reconciliation" };
+            }
+            if (shortResult.Verified && shortResult.FilledBaseQty > 0)
+            {
+                var closeShort = await TryReduceAsync(shortClient, req.ShortExchange, sharedSym,
+                    QtyForExchange(req.ShortExchange, req.Symbol, shortResult.FilledBaseQty),
+                    SharedOrderSide.Buy, SharedPositionSide.Short, ct, shortResult.FilledBaseQty).ConfigureAwait(false);
+                if (!closeShort.Ok)
+                {
+                    QuarantineUnknownOrder(req, shortResult.FilledBaseQty, "short partial fill unwind", closeShort.Error);
+                    return new { ok = false, error = "partial short fill could not be safely unwound" };
+                }
+            }
+            var unwindLong = await TryReduceAsync(longClient, req.LongExchange, sharedSym,
+                QtyForExchange(req.LongExchange, req.Symbol, longResult.FilledBaseQty),
+                SharedOrderSide.Sell, SharedPositionSide.Long, ct, longResult.FilledBaseQty).ConfigureAwait(false);
+            if (!unwindLong.Ok)
+            {
+                QuarantineUnknownOrder(req, longResult.FilledBaseQty, "long unwind", unwindLong.Error);
+                return new { ok = false, error = "long fill could not be safely unwound" };
+            }
+            RemoveOpeningIntent(pendingPosition);
             if (IsBalanceError(shortResult.Error))
                 return new { ok = false, error = "no margin on " + req.ShortExchange + " (long unwind attempted)" };
             return SkipSymbol(req.Symbol, "SHORT failed: " + shortResult.Error + " (long unwind attempted)", RejectCooldown);
         }
 
         var shortOrderId = shortResult.Id ?? "?";
-        var shortAvg = req.ShortBid ?? 0;
-
-        var pos = new LiveHedgePosition
+        var shortAvg = shortResult.AveragePrice > 0 ? shortResult.AveragePrice : req.ShortBid ?? 0;
+        if (shortResult.AveragePrice <= 0)
         {
-            Symbol = req.Symbol.ToUpperInvariant(),
-            LongExchange = req.LongExchange,
-            ShortExchange = req.ShortExchange,
-            BaseQty = roundedQty,
-            NotionalUsd = estNotional,
-            LongEntry = longAvg,
-            ShortEntry = shortAvg,
-            LongOrderId = longOrderId?.ToString(),
-            ShortOrderId = shortOrderId?.ToString(),
-            Status = "Open",
-            Message = $"LIVE hedge L@{longAvg} S@{shortAvg}"
-        };
+            var unwindShort = await TryReduceAsync(shortClient, req.ShortExchange, sharedSym,
+                QtyForExchange(req.ShortExchange, req.Symbol, shortResult.FilledBaseQty),
+                SharedOrderSide.Buy, SharedPositionSide.Short, ct, shortResult.FilledBaseQty).ConfigureAwait(false);
+            var unwindLong = await TryReduceAsync(longClient, req.LongExchange, sharedSym,
+                QtyForExchange(req.LongExchange, req.Symbol, longResult.FilledBaseQty),
+                SharedOrderSide.Sell, SharedPositionSide.Long, ct, longResult.FilledBaseQty).ConfigureAwait(false);
+            if (!unwindShort.Ok || !unwindLong.Ok)
+                QuarantineUnknownOrder(req, Math.Max(longResult.FilledBaseQty, shortResult.FilledBaseQty),
+                    "average fill price missing; unwind failed", $"long={unwindLong.Error}; short={unwindShort.Error}");
+            else RemoveOpeningIntent(pendingPosition);
+            return new { ok = false, error = "short fill confirmed but average price missing; hedge unwound or reconciliation required" };
+        }
 
+        var matchedQty = Math.Min(longResult.FilledBaseQty, shortResult.FilledBaseQty);
+        var unmatchedLong = Math.Max(0m, longResult.FilledBaseQty - matchedQty);
+        var unmatchedShort = Math.Max(0m, shortResult.FilledBaseQty - matchedQty);
+        if (unmatchedLong > 0)
+        {
+            var result = await TryReduceAsync(longClient, req.LongExchange, sharedSym,
+                QtyForExchange(req.LongExchange, req.Symbol, unmatchedLong), SharedOrderSide.Sell,
+                SharedPositionSide.Long, ct, unmatchedLong).ConfigureAwait(false);
+            if (!result.Ok)
+            {
+                QuarantineUnknownOrder(req, unmatchedLong, "long unmatched fill", result.Error);
+                return new { ok = false, error = "unmatched long fill could not be safely unwound" };
+            }
+        }
+        if (unmatchedShort > 0)
+        {
+            var result = await TryReduceAsync(shortClient, req.ShortExchange, sharedSym,
+                QtyForExchange(req.ShortExchange, req.Symbol, unmatchedShort), SharedOrderSide.Buy,
+                SharedPositionSide.Short, ct, unmatchedShort).ConfigureAwait(false);
+            if (!result.Ok)
+            {
+                QuarantineUnknownOrder(req, unmatchedShort, "short unmatched fill", result.Error);
+                return new { ok = false, error = "unmatched short fill could not be safely unwound" };
+            }
+        }
+        if (matchedQty <= 0)
+        {
+            RemoveOpeningIntent(pendingPosition);
+            return new { ok = false, error = "no matched filled quantity; any unmatched quantity was unwound" };
+        }
+
+        var pos = pendingPosition;
+        pos.BaseQty = matchedQty;
+        pos.LongBaseQty = matchedQty;
+        pos.ShortBaseQty = matchedQty;
+        pos.HasPerLegQuantities = true;
+        pos.NotionalUsd = estNotional;
+        pos.LongEntry = longAvg;
+        pos.ShortEntry = shortAvg;
+        pos.LongOrderId = longOrderId?.ToString();
+        pos.ShortOrderId = shortOrderId?.ToString();
+        pos.NeedsReconciliation = false;
+        pos.Status = "Open";
+        pos.Message = $"LIVE hedge filled L@{longAvg} S@{shortAvg}";
         lock (_lock)
         {
-            _open.Add(pos);
             SaveUnlocked();
         }
 
-        _safety.MarkOrderSent(pos.LongExchange, pos.ShortExchange);
         _ = _safety.AlertAsync("LIVE OPEN",
             $"{pos.Symbol} L={pos.LongExchange} S={pos.ShortExchange} qty={pos.BaseQty}",
             CancellationToken.None);
@@ -294,11 +474,13 @@ public sealed class LiveOrderEngine
 
     public async Task<object> TryCloseAsync(string tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?>? getMarks, CancellationToken ct)
     {
-        if (!_guard.CanPlaceOrders && !_guard.IsKilled)
-        {
-            // allow close even if disabled after enable, but not if never enabled - still try if we have open
-        }
+        await _orderGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return await TryCloseCoreAsync(tradeId, getMarks, ct).ConfigureAwait(false); }
+        finally { _orderGate.Release(); }
+    }
 
+    private async Task<object> TryCloseCoreAsync(string tradeId, Func<string, string, string, (decimal longBid, decimal shortAsk)?>? getMarks, CancellationToken ct)
+    {
         LiveHedgePosition? pos;
         lock (_lock)
             pos = _open.FirstOrDefault(p => p.Id.ToString().Equals(tradeId, StringComparison.OrdinalIgnoreCase));
@@ -310,8 +492,10 @@ public sealed class LiveOrderEngine
         var sharedSym = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
         if (IsOkx(pos.LongExchange) || IsOkx(pos.ShortExchange))
             await EnsureOkxLotsAsync(ct).ConfigureAwait(false);
-        var longQty = QtyForExchange(pos.LongExchange, pos.Symbol, pos.BaseQty);
-        var shortQty = QtyForExchange(pos.ShortExchange, pos.Symbol, pos.BaseQty);
+        var longRemaining = pos.HasPerLegQuantities ? pos.LongBaseQty : pos.BaseQty;
+        var shortRemaining = pos.HasPerLegQuantities ? pos.ShortBaseQty : pos.BaseQty;
+        var longQty = QtyForExchange(pos.LongExchange, pos.Symbol, longRemaining);
+        var shortQty = QtyForExchange(pos.ShortExchange, pos.Symbol, shortRemaining);
 
         var longClient = CreateClient(pos.LongExchange);
         var shortClient = CreateClient(pos.ShortExchange);
@@ -319,44 +503,80 @@ public sealed class LiveOrderEngine
             return new { ok = false, error = "missing credentials to close" };
 
         // Close long: sell reduce
-        var closeLong = await TryReduceAsync(longClient, pos.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct)
-            .ConfigureAwait(false);
+        var closeLong = longRemaining > 0
+            ? await TryReduceAsync(longClient, pos.LongExchange, sharedSym, longQty, SharedOrderSide.Sell, SharedPositionSide.Long, ct, longRemaining).ConfigureAwait(false)
+            : new OrderExecution(true, "already flat", null, false, true, 0m, 0m, "Filled");
         // Close short: buy reduce
-        var closeShort = await TryReduceAsync(shortClient, pos.ShortExchange, sharedSym, shortQty, SharedOrderSide.Buy, SharedPositionSide.Short, ct)
-            .ConfigureAwait(false);
+        var closeShort = shortRemaining > 0
+            ? await TryReduceAsync(shortClient, pos.ShortExchange, sharedSym, shortQty, SharedOrderSide.Buy, SharedPositionSide.Short, ct, shortRemaining).ConfigureAwait(false)
+            : new OrderExecution(true, "already flat", null, false, true, 0m, 0m, "Filled");
 
-        decimal? pnl = null;
-        var feeNote = "";
-        if (getMarks != null)
+        if (closeLong.Accepted && !closeLong.Verified || closeShort.Accepted && !closeShort.Verified)
         {
-            var m = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
-            if (m != null)
-            {
-                var (longBid, shortAsk) = m.Value;
-                var gross = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
-                var fees = RoundTripFees(pos, longBid, shortAsk);
-                pnl = gross - fees;
-                feeNote = $" gross={gross:F4} fees={fees:F4}";
-            }
+            pos.NeedsReconciliation = true;
+            pos.Status = "ReconciliationRequired";
+            pos.Message = "Close order accepted but exchange fill could not be verified; reconcile positions before retrying";
+            _guard.Kill(pos.Message);
+            _ = _safety.AlertAsync("LIVE RECONCILIATION REQUIRED", $"{pos.Symbol}: {pos.Message}", CancellationToken.None);
+            lock (_lock) SaveUnlocked();
+            return new { ok = false, tradeId, status = pos.Status, message = pos.Message };
         }
+
+        if ((closeLong.FilledBaseQty > 0 && closeLong.AveragePrice <= 0)
+            || (closeShort.FilledBaseQty > 0 && closeShort.AveragePrice <= 0))
+        {
+            pos.NeedsReconciliation = true;
+            pos.Status = "ReconciliationRequired";
+            pos.Message = "Close fill quantity is known but average execution price is missing";
+            _guard.Kill(pos.Message);
+            _ = _safety.AlertAsync("LIVE RECONCILIATION REQUIRED", $"{pos.Symbol}: {pos.Message}", CancellationToken.None);
+            lock (_lock) SaveUnlocked();
+            return new { ok = false, tradeId, status = pos.Status, message = pos.Message };
+        }
+
+        var realizedDelta = 0m;
+        if (closeLong.FilledBaseQty > 0)
+            realizedDelta += ClosedLegNetPnl(true, pos.LongExchange, pos.LongEntry, closeLong.AveragePrice, closeLong.FilledBaseQty);
+        if (closeShort.FilledBaseQty > 0)
+            realizedDelta += ClosedLegNetPnl(false, pos.ShortExchange, pos.ShortEntry, closeShort.AveragePrice, closeShort.FilledBaseQty);
+        pos.RealizedPnlUsd = (pos.RealizedPnlUsd ?? 0m) + realizedDelta;
+
+        if (closeLong.Verified && closeLong.FilledBaseQty > 0)
+            pos.LongBaseQty = Math.Max(0m, longRemaining - closeLong.FilledBaseQty);
+        else
+            pos.LongBaseQty = longRemaining;
+        if (closeShort.Verified && closeShort.FilledBaseQty > 0)
+            pos.ShortBaseQty = Math.Max(0m, shortRemaining - closeShort.FilledBaseQty);
+        else
+            pos.ShortBaseQty = shortRemaining;
+        pos.HasPerLegQuantities = true;
+        pos.BaseQty = Math.Max(pos.LongBaseQty, pos.ShortBaseQty);
+        var flat = pos.LongBaseQty <= Math.Max(0.0000000001m, longRemaining * 0.000001m)
+                   && pos.ShortBaseQty <= Math.Max(0.0000000001m, shortRemaining * 0.000001m);
+
+        decimal? pnl = flat ? pos.RealizedPnlUsd : null;
+        var feeNote = " based on confirmed fills and configured taker fees";
 
         lock (_lock)
         {
-            _open.Remove(pos);
-            pos.IsOpen = false;
-            pos.ClosedAt = DateTime.UtcNow;
-            pos.Status = closeLong && closeShort ? "Closed" : "ClosedPartial";
+            if (flat) _open.Remove(pos);
+            pos.IsOpen = !flat;
+            pos.ClosedAt = flat ? DateTime.UtcNow : null;
+            pos.Status = flat ? "Closed" : "ClosePartial";
             pos.RealizedPnlUsd = pnl;
-            pos.Message = $"close longOk={closeLong} shortOk={closeShort} pnl={pnl}{feeNote}";
-            _closed.Insert(0, pos);
-            if (_closed.Count > 500) _closed.RemoveRange(500, _closed.Count - 500);
+            pos.Message = $"close longFilled={closeLong.FilledBaseQty} shortFilled={closeShort.FilledBaseQty} remainingL={pos.LongBaseQty} remainingS={pos.ShortBaseQty} pnl={pnl}{feeNote}";
+            if (flat)
+            {
+                _closed.Insert(0, pos);
+                if (_closed.Count > 500) _closed.RemoveRange(500, _closed.Count - 500);
+            }
             SaveUnlocked();
         }
 
-        if (pnl.HasValue)
+        if (flat && pnl.HasValue)
             _guard.RecordRealized(pnl.Value);
 
-        return new { ok = closeLong && closeShort, tradeId, pnl, status = pos.Status, message = pos.Message };
+        return new { ok = flat, tradeId, pnl, status = pos.Status, message = pos.Message };
     }
 
     public async Task<int> TryCloseConvergedAsync(
@@ -371,6 +591,7 @@ public sealed class LiveOrderEngine
         var closed = 0;
         foreach (var pos in snapshot)
         {
+            if (pos.NeedsReconciliation) continue;
             var marks = getMarks(pos.Symbol, pos.LongExchange, pos.ShortExchange);
             if (marks == null) continue;
             var (longBid, shortAsk) = marks.Value;
@@ -378,10 +599,12 @@ public sealed class LiveOrderEngine
 
             var width = (shortAsk - longBid) / longBid * 100m;
             var entryWidth = pos.LongEntry > 0 ? (pos.ShortEntry - pos.LongEntry) / pos.LongEntry * 100m : 0m;
-            var gross = (pos.ShortEntry - shortAsk) * pos.BaseQty + (longBid - pos.LongEntry) * pos.BaseQty;
+            var longQty = pos.HasPerLegQuantities ? pos.LongBaseQty : pos.BaseQty;
+            var shortQty = pos.HasPerLegQuantities ? pos.ShortBaseQty : pos.BaseQty;
+            var gross = (pos.ShortEntry - shortAsk) * shortQty + (longBid - pos.LongEntry) * longQty;
             var fees = RoundTripFees(pos, longBid, shortAsk);
-            var net = gross - fees;
-            var notional = pos.LongEntry > 0 ? pos.LongEntry * pos.BaseQty : pos.NotionalUsd;
+            var net = (pos.RealizedPnlUsd ?? 0m) + gross - fees;
+            var notional = Math.Max(pos.LongEntry * longQty, pos.ShortEntry * shortQty);
             var minTp = ArbEconomics.RequiredTakeProfitUsd(LiveMinNetUsd(notional), notional);
             var stopLevel = ArbEconomics.EffectiveStopUsd(stopLossUsd, fees, minTp);
             var widened = entryWidth > 0 && width >= entryWidth + 0.30m;
@@ -404,18 +627,21 @@ public sealed class LiveOrderEngine
             var takeProfit = profitMarks >= 3 || (net >= minTp && (converged || shrunk)) || trailHit;
             var timedOut = maxHoldMinutes > 0 && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= maxHoldMinutes;
             var timeoutHarvest = timedOut && net >= minTp;
+            var hardTimeoutMinutes = Opt.FuturesHardMaxHoldMinutes;
+            var hardTimeout = hardTimeoutMinutes > 0
+                && (DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= hardTimeoutMinutes;
 
-            if (!stop && !takeProfit && !timeoutHarvest) continue;
+            if (!stop && !takeProfit && !timeoutHarvest && !hardTimeout) continue;
             if (stop) TradeBan.Ban(pos.Symbol, TimeSpan.FromHours(6));
             _adverseMarks.TryRemove(pos.Id, out _);
             _peakPnl.TryRemove(pos.Id, out _);
             _profitMarks.TryRemove(pos.Id, out _);
 
             var r = await TryCloseAsync(pos.Id.ToString(), getMarks, ct).ConfigureAwait(false);
-            closed++;
+            if (r.GetType().GetProperty("ok")?.GetValue(r) is true) closed++;
             _logger.LogWarning(
-                "LIVE auto-close {Sym} width={W:F3} net={N:F2} gross={G:F2} fees={F:F2} min={M:F2} stop={S} tp={T} timeout={H}",
-                pos.Symbol, width, net, gross, fees, minTp, stop, takeProfit, timeoutHarvest);
+                "LIVE auto-close {Sym} width={W:F3} net={N:F2} gross={G:F2} fees={F:F2} min={M:F2} stop={S} tp={T} timeout={H} hardTimeout={Hard}",
+                pos.Symbol, width, net, gross, fees, minTp, stop, takeProfit, timeoutHarvest, hardTimeout);
         }
         return closed;
     }
@@ -432,14 +658,15 @@ public sealed class LiveOrderEngine
         return 0;
     }
 
-    private async Task<bool> TryReduceAsync(
+    private async Task<OrderExecution> TryReduceAsync(
         ExchangeRestClient client,
         string exchange,
         SharedSymbol symbol,
         SharedQuantity qty,
         SharedOrderSide side,
         SharedPositionSide posSide,
-        CancellationToken ct)
+        CancellationToken ct,
+        decimal expectedBaseQty)
     {
         try
         {
@@ -448,25 +675,28 @@ public sealed class LiveOrderEngine
             // Closing is expressed by opposite order side + same positionSide (+ Bitget tradeSide=close).
             var sent = await SendOrderAsync(
                 client, exchange, symbol, side, qty, leverage: null, posSide, isClose: true,
-                "ab-c-" + Guid.NewGuid().ToString("N")[..12], ct).ConfigureAwait(false);
+                "ab-c-" + Guid.NewGuid().ToString("N")[..12], ct,
+                expectedBaseQty: expectedBaseQty).ConfigureAwait(false);
             if (!sent.Ok)
             {
                 _logger.LogError("LIVE reduce fail {Ex}: {Err}", exchange, sent.Error);
-                return false;
+                return sent;
             }
-            return true;
+            return sent;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LIVE reduce exception {Ex}", exchange);
-            return false;
+            return new OrderExecution(false, ex.Message, null, false, false, 0m, 0m);
         }
     }
 
     private ExchangeRestClient? CreateClient(string exchange)
     {
         var cred = _settings.GetCredential(exchange);
-        if (cred == null || string.IsNullOrWhiteSpace(cred.ApiKey) || string.IsNullOrWhiteSpace(cred.ApiSecret))
+        if (cred == null || !cred.Enabled
+            || !string.Equals(cred.Permission, "trade", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(cred.ApiKey) || string.IsNullOrWhiteSpace(cred.ApiSecret))
             return null;
 
         var key = cred.ApiKey!.Trim();
@@ -534,7 +764,7 @@ public sealed class LiveOrderEngine
         return rest;
     }
 
-    private async Task<(bool Ok, string Error, string? Id)> SendOrderAsync(
+    private async Task<OrderExecution> SendOrderAsync(
         ExchangeRestClient client,
         string exchange,
         SharedSymbol symbol,
@@ -545,9 +775,10 @@ public sealed class LiveOrderEngine
         bool isClose,
         string clientOrderId,
         CancellationToken ct,
-        decimal? limitPrice = null)
+        decimal? limitPrice = null,
+        decimal? expectedBaseQty = null)
     {
-        async Task<(bool Ok, string Error, string? Id)> Once(bool hedge)
+        async Task<OrderExecution> Once(bool hedge)
         {
             var limit = limitPrice is > 0;
             var req = new PlaceFuturesOrderRequest(
@@ -563,10 +794,50 @@ public sealed class LiveOrderEngine
                 marginMode: SharedMarginMode.Cross,
                 clientOrderId: hedge ? clientOrderId : clientOrderId + "n",
                 exchangeParameters: ExParams(exchange, isClose, hedge));
-            var result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
-            if (result.Success)
-                return (true, "", result.Data?.Id?.ToString());
-            return (false, DescribeFail(result.Error, result.OriginalData, "order failed"), null);
+            CryptoExchange.Net.Objects.HttpResult<SharedId> result;
+            try
+            {
+                result = await client.PlaceFuturesOrderAsync(exchange, req, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
+            {
+                return new OrderExecution(false, "order request canceled after submission may have started: " + ex.Message,
+                    null, true, false, 0m, 0m);
+            }
+            catch (Exception ex)
+            {
+                var ambiguous = IsAmbiguousOrderFailure(ex.Message);
+                return new OrderExecution(false, ex.Message, null, ambiguous, false, 0m, 0m);
+            }
+            if (!result.Success)
+            {
+                var error = DescribeFail(result.Error, result.OriginalData, "order failed");
+                return new OrderExecution(false, error, null, IsAmbiguousOrderFailure(error), false, 0m, 0m);
+            }
+
+            var id = result.Data?.Id?.ToString();
+            if (string.IsNullOrWhiteSpace(id))
+                return new OrderExecution(false, "order accepted without exchange order id; fill state is unknown", null, true, false, 0m, 0m);
+
+            var expected = expectedBaseQty ?? 0m;
+            var actualClientId = hedge ? clientOrderId : clientOrderId + "n";
+            (bool Verified, decimal FilledBaseQty, decimal AveragePrice, string? Status) confirmed;
+            try
+            {
+                confirmed = await ConfirmOrderFillAsync(client, exchange, symbol, id, actualClientId, expected, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return new OrderExecution(false, "order accepted; fill confirmation interrupted: " + ex.Message,
+                    id, true, false, 0m, 0m);
+            }
+            if (!confirmed.Verified)
+                return new OrderExecution(false, "order accepted but fill state could not be confirmed", id, true, false, 0m, 0m);
+
+            var fullyFilled = expected <= 0 || confirmed.FilledBaseQty >= expected * 0.999999m;
+            return new OrderExecution(
+                fullyFilled, fullyFilled ? "" : $"partial fill {confirmed.FilledBaseQty}/{expected} base ({confirmed.Status})",
+                id, true, true, confirmed.FilledBaseQty, confirmed.AveragePrice, confirmed.Status);
         }
 
         var first = await Once(hedgeSide != null);
@@ -574,6 +845,141 @@ public sealed class LiveOrderEngine
             return first;
         _logger.LogWarning("LIVE {Ex} retry without position side ({Err})", exchange, first.Error);
         return await Once(false);
+    }
+
+    private static bool IsAmbiguousOrderFailure(string message)
+        => message.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("connection", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("socket", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("network", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("cancelled", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<(bool Verified, decimal FilledBaseQty, decimal AveragePrice, string? Status)> ConfirmOrderFillAsync(
+        ExchangeRestClient client, string exchange, SharedSymbol symbol, string orderId,
+        string clientOrderId, decimal expectedBaseQty, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                var request = new GetOrderRequest(symbol, orderId, ExParams(exchange));
+                var result = await client.GetFuturesOrderAsync(exchange, request, ct).ConfigureAwait(false);
+                if (result.Success && result.Data != null)
+                {
+                    var order = result.Data;
+                    var filledBase = order.QuantityFilled?.QuantityInBaseAsset
+                        ?? ToBaseQuantity(exchange, symbol.BaseAsset, order.QuantityFilled?.QuantityInContracts ?? 0m);
+                    var status = order.Status.ToString();
+                    var terminal = status.Equals("Filled", StringComparison.OrdinalIgnoreCase)
+                                   || status.Equals("Canceled", StringComparison.OrdinalIgnoreCase);
+                    if (terminal)
+                        return (true, filledBase, order.AveragePrice ?? 0m, status);
+                }
+
+                // Some venues expose the order by client id a little earlier than by exchange id.
+                var byClient = new GetOrderRequest(symbol, clientOrderId, ExParams(exchange));
+                var retry = await client.GetFuturesOrderByClientOrderIdAsync(exchange, byClient, ct).ConfigureAwait(false);
+                if (retry.Success && retry.Data != null)
+                {
+                    var order = retry.Data;
+                    var filledBase = order.QuantityFilled?.QuantityInBaseAsset
+                        ?? ToBaseQuantity(exchange, symbol.BaseAsset, order.QuantityFilled?.QuantityInContracts ?? 0m);
+                    var status = order.Status.ToString();
+                    var terminal = status.Equals("Filled", StringComparison.OrdinalIgnoreCase)
+                                   || status.Equals("Canceled", StringComparison.OrdinalIgnoreCase);
+                    if (terminal)
+                        return (true, filledBase, order.AveragePrice ?? 0m, status);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "LIVE order fill query {Ex} {OrderId} attempt {Attempt}", exchange, orderId, attempt + 1);
+            }
+
+            if (attempt < 2)
+                await Task.Delay(150 * (attempt + 1), ct).ConfigureAwait(false);
+        }
+
+        return (false, 0m, 0m, null);
+    }
+
+    private decimal ToBaseQuantity(string exchange, string baseAsset, decimal filledContracts)
+    {
+        if (filledContracts <= 0) return 0m;
+        if (IsOkx(exchange) && OkxLots.TryGetValue(NormSym(baseAsset + "USDT"), out var lot) && lot.CtVal > 0)
+            return filledContracts * lot.CtVal;
+        return filledContracts;
+    }
+
+    private decimal ClosedLegNetPnl(bool isLong, string exchange, decimal entry, decimal exit, decimal quantity)
+    {
+        if (quantity <= 0 || entry <= 0 || exit <= 0) return 0m;
+        var gross = isLong ? (exit - entry) * quantity : (entry - exit) * quantity;
+        var fees = (entry + exit) * quantity * TakerRate(exchange);
+        return gross - fees;
+    }
+
+    private void QuarantineUnknownOrder(LiveHedgeRequest req, decimal qty, string leg, string detail)
+    {
+        var reason = $"{req.Symbol} {leg}: {detail}";
+        _guard.Kill(reason);
+        lock (_lock)
+        {
+            var pos = _open.FirstOrDefault(p => p.Symbol.Equals(req.Symbol, StringComparison.OrdinalIgnoreCase));
+            if (pos == null)
+            {
+                pos = new LiveHedgePosition
+                {
+                    Symbol = req.Symbol.ToUpperInvariant(),
+                    LongExchange = req.LongExchange,
+                    ShortExchange = req.ShortExchange,
+                    BaseQty = qty,
+                    LongBaseQty = qty,
+                    ShortBaseQty = qty,
+                    HasPerLegQuantities = true,
+                    NotionalUsd = req.NotionalUsd,
+                    LongEntry = req.LongAsk ?? 0m,
+                    ShortEntry = req.ShortBid ?? 0m,
+                    IsOpen = true
+                };
+                _open.Add(pos);
+            }
+            else if (!pos.HasPerLegQuantities)
+            {
+                pos.LongBaseQty = pos.BaseQty;
+                pos.ShortBaseQty = pos.BaseQty;
+                pos.HasPerLegQuantities = true;
+            }
+
+            if (leg.StartsWith("long", StringComparison.OrdinalIgnoreCase))
+                pos.LongBaseQty = Math.Max(pos.LongBaseQty, qty);
+            else if (leg.StartsWith("short", StringComparison.OrdinalIgnoreCase))
+                pos.ShortBaseQty = Math.Max(pos.ShortBaseQty, qty);
+            else
+            {
+                pos.LongBaseQty = Math.Max(pos.LongBaseQty, qty);
+                pos.ShortBaseQty = Math.Max(pos.ShortBaseQty, qty);
+            }
+            pos.BaseQty = Math.Max(pos.LongBaseQty, pos.ShortBaseQty);
+            pos.NeedsReconciliation = true;
+            pos.Status = "ReconciliationRequired";
+            pos.Message = reason;
+            SaveUnlocked();
+        }
+        _ = _safety.AlertAsync("LIVE RECONCILIATION REQUIRED", reason, CancellationToken.None);
+        _logger.LogCritical("LIVE order state unknown: {Reason}", reason);
+    }
+
+    private void RemoveOpeningIntent(LiveHedgePosition position)
+    {
+        lock (_lock)
+        {
+            _open.Remove(position);
+            SaveUnlocked();
+        }
     }
 
     private static bool IsNetModeError(string err)
@@ -638,9 +1044,10 @@ public sealed class LiveOrderEngine
     /// <summary>Open fees at entry prices + close fees at the exit marks. No 0.85 discount.</summary>
     private decimal RoundTripFees(LiveHedgePosition pos, decimal longBid, decimal shortAsk)
     {
-        var qty = pos.BaseQty;
-        var open = pos.LongEntry * qty * TakerRate(pos.LongExchange) + pos.ShortEntry * qty * TakerRate(pos.ShortExchange);
-        var close = longBid * qty * TakerRate(pos.LongExchange) + shortAsk * qty * TakerRate(pos.ShortExchange);
+        var longQty = pos.HasPerLegQuantities ? pos.LongBaseQty : pos.BaseQty;
+        var shortQty = pos.HasPerLegQuantities ? pos.ShortBaseQty : pos.BaseQty;
+        var open = pos.LongEntry * longQty * TakerRate(pos.LongExchange) + pos.ShortEntry * shortQty * TakerRate(pos.ShortExchange);
+        var close = longBid * longQty * TakerRate(pos.LongExchange) + shortAsk * shortQty * TakerRate(pos.ShortExchange);
         return open + close;
     }
 
@@ -991,43 +1398,50 @@ public sealed class LiveOrderEngine
     /// One directional leg for the scalp mode. Limit IOC, one tick through the touch.
     /// Does not touch the hedge ledger.
     /// </summary>
-    public async Task<(bool Ok, string Error, string? Id)> PlaceScalpLegAsync(
+    public async Task<LiveLegOrderResult> PlaceScalpLegAsync(
         string exchange, string symbol, bool isLong, decimal qty, decimal limitPrice,
         decimal leverage, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(exchange) || string.IsNullOrWhiteSpace(symbol) || qty <= 0 || limitPrice <= 0)
-            return (false, "bad scalp request", null);
+            return new(false, "bad scalp request", null, false, false, 0m, 0m);
+        if (!_guard.CanPlaceOrders)
+            return new(false, "live orders are disabled or killed", null, false, false, 0m, 0m);
         if (IsCoolingDown(exchange, out var cd))
-            return (false, $"cooldown {exchange} {cd.TotalSeconds:F0}s", null);
+            return new(false, $"cooldown {exchange} {cd.TotalSeconds:F0}s", null, false, false, 0m, 0m);
         if (IsSymbolCooling(symbol, out var symCd))
-            return (false, $"cooldown {symbol} {symCd.TotalSeconds:F0}s", null);
+            return new(false, $"cooldown {symbol} {symCd.TotalSeconds:F0}s", null, false, false, 0m, 0m);
 
         var client = CreateClient(exchange);
         if (client == null)
-            return (false, "no credentials for " + exchange, null);
+            return new(false, "no trade credentials for " + exchange, null, false, false, 0m, 0m);
 
         var baseAsset = symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
             ? symbol[..^4] : symbol;
         var shared = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
         var rounded = RoundBaseQty(qty, limitPrice);
         if (rounded <= 0)
-            return (false, "qty rounded to zero", null);
+            return new(false, "qty rounded to zero", null, false, false, 0m, 0m);
 
         if (IsOkx(exchange))
         {
             await EnsureOkxLotsAsync(ct).ConfigureAwait(false);
             var aligned = AlignOkxBase(symbol, rounded, out var lotWhy);
             if (aligned <= 0)
-                return (false, lotWhy ?? "OKX lot reject", null);
+                return new(false, lotWhy ?? "OKX lot reject", null, false, false, 0m, 0m);
             rounded = aligned;
         }
 
         var side = isLong ? SharedOrderSide.Buy : SharedOrderSide.Sell;
         var posSide = isLong ? SharedPositionSide.Long : SharedPositionSide.Short;
         var snapped = SnapLimit(limitPrice, limitPrice, isLong);
+        var notional = rounded * snapped;
+        var gate = _guard.CheckOpenAllowed(_open.Count + Math.Max(0, _guard.AdditionalOpenPositions - 1), notional);
+        if (!gate.ok) return new(false, gate.reason, null, false, false, 0m, 0m);
+        var safety = _safety.TryReserveOrderAttempt(symbol, exchange, exchange, notional);
+        if (!safety.ok) return new(false, "safety: " + safety.reason, null, false, false, 0m, 0m);
         var sent = await SendOrderAsync(
             client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded), leverage, posSide, isClose: false,
-            "ab-s-" + Guid.NewGuid().ToString("N")[..12], ct, snapped).ConfigureAwait(false);
+            "ab-s-" + Guid.NewGuid().ToString("N")[..12], ct, snapped, rounded).ConfigureAwait(false);
         if (!sent.Ok)
         {
             if (IsBalanceError(sent.Error))
@@ -1035,21 +1449,27 @@ public sealed class LiveOrderEngine
             else
                 MarkSymbolCooldown(symbol, sent.Error, RejectCooldown);
             _logger.LogWarning("SCALP open fail {Ex} {Sym} {Side}: {Err}", exchange, symbol, isLong ? "L" : "S", sent.Error);
-            return (false, sent.Error, null);
+            if (sent.Accepted && !sent.Verified)
+            {
+                var why = $"Scalp order state unknown for {symbol} on {exchange}";
+                _guard.Kill(why);
+                _ = _safety.AlertAsync("LIVE SCALP RECONCILIATION REQUIRED", why, CancellationToken.None);
+            }
+            return new(false, sent.Error, sent.Id, sent.Accepted, sent.Verified, sent.FilledBaseQty, sent.AveragePrice);
         }
         _logger.LogInformation("SCALP open {Ex} {Sym} {Side} qty={Q} @ {P}", exchange, symbol, isLong ? "L" : "S", rounded, snapped);
-        return (true, "", sent.Id);
+        return new(true, "", sent.Id, sent.Accepted, sent.Verified, sent.FilledBaseQty, sent.AveragePrice);
     }
 
     /// <summary>Flatten one scalp leg. Opposite side, same position side.</summary>
-    public async Task<(bool Ok, string Error)> CloseScalpLegAsync(
+    public async Task<LiveLegOrderResult> CloseScalpLegAsync(
         string exchange, string symbol, bool wasLong, decimal qty, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(exchange) || string.IsNullOrWhiteSpace(symbol) || qty <= 0)
-            return (false, "bad scalp close");
+            return new(false, "bad scalp close", null, false, false, 0m, 0m);
         var client = CreateClient(exchange);
         if (client == null)
-            return (false, "no credentials for " + exchange);
+            return new(false, "no trade credentials for " + exchange, null, false, false, 0m, 0m);
         var baseAsset = symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
             ? symbol[..^4] : symbol;
         var shared = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
@@ -1057,8 +1477,14 @@ public sealed class LiveOrderEngine
         if (rounded <= 0) rounded = qty;
         var side = wasLong ? SharedOrderSide.Sell : SharedOrderSide.Buy;
         var posSide = wasLong ? SharedPositionSide.Long : SharedPositionSide.Short;
-        var ok = await TryReduceAsync(client, exchange, shared, QtyForExchange(exchange, symbol, rounded), side, posSide, ct).ConfigureAwait(false);
-        return ok ? (true, "") : (false, "reduce failed");
+        var ok = await TryReduceAsync(client, exchange, shared, QtyForExchange(exchange, symbol, rounded), side, posSide, ct, rounded).ConfigureAwait(false);
+        if (ok.Accepted && !ok.Verified)
+        {
+            var why = $"Scalp close fill state unknown for {symbol} on {exchange}";
+            _guard.Kill(why);
+            _ = _safety.AlertAsync("LIVE SCALP RECONCILIATION REQUIRED", why, CancellationToken.None);
+        }
+        return new(ok.Ok, ok.Error, ok.Id, ok.Accepted, ok.Verified, ok.FilledBaseQty, ok.AveragePrice);
     }
 
     private void TryLoad()

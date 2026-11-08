@@ -562,6 +562,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     // Round qty to exchange-safe precision (prevents Binance -1111 on live; keeps paper realistic)
                     var qty = LiveOrderEngine.RoundBaseQty(qtyRaw, longVwap);
                     if (qty <= 0) continue;
+                    // A shallow book may only support part of the requested quote size.
+                    // Carry the matched executable notional forward so downstream paper/live
+                    // sizing and dollar profit gates cannot silently scale that fill up.
+                    var matchedNotional = Math.Min(qty * longVwap, qty * shortVwap);
+                    if (matchedNotional <= 0) continue;
 
                     pairsCompared++;
                     var snap = _runtime.Snapshot;
@@ -578,15 +583,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var (fairRaw, dev, basisReady) = ReadBasis(edgeKey);
                     var fair = basisReady && fairRaw > 0 ? fairRaw : 0m;
                     var excess = gross - fair;
-                    // Lock the current cross. Open pays two takers. Close is posted, so
-                    // charge a maker-sized close, not a second pair of takers. Basis is
-                    // only a filter below: a print that is the pair's normal basis is not a trade.
+                    // Only the move beyond this route's warmed fair basis is potentially
+                    // capturable. A persistent cross-venue premium is not convergence alpha.
                     var openFees = longFee + shortFee;
-                    var closeFees = openFees * 0.4m;
-                    var exitAllowance = exitCross * 0.3m;
-                    var netRt = gross - openFees - closeFees - exitAllowance - reserve;
-                    var pricePnl = ArbEconomics.ExpectedConvergeUsd(
-                        longVwap, shortVwap, qty, longFee * 0.7m, shortFee * 0.7m);
+                    // Live close orders are market orders; budget a full taker round trip
+                    // and the complete current exit cross instead of assuming maker fills.
+                    var netRt = excess - feeRt - exitCross - reserve;
+                    var pricePnl = ArbEconomics.ExpectedRevertUsd(
+                        excess, matchedNotional, longFee, shortFee, exitCross, reserve);
 
                     decimal? frLong = GetCachedFunding(longEx, symbol);
                     decimal? frShort = GetCachedFunding(shortEx, symbol);
@@ -609,7 +613,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : openFees + 0.04m;
                     if (configuredGross > 0.22m) configuredGross = 0.22m;
                     var minGross = Math.Max(configuredGross, openFees + 0.02m);
-                    var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, notional);
+                    var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, matchedNotional);
                     // Next funding interval would cost more than the price edge can carry.
                     var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);
 
@@ -629,7 +633,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         buyFill.FilledQuoteQty / Math.Max(notional, 1m),
                         sellFill.FilledQuoteQty / Math.Max(notional, 1m));
                     var needFill = snap.RequireDepthFullFill || snap.PaperRequireFullFill;
-                    var fillOk = !needFill || filled || fillRatio >= 0.6m;
+                    var fillOk = needFill ? filled : fillRatio >= 0.6m;
                     // A high fair basis is not a ban. The excess above it is the only profit,
                     // and a spike on a rich pair is still a trade. Banning it for 6h is why
                     // AKE printed RT +0.66% all evening and never opened.
@@ -644,7 +648,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     // Persist counts only while the trade is actually good. A pair seen earlier at 0.05%
                     // must not make a one-tick 0.5% spike look "held for 800ms".
-                    var gateNow = !banned && spikeOk && widthOk && touchOk && twoSided && sane
+                    var gateNow = basisReady && !banned && spikeOk && widthOk && touchOk && twoSided && sane
                         && gross >= minGross && netRt >= minEdge && pricePnl >= minTp && fundingOk && fillOk && spreadingOk;
                     bool persistOk;
                     if (!gateNow)
@@ -666,7 +670,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var executable = gateNow && persistOk;
                     var gateNote = executable ? null
-                        : !basisReady ? "basis"
+                        : !basisReady ? "basis-warmup"
                         : banned ? "ban"
                         : !spikeOk ? "spike"
                         : !touchOk ? "touch"
@@ -698,7 +702,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         ShortBidVwap = shortVwap,
                         LongAskTop = buyFill.TopOfBookPrice,
                         ShortBidTop = sellFill.TopOfBookPrice,
-                        NotionalUsd = notional,
+                        NotionalUsd = matchedNotional,
                         BaseQty = qty,
                         FullyFilled = filled,
                         IsExecutable = executable,
@@ -709,6 +713,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                         BasisReady = basisReady,
                         NetSpreadPercent = netOpen,
                         NetRoundTripPercent = netRt,
+                        ExitCrossPercent = exitCross,
                         NetAfterFundingPercent = netAfterFund,
                         EstNetPnlUsd = pricePnl,
                         LongFeePercent = longFee,

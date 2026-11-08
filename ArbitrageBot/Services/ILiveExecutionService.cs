@@ -29,5 +29,6 @@ public sealed class LiveHedgeRequest
     public decimal? ShortBid { get; set; }
     /// <summary>Fair basis of this route, percent. Live must not treat it as capturable edge.</summary>
     public decimal FairBasisPercent { get; set; }
+    public decimal ExitCrossPercent { get; set; }
     public decimal Leverage { get; set; } = 3;
 }

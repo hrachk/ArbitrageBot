@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Models;
 
@@ -19,6 +20,8 @@ public sealed class ScalpEngine
     private readonly LiveOrderEngine _orders;
     private readonly LiveTradingGuard _guard;
     private readonly ILogger<ScalpEngine> _logger;
+    private readonly string _ledgerPath;
+    private static readonly JsonSerializerOptions LedgerJson = new() { WriteIndented = true };
 
     private readonly object _lock = new();
     private readonly List<ScalpPosition> _open = [];
@@ -33,6 +36,7 @@ public sealed class ScalpEngine
         RuntimeRiskConfig runtime,
         LiveOrderEngine orders,
         LiveTradingGuard guard,
+        IWebHostEnvironment env,
         ILogger<ScalpEngine> logger)
     {
         _market = market;
@@ -40,7 +44,9 @@ public sealed class ScalpEngine
         _runtime = runtime;
         _orders = orders;
         _guard = guard;
+        _ledgerPath = Path.Combine(env.ContentRootPath, "data", "live", "scalp-ledger.json");
         _logger = logger;
+        LoadLedger();
     }
 
     public object Snapshot()
@@ -53,7 +59,7 @@ public sealed class ScalpEngine
                 open = _open.Select(p => new
                 {
                     p.Id, p.Symbol, p.Exchange, p.Side, p.Qty, p.Entry, p.OpenedAt,
-                    p.UnrealizedUsd, p.Note
+                    p.UnrealizedUsd, p.Note, p.Status, p.NeedsReconciliation
                 }),
                 closed = _closed.Take(40).Select(p => new
                 {
@@ -94,17 +100,87 @@ public sealed class ScalpEngine
 
         if (live)
         {
-            var limit = LiveOrderEngine.SnapLimit(candidate.Touch, candidate.Touch, candidate.IsLong);
-            var lev = snap.FuturesPaperLeverage > 0 ? snap.FuturesPaperLeverage : 3m;
-            var sent = await _orders.PlaceScalpLegAsync(
-                candidate.Exchange, candidate.Symbol, candidate.IsLong, qty, limit, lev, ct)
-                .ConfigureAwait(false);
-            if (!sent.Ok)
+            int scalpOpen;
+            lock (_lock) scalpOpen = _open.Count(p => p.Live);
+            var risk = _guard.CheckOpenAllowed(_orders.GetOpen().Count + scalpOpen, notional);
+            if (!risk.ok) return;
+        }
+
+        if (live)
+        {
+            var pending = NewPosition(candidate, qty, candidate.Touch, live: true, null, fee);
+            pending.Status = "Opening";
+            pending.NeedsReconciliation = true;
+            lock (_lock)
             {
+                _open.Add(pending);
+                SaveLedgerUnlocked();
+            }
+            UpdateAdditionalOpenPositions();
+            var limit = LiveOrderEngine.SnapLimit(candidate.Touch, candidate.Touch, candidate.IsLong);
+            var lev = snap.LivePaperLeverage > 0 ? snap.LivePaperLeverage : 3m;
+            LiveLegOrderResult sent;
+            try
+            {
+                sent = await _orders.PlaceScalpLegAsync(
+                    candidate.Exchange, candidate.Symbol, candidate.IsLong, qty, limit, lev, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                pending.Status = "ReconciliationRequired";
+                pending.Note = $"{pending.Note} | order path interrupted: {ex.Message}";
+                _guard.Kill($"Scalp entry interrupted for {candidate.Symbol} {candidate.Exchange}");
+                lock (_lock) SaveLedgerUnlocked();
+                return;
+            }
+            if (sent.Verified && sent.FilledBaseQty <= 0)
+            {
+                lock (_lock)
+                {
+                    _open.Remove(pending);
+                    SaveLedgerUnlocked();
+                }
+                UpdateAdditionalOpenPositions();
+                return;
+            }
+            if (!sent.Verified && !sent.Accepted)
+            {
+                lock (_lock)
+                {
+                    _open.Remove(pending);
+                    SaveLedgerUnlocked();
+                }
+                UpdateAdditionalOpenPositions();
                 _logger.LogDebug("SCALP skip {Sym} {Ex}: {Err}", candidate.Symbol, candidate.Exchange, sent.Error);
                 return;
             }
-            Remember(candidate, qty, limit, live: true, sent.Id, fee);
+            if (!sent.Verified)
+            {
+                pending.Status = "ReconciliationRequired";
+                pending.NeedsReconciliation = true;
+                pending.OrderId = sent.Id;
+                pending.Note = $"{pending.Note} | order state unknown: {sent.Error}";
+                lock (_lock) SaveLedgerUnlocked();
+                return;
+            }
+
+            if (sent.FilledBaseQty > 0 && sent.AveragePrice <= 0)
+            {
+                pending.Status = "ReconciliationRequired";
+                pending.Note = $"{pending.Note} | fill price missing";
+                _guard.Kill($"Scalp fill price missing for {candidate.Symbol} {candidate.Exchange}");
+                lock (_lock) SaveLedgerUnlocked();
+                return;
+            }
+
+            pending.Qty = sent.FilledBaseQty;
+            pending.Entry = sent.AveragePrice;
+            pending.OrderId = sent.Id;
+            pending.NeedsReconciliation = false;
+            pending.Status = sent.Ok ? "Open" : "OpenPartialFill";
+            lock (_lock) SaveLedgerUnlocked();
+            _lastOpenUtc = DateTime.UtcNow;
             return;
         }
 
@@ -113,7 +189,20 @@ public sealed class ScalpEngine
 
     private void Remember(ScalpCandidate c, decimal qty, decimal entry, bool live, string? orderId, decimal feePct)
     {
-        var pos = new ScalpPosition
+        var pos = NewPosition(c, qty, entry, live, orderId, feePct);
+        lock (_lock)
+        {
+            _open.Add(pos);
+            SaveLedgerUnlocked();
+        }
+        UpdateAdditionalOpenPositions();
+        _lastOpenUtc = DateTime.UtcNow;
+        _logger.LogInformation("SCALP {Mode} {Side} {Sym} on {Ex} qty={Q} @ {P} | {Note}",
+            live ? "LIVE" : "PAPER", pos.Side, pos.Symbol, pos.Exchange, qty, entry, pos.Note);
+    }
+
+    private static ScalpPosition NewPosition(ScalpCandidate c, decimal qty, decimal entry, bool live, string? orderId, decimal feePct)
+        => new()
         {
             Id = Guid.NewGuid(),
             Symbol = c.Symbol,
@@ -128,11 +217,6 @@ public sealed class ScalpEngine
             FeePercent = feePct,
             Note = $"OBI {c.Imbalance:F2} agree {c.Agreement} mid {c.MidMovePct:F3}%"
         };
-        lock (_lock) _open.Add(pos);
-        _lastOpenUtc = DateTime.UtcNow;
-        _logger.LogInformation("SCALP {Mode} {Side} {Sym} on {Ex} qty={Q} @ {P} | {Note}",
-            live ? "LIVE" : "PAPER", pos.Side, pos.Symbol, pos.Exchange, qty, entry, pos.Note);
-    }
 
     private void MarkAndMaybeClose()
     {
@@ -140,6 +224,7 @@ public sealed class ScalpEngine
         lock (_lock) open = _open.ToList();
         foreach (var pos in open)
         {
+            if (pos.NeedsReconciliation || pos.Qty <= 0) continue;
             var books = _market.GetBookTickers(pos.Symbol);
             if (!books.TryGetValue(pos.Exchange, out var tk) || tk.BestBid <= 0 || tk.BestAsk <= 0)
                 continue;
@@ -149,7 +234,7 @@ public sealed class ScalpEngine
                 ? (mark - pos.Entry) * pos.Qty
                 : (pos.Entry - mark) * pos.Qty;
             var fees = pos.Entry * pos.Qty * pos.FeePercent / 100m * 2m;
-            var net = gross - fees;
+            var net = (pos.RealizedUsd ?? 0m) + gross - fees;
             pos.UnrealizedUsd = net;
 
             var obi = TouchImbalance(tk);
@@ -166,35 +251,111 @@ public sealed class ScalpEngine
             else if (age >= 90) why = "time flat";
 
             if (why == null) continue;
+            lock (_lock)
+            {
+                if (!_open.Contains(pos) || pos.Closing) continue;
+                pos.Closing = true;
+                pos.Status = "Closing";
+                SaveLedgerUnlocked();
+            }
             _ = CloseAsync(pos, mark, net, why);
         }
     }
 
     private async Task CloseAsync(ScalpPosition pos, decimal mark, decimal net, string why)
     {
+        var fillQty = pos.Qty;
+        var exitPrice = mark;
         if (pos.Live)
         {
-            var closed = await _orders.CloseScalpLegAsync(pos.Exchange, pos.Symbol, pos.IsLong, pos.Qty, CancellationToken.None)
-                .ConfigureAwait(false);
-            if (!closed.Ok)
+            LiveLegOrderResult closed;
+            try
             {
-                _logger.LogWarning("SCALP close fail {Sym} {Ex}: {Err}", pos.Symbol, pos.Exchange, closed.Error);
+                closed = await _orders.CloseScalpLegAsync(pos.Exchange, pos.Symbol, pos.IsLong, pos.Qty, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _guard.Kill($"Scalp close interrupted for {pos.Symbol} {pos.Exchange}");
+                lock (_lock)
+                {
+                    pos.NeedsReconciliation = true;
+                    pos.Status = "ReconciliationRequired";
+                    pos.Note = $"{pos.Note} | close path interrupted: {ex.Message}";
+                    SaveLedgerUnlocked();
+                }
                 return;
             }
+            if (closed.Accepted && !closed.Verified)
+            {
+                lock (_lock)
+                {
+                    pos.NeedsReconciliation = true;
+                    pos.Status = "ReconciliationRequired";
+                    pos.Note = $"{pos.Note} | close state unknown: {closed.Error}";
+                    SaveLedgerUnlocked();
+                }
+                return;
+            }
+            if (closed.FilledBaseQty <= 0)
+            {
+                lock (_lock)
+                {
+                    pos.Closing = false;
+                    pos.Status = "Open";
+                    SaveLedgerUnlocked();
+                }
+                _logger.LogWarning("SCALP close did not fill {Sym} {Ex}: {Err}", pos.Symbol, pos.Exchange, closed.Error);
+                return;
+            }
+            if (closed.AveragePrice <= 0)
+            {
+                _guard.Kill($"Scalp close execution price missing for {pos.Symbol} {pos.Exchange}");
+                lock (_lock)
+                {
+                    pos.NeedsReconciliation = true;
+                    pos.Status = "ReconciliationRequired";
+                    SaveLedgerUnlocked();
+                }
+                return;
+            }
+            fillQty = Math.Min(pos.Qty, closed.FilledBaseQty);
+            exitPrice = closed.AveragePrice;
         }
 
-        pos.Exit = mark;
-        pos.ClosedAt = DateTime.UtcNow;
-        pos.RealizedUsd = net;
+        var grossClosed = pos.IsLong
+            ? (exitPrice - pos.Entry) * fillQty
+            : (pos.Entry - exitPrice) * fillQty;
+        var closeNet = grossClosed - (pos.Entry + exitPrice) * fillQty * pos.FeePercent / 100m;
+        if (pos.Live) _guard.RecordRealized(closeNet);
+        pos.RealizedUsd = (pos.RealizedUsd ?? 0m) + closeNet;
+        pos.Qty = Math.Max(0m, pos.Qty - fillQty);
         pos.Note = (pos.Note ?? "") + " | " + why;
+        var flat = pos.Qty <= Math.Max(0.0000000001m, fillQty * 0.000001m);
         lock (_lock)
         {
-            _open.RemoveAll(p => p.Id == pos.Id);
-            _closed.Insert(0, pos);
-            if (_closed.Count > 200) _closed.RemoveRange(200, _closed.Count - 200);
+            pos.Closing = false;
+            if (flat)
+            {
+                pos.Qty = 0m;
+                pos.Exit = exitPrice;
+                pos.ClosedAt = DateTime.UtcNow;
+                pos.IsOpen = false;
+                pos.Status = "Closed";
+                _open.RemoveAll(p => p.Id == pos.Id);
+                _closed.Insert(0, pos);
+                if (_closed.Count > 200) _closed.RemoveRange(200, _closed.Count - 200);
+            }
+            else
+            {
+                pos.Status = "OpenPartialClose";
+                pos.Note += $" | remaining qty={pos.Qty}";
+            }
+            SaveLedgerUnlocked();
         }
+        if (flat) UpdateAdditionalOpenPositions();
         _logger.LogInformation("SCALP close {Side} {Sym} {Ex} {Why} pnl={Pnl:F2}",
-            pos.Side, pos.Symbol, pos.Exchange, why, net);
+            pos.Side, pos.Symbol, pos.Exchange, why, closeNet);
     }
 
     private ScalpCandidate? Pick()
@@ -344,10 +505,81 @@ public sealed class ScalpEngine
         public DateTime OpenedAt { get; set; }
         public DateTime? ClosedAt { get; set; }
         public bool Live { get; set; }
+        public bool IsOpen { get; set; } = true;
+        public bool Closing { get; set; }
+        public bool NeedsReconciliation { get; set; }
+        public string Status { get; set; } = "Open";
         public string? OrderId { get; set; }
         public decimal FeePercent { get; set; }
         public decimal UnrealizedUsd { get; set; }
         public decimal? RealizedUsd { get; set; }
         public string? Note { get; set; }
     }
+
+    private void LoadLedger()
+    {
+        try
+        {
+            if (!File.Exists(_ledgerPath)) return;
+            var ledger = JsonSerializer.Deserialize<ScalpLedgerFile>(File.ReadAllText(_ledgerPath), LedgerJson);
+            if (ledger == null) return;
+            _open.AddRange((ledger.Open ?? []).Where(p => p.IsOpen));
+            _closed.AddRange((ledger.Closed ?? []).OrderByDescending(p => p.ClosedAt).Take(200));
+            var needsReview = false;
+            foreach (var position in _open)
+            {
+                if (position.Closing || position.Status is "Opening" or "Closing")
+                {
+                    position.Closing = false;
+                    position.NeedsReconciliation = true;
+                    position.Status = "ReconciliationRequired";
+                    position.Note = $"{position.Note} | process restarted during order operation";
+                }
+                needsReview |= position.NeedsReconciliation;
+            }
+            if (needsReview)
+            {
+                _guard.Kill("Scalp orders require reconciliation after restart");
+                SaveLedgerUnlocked();
+            }
+            UpdateAdditionalOpenPositions();
+            _logger.LogWarning("Loaded scalp ledger: open={Open}, closed={Closed}, reconciliation={Review}",
+                _open.Count, _closed.Count, needsReview);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not load scalp ledger; killing live orders for safety");
+            _guard.Kill("Scalp ledger could not be loaded");
+        }
+    }
+
+    private void SaveLedgerUnlocked()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_ledgerPath)!);
+            var temp = _ledgerPath + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(new ScalpLedgerFile(_open.ToList(), _closed.ToList()), LedgerJson));
+            File.Move(temp, _ledgerPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not persist scalp ledger");
+            foreach (var position in _open.Where(p => p.Live))
+            {
+                position.NeedsReconciliation = true;
+                position.Status = "ReconciliationRequired";
+            }
+            _guard.Kill("Scalp ledger persistence failed");
+        }
+    }
+
+    private void UpdateAdditionalOpenPositions()
+    {
+        int n;
+        lock (_lock) n = _open.Count(p => p.Live && p.IsOpen);
+        _guard.SetAdditionalOpenPositions(n);
+    }
+
+    private sealed record ScalpLedgerFile(List<ScalpPosition>? Open, List<ScalpPosition>? Closed);
 }

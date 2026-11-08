@@ -333,7 +333,7 @@ public class ArbitrageWorker : BackgroundService
         // Unified gates: same MinProfit/RT/full-fill for paper and live.
         // Live orders ONLY if guard.CanPlaceOrders; otherwise DEMO paper on real books.
         var snap = _runtime.Snapshot;
-        var autoExec = snap.PaperAutoExecute || snap.PaperTrading;
+        var autoExec = snap.PaperAutoExecute && (snap.PaperTrading || _liveGuard.CanPlaceOrders);
         if (opps.Count > 0 && autoExec)
         {
             var openedThisCycle = 0;
@@ -355,7 +355,8 @@ public class ArbitrageWorker : BackgroundService
                         LongAsk = o.LongAskVwap,
                         ShortBid = o.ShortBidVwap,
                         FairBasisPercent = o.FairBasisPercent,
-                        Leverage = snap.FuturesPaperLeverage > 0 ? snap.FuturesPaperLeverage : 5m
+                        ExitCrossPercent = o.ExitCrossPercent,
+                        Leverage = snap.LivePaperLeverage > 0 ? snap.LivePaperLeverage : 3m
                     };
                     var liveRes = await _liveExec.TryOpenHedgeAsync(liveReq, ct);
                     var okProp = liveRes.GetType().GetProperty("ok")?.GetValue(liveRes);

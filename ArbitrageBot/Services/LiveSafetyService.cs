@@ -20,6 +20,7 @@ public sealed class LiveSafetyService
 
     private readonly ConcurrentDictionary<string, DateTime> _lastOrderUtc = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _lastGlobalOrderUtc = DateTime.MinValue;
+    private readonly object _rateLock = new();
     private readonly object _alertLock = new();
     private DateTime _lastAlertUtc = DateTime.MinValue;
 
@@ -54,13 +55,16 @@ public sealed class LiveSafetyService
         }
 
         var interval = Math.Max(500, _options.LiveMinOrderIntervalMs);
-        var now = DateTime.UtcNow;
-        if ((now - _lastGlobalOrderUtc).TotalMilliseconds < interval)
-            return (false, $"global rate-limit {interval}ms");
-        if (_lastOrderUtc.TryGetValue(longEx, out var tL) && (now - tL).TotalMilliseconds < interval)
-            return (false, $"rate-limit {longEx}");
-        if (_lastOrderUtc.TryGetValue(shortEx, out var tS) && (now - tS).TotalMilliseconds < interval)
-            return (false, $"rate-limit {shortEx}");
+        lock (_rateLock)
+        {
+            var now = DateTime.UtcNow;
+            if ((now - _lastGlobalOrderUtc).TotalMilliseconds < interval)
+                return (false, $"global rate-limit {interval}ms");
+            if (_lastOrderUtc.TryGetValue(longEx, out var tL) && (now - tL).TotalMilliseconds < interval)
+                return (false, $"rate-limit {longEx}");
+            if (_lastOrderUtc.TryGetValue(shortEx, out var tS) && (now - tS).TotalMilliseconds < interval)
+                return (false, $"rate-limit {shortEx}");
+        }
 
         if (_options.LiveRequireHealthyBooks)
         {
@@ -76,10 +80,27 @@ public sealed class LiveSafetyService
 
     public void MarkOrderSent(string longEx, string shortEx)
     {
-        var now = DateTime.UtcNow;
-        _lastGlobalOrderUtc = now;
-        _lastOrderUtc[longEx] = now;
-        _lastOrderUtc[shortEx] = now;
+        lock (_rateLock)
+        {
+            var now = DateTime.UtcNow;
+            _lastGlobalOrderUtc = now;
+            _lastOrderUtc[longEx] = now;
+            _lastOrderUtc[shortEx] = now;
+        }
+    }
+
+    public (bool ok, string reason) TryReserveOrderAttempt(string symbol, string longEx, string shortEx, decimal notional)
+    {
+        lock (_rateLock)
+        {
+            var check = CanOpenLive(symbol, longEx, shortEx, notional);
+            if (!check.ok) return check;
+            var now = DateTime.UtcNow;
+            _lastGlobalOrderUtc = now;
+            _lastOrderUtc[longEx] = now;
+            _lastOrderUtc[shortEx] = now;
+            return (true, "ok");
+        }
     }
 
     public async Task AlertAsync(string title, string body, CancellationToken ct = default)
@@ -127,13 +148,7 @@ public sealed class LiveSafetyService
     {
         var key = $"{exchange}:{symbol}";
         if (!status.TryGetValue(key, out var st) || string.IsNullOrEmpty(st))
-        {
-            // fallback: any key starting with exchange:
-            var any = status.FirstOrDefault(kv =>
-                kv.Key.StartsWith(exchange + ":", StringComparison.OrdinalIgnoreCase)
-                && IsHealthyStatus(kv.Value));
-            return !string.IsNullOrEmpty(any.Key);
-        }
+            return false;
         return IsHealthyStatus(st);
     }
 

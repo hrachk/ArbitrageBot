@@ -479,7 +479,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                         }
                     }
                     // also surface account-level total if no assets expanded
-                    if (list.Count == 0 && r.Data.List != null)
+                    if (list.Count == 0 && r.Data?.List != null)
                     {
                         foreach (var acct in r.Data.List)
                         {
@@ -1080,7 +1080,7 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 .Select(p =>
                 {
                     var qty = p.CurrentQuantity;
-                    var side = p.PositionSide.ToString();
+                    var side = p.PositionSide.ToString() ?? "Unknown";
                     if (qty < 0)
                     {
                         side = "Short";
