@@ -77,10 +77,23 @@ public sealed class ScalpEngine
 
     public async Task TickAsync(CancellationToken ct)
     {
-        if (!_runtime.Snapshot.SpatialScalpMode) return;
-
+        // Always manage existing positions, even after the entry toggle is disabled.
         MarkAndMaybeClose();
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested || !_runtime.Snapshot.SpatialScalpMode) return;
+
+        var snap = _runtime.Snapshot;
+        var scalpDailyLossCap = Math.Max(1m,
+            (snap.LiveEquityPerExchangeUsd > 0 ? snap.LiveEquityPerExchangeUsd : snap.PaperStartingQuote) * 0.01m);
+        decimal realizedToday;
+        lock (_lock)
+            realizedToday = _closed.Where(p => p.ClosedAt?.Date == DateTime.UtcNow.Date)
+                .Sum(p => p.RealizedUsd ?? 0m);
+        if (realizedToday <= -scalpDailyLossCap)
+        {
+            _logger.LogWarning("SCALP entry circuit open: today's realized={Pnl:F2} limit=-{Limit:F2}",
+                realizedToday, scalpDailyLossCap);
+            return;
+        }
 
         var candidate = Pick();
         if (candidate == null) return;
@@ -93,9 +106,8 @@ public sealed class ScalpEngine
                 && _paper.OpenCount + _open.Count(p => !p.Live) >= Math.Max(1, _runtime.Snapshot.FuturesMaxOpenPositions))
                 return;
         }
-        if ((DateTime.UtcNow - _lastOpenUtc).TotalSeconds < 8) return;
+        if ((DateTime.UtcNow - _lastOpenUtc).TotalSeconds < 60) return;
 
-        var snap = _runtime.Snapshot;
         var notional = snap.QuoteSize > 0 ? snap.QuoteSize : 100m;
         if (snap.FuturesMaxNotionalUsd > 0) notional = Math.Min(notional, snap.FuturesMaxNotionalUsd);
         if (_guard.CanPlaceOrders)
@@ -242,9 +254,36 @@ public sealed class ScalpEngine
             if (pos.NeedsReconciliation || pos.Qty <= 0) continue;
             var books = _market.GetBookTickers(pos.Symbol);
             if (!books.TryGetValue(pos.Exchange, out var tk) || tk.BestBid <= 0 || tk.BestAsk <= 0)
+            {
+                var noBookAge = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds;
+                if (noBookAge >= 90 && pos.Live)
+                {
+                    lock (_lock)
+                    {
+                        if (!_open.Contains(pos) || pos.Closing) continue;
+                        pos.Closing = true;
+                        pos.Status = "ClosingStaleBook";
+                        SaveLedgerUnlocked();
+                    }
+                    _ = CloseAsync(pos, pos.LastMarkPrice > 0 ? pos.LastMarkPrice : pos.Entry,
+                        pos.UnrealizedUsd, "hard-timeout-no-book");
+                }
+                else if (noBookAge >= 90 && pos.LastMarkPrice > 0)
+                {
+                    lock (_lock)
+                    {
+                        if (!_open.Contains(pos) || pos.Closing) continue;
+                        pos.Closing = true;
+                        pos.Status = "ClosingStaleBookPaper";
+                        SaveLedgerUnlocked();
+                    }
+                    _ = CloseAsync(pos, pos.LastMarkPrice, pos.UnrealizedUsd, "hard-timeout-stale-mark");
+                }
                 continue;
+            }
 
             var mark = pos.IsLong ? tk.BestBid : tk.BestAsk;
+            pos.LastMarkPrice = mark;
             var gross = pos.IsLong
                 ? (mark - pos.Entry) * pos.Qty
                 : (pos.Entry - mark) * pos.Qty;
@@ -520,6 +559,7 @@ public sealed class ScalpEngine
         public bool IsLong { get; set; }
         public decimal Qty { get; set; }
         public decimal Entry { get; set; }
+        public decimal LastMarkPrice { get; set; }
         public decimal? Exit { get; set; }
         public DateTime OpenedAt { get; set; }
         public DateTime? ClosedAt { get; set; }
