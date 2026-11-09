@@ -18,6 +18,7 @@ public sealed class ScalpEngine
     private readonly ActiveMarketContext _markets;
     private readonly RuntimeRiskConfig _runtime;
     private readonly LiveOrderEngine _orders;
+    private readonly IFuturesPaperService _paper;
     private readonly LiveTradingGuard _guard;
     private readonly ILogger<ScalpEngine> _logger;
     private readonly string _ledgerPath;
@@ -35,6 +36,7 @@ public sealed class ScalpEngine
         ActiveMarketContext markets,
         RuntimeRiskConfig runtime,
         LiveOrderEngine orders,
+        IFuturesPaperService paper,
         LiveTradingGuard guard,
         IWebHostEnvironment env,
         ILogger<ScalpEngine> logger)
@@ -43,6 +45,7 @@ public sealed class ScalpEngine
         _markets = markets;
         _runtime = runtime;
         _orders = orders;
+        _paper = paper;
         _guard = guard;
         _ledgerPath = Path.Combine(env.ContentRootPath, "data", "live", "scalp-ledger.json");
         _logger = logger;
@@ -86,12 +89,24 @@ public sealed class ScalpEngine
         {
             if (_open.Count >= 1) return;
             if (_open.Any(p => p.Symbol.Equals(candidate.Symbol, StringComparison.OrdinalIgnoreCase))) return;
+            if (!_guard.CanPlaceOrders
+                && _paper.OpenCount + _open.Count(p => !p.Live) >= Math.Max(1, _runtime.Snapshot.FuturesMaxOpenPositions))
+                return;
         }
         if ((DateTime.UtcNow - _lastOpenUtc).TotalSeconds < 8) return;
 
         var snap = _runtime.Snapshot;
-        var notional = snap.QuoteSize > 0 ? Math.Min(snap.QuoteSize, 150m) : 80m;
-        if (notional < 20m) notional = 20m;
+        var notional = snap.QuoteSize > 0 ? snap.QuoteSize : 100m;
+        if (snap.FuturesMaxNotionalUsd > 0) notional = Math.Min(notional, snap.FuturesMaxNotionalUsd);
+        if (_guard.CanPlaceOrders)
+        {
+            if (snap.LiveMaxNotionalUsd > 0) notional = Math.Min(notional, snap.LiveMaxNotionalUsd);
+            var leverage = Math.Clamp(snap.LivePaperLeverage > 0 ? snap.LivePaperLeverage : 2m, 1m, 10m);
+            var usage = Math.Clamp(snap.LiveMarginUsageFraction > 0 ? snap.LiveMarginUsageFraction : 0.5m, 0.15m, 0.5m);
+            var equity = snap.LiveEquityPerExchangeUsd > 0 ? snap.LiveEquityPerExchangeUsd : 100m;
+            notional = Math.Min(notional, equity * leverage * usage);
+        }
+        if (notional < 20m || candidate.TouchDepthUsd < notional * 1.25m) return;
         var qty = LiveOrderEngine.RoundBaseQty(notional / candidate.Touch, candidate.Touch);
         if (qty <= 0) return;
 
@@ -240,7 +255,8 @@ public sealed class ScalpEngine
             var obi = TouchImbalance(tk);
             var flipped = pos.IsLong ? obi < -0.15m : obi > 0.15m;
             var age = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds;
-            var target = Math.Max(0.08m, pos.Entry * pos.Qty * 0.0006m);
+            // Target is net of round-trip fees above; leave enough room for fee and exit cross.
+            var target = Math.Max(0.10m, pos.Entry * pos.Qty * 0.0015m);
             var stop = -Math.Max(0.25m, target * 1.4m);
 
             string? why = null;
@@ -393,6 +409,7 @@ public sealed class ScalpEngine
                 if (Math.Sign(midMove) != sign || Math.Abs(midMove) < 0.01m) continue;
 
                 var agree = signs.Values.Count(s => s == sign);
+                if (agree < 2) continue;
                 var width = ArbEconomics.BookSpreadPercent(tk.BestBid, tk.BestAsk);
                 if (width > 0.12m) continue;
 
@@ -412,6 +429,7 @@ public sealed class ScalpEngine
                         Agreement = agree,
                         MidMovePct = midMove,
                         Touch = touch,
+                        TouchDepthUsd = (sign > 0 ? tk.AskQuantity : tk.BidQuantity) * touch,
                         Score = score
                     };
                 }
@@ -489,6 +507,7 @@ public sealed class ScalpEngine
         public int Agreement { get; set; }
         public decimal MidMovePct { get; set; }
         public decimal Touch { get; set; }
+        public decimal TouchDepthUsd { get; set; }
         public decimal Score { get; set; }
     }
 
