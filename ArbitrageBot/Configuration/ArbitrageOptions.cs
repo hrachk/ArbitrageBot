@@ -24,11 +24,11 @@ public class ArbitrageOptions
         ["Kucoin"] = 0.06m
     };
 
-    public decimal QuoteSize { get; set; } = 250m;
+    public decimal QuoteSize { get; set; } = 100m;
     public int MaxDepthLevels { get; set; } = 20;
 
     public bool PaperAutoExecute { get; set; } = true;
-    public decimal PaperStartingQuote { get; set; } = 1_000m;
+    public decimal PaperStartingQuote { get; set; } = 100m;
     public decimal PaperStartingBaseDefault { get; set; } = 0.05m;
     public Dictionary<string, decimal> PaperStartingBaseUnits { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -79,20 +79,20 @@ public class ArbitrageOptions
     public decimal DynamicMaxQuoteVolumeUsd { get; set; } = 800_000_000m;
 
     // Futures paper
-    public decimal FuturesPaperLeverage { get; set; } = 3m;
+    public decimal FuturesPaperLeverage { get; set; } = 2m;
     public int FuturesMaxOpenPositions { get; set; } = 2;
     public int FuturesMaxHoldMinutes { get; set; } = 0;
     /// <summary>Close hedge when current width (shortAsk-longBid)/longBid % falls to this or below.</summary>
     public decimal FuturesCloseBelowNetPercent { get; set; } = 0.05m;
 
     /// <summary>Max share of free margin on one exchange that a single new hedge may lock (0.25 = 25%).</summary>
-    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.25m;
+    public decimal FuturesMaxMarginUsagePercent { get; set; } = 0.50m;
     /// <summary>Force-close if unrealized PnL on a hedge drops below this (USD, negative).</summary>
-    public decimal FuturesStopLossUsd { get; set; } = -4m;
+    public decimal FuturesStopLossUsd { get; set; } = -2m;
     /// <summary>Stop opening new hedges if day realized PnL is below this.</summary>
-    public decimal FuturesDailyLossLimitUsd { get; set; } = -12m;
+    public decimal FuturesDailyLossLimitUsd { get; set; } = -6m;
     /// <summary>Refuse open if notional would exceed this (USD) even with leverage.</summary>
-    public decimal FuturesMaxNotionalUsd { get; set; } = 250m;
+    public decimal FuturesMaxNotionalUsd { get; set; } = 100m;
 
     /// <summary>Include expected funding over N funding intervals (usually 8h each) in net filter.</summary>
     public bool FuturesIncludeFunding { get; set; } = true;
@@ -110,17 +110,17 @@ public class ArbitrageOptions
     /// <summary>Hard ceiling: max concurrent live hedges.</summary>
     public int LiveMaxOpenPositions { get; set; } = 2;
     /// <summary>Max notional USD per leg on live (hard ceiling).</summary>
-    public decimal LiveMaxNotionalUsd { get; set; } = 250m;
+    public decimal LiveMaxNotionalUsd { get; set; } = 100m;
     /// <summary>
     /// Free USDT margin on EACH exchange. $100 deposit → notional = equity × leverage × usage, capped at LiveMaxNotionalUsd.
     /// </summary>
-    public decimal LiveEquityPerExchangeUsd { get; set; } = 1000m;
+    public decimal LiveEquityPerExchangeUsd { get; set; } = 100m;
     /// <summary>Fraction of per-exchange equity locked as margin. 0.25 of $100 at 5x = $125, then capped by max notional.</summary>
-    public decimal LiveMarginUsageFraction { get; set; } = 0.25m;
+    public decimal LiveMarginUsageFraction { get; set; } = 0.50m;
     /// <summary>Daily realized loss limit (USD, negative). Hits → kill switch.</summary>
-    public decimal LiveDailyLossLimitUsd { get; set; } = -12m;
+    public decimal LiveDailyLossLimitUsd { get; set; } = -6m;
     /// <summary>Per-hedge stop (USD, negative).</summary>
-    public decimal LiveStopLossUsd { get; set; } = -4m;
+    public decimal LiveStopLossUsd { get; set; } = -2m;
     /// <summary>Require explicit confirmation phrase to enable live via API.</summary>
     public string LiveEnableConfirmPhrase { get; set; } = "ENABLE LIVE TRADING";
     /// <summary>Reject live open if book status is not healthy (Synced/book-ticker).</summary>
@@ -144,7 +144,7 @@ public class ArbitrageOptions
     public bool RequireDepthFullFill { get; set; } = true;
 
     /// <summary>Leverage used for live orders (separate from paper simulation).</summary>
-    public decimal LivePaperLeverage { get; set; } = 3m;
+    public decimal LivePaperLeverage { get; set; } = 2m;
 
     public bool IsFuturesCross =>
         string.Equals(StrategyMode, "FuturesCross", StringComparison.OrdinalIgnoreCase);

@@ -9,7 +9,7 @@
 
 <div class="page-hd">
   <h1>Settings</h1>
-  <p class="muted">Один экран: Paper + Live ($5/биржа) · сохраняется в <code class="mono">data/local-settings.json</code></p>
+  <p class="muted">Один экран: Paper + Live ($100 equity на биржу) · сохраняется в <code class="mono">data/local-settings.json</code></p>
 </div>
 
 @if (!string.IsNullOrEmpty(_msg))
@@ -34,7 +34,7 @@
   </div>
 
   <div class="card" style="border-color:rgba(248,113,113,0.35)">
-    <div class="card-hd"><h2>Live micro ($5 / exchange)</h2></div>
+    <div class="card-hd"><h2>Live conservative ($100 / exchange, 2x)</h2></div>
     <p class="muted tiny">notional ≈ equity × leverage × usage · маржа на <b>каждой</b> бирже</p>
     <div class="form">
       <label>Equity per exchange USDT <input type="number" step="0.5" @bind="_liveEquity" /></label>
@@ -53,7 +53,7 @@
   <div class="card-hd"><h2>Save</h2></div>
   <div class="btn-row">
     <button class="btn primary" @onclick="SaveAll">Save all settings</button>
-    <button class="btn" @onclick="ResetMicroDefaults">Reset $5 defaults</button>
+    <button class="btn" @onclick="ResetMicroDefaults">Reset $100 safe defaults</button>
   </div>
   <p class="muted tiny" style="margin-top:8px">После Save параметры живут в <code class="mono">data/local-settings.json</code> и поднимаются при restart/rebuild (если файл не удалять).</p>
 </div>
@@ -112,11 +112,11 @@
         _stop = t.FuturesStopLossUsd != 0 ? t.FuturesStopLossUsd : snap.FuturesStopLossUsd;
         _dayLimit = t.FuturesDailyLossLimitUsd != 0 ? t.FuturesDailyLossLimitUsd : snap.FuturesDailyLossLimitUsd;
         _reqRt = t.RequireRoundTripEdge;
-        _liveEquity = t.LiveEquityPerExchangeUsd > 0 ? t.LiveEquityPerExchangeUsd : 5m;
-        _liveUsage = t.LiveMarginUsageFraction > 0 ? t.LiveMarginUsageFraction : 0.6m;
-        _liveMaxN = t.LiveMaxNotionalUsd > 0 ? t.LiveMaxNotionalUsd : 15m;
-        _liveMaxOpen = t.LiveMaxOpenPositions > 0 ? t.LiveMaxOpenPositions : 1;
-        _liveStop = t.LiveStopLossUsd != 0 ? t.LiveStopLossUsd : -2.5m;
+        _liveEquity = t.LiveEquityPerExchangeUsd > 0 ? t.LiveEquityPerExchangeUsd : 100m;
+        _liveUsage = t.LiveMarginUsageFraction > 0 ? t.LiveMarginUsageFraction : 0.5m;
+        _liveMaxN = t.LiveMaxNotionalUsd > 0 ? t.LiveMaxNotionalUsd : 100m;
+        _liveMaxOpen = t.LiveMaxOpenPositions > 0 ? t.LiveMaxOpenPositions : 2;
+        _liveStop = t.LiveStopLossUsd != 0 ? t.LiveStopLossUsd : -2m;
         foreach (var n in _exNames)
         {
             var c = Store.GetCredential(n);
@@ -132,17 +132,17 @@
 
     void ResetMicroDefaults()
     {
-        _liveEquity = 5m;
-        _liveUsage = 0.6m;
-        _liveMaxN = 15m;
-        _liveMaxOpen = 1;
-        _liveStop = -2.5m;
-        _quote = 15m;
-        _lev = 5m;
+        _liveEquity = 100m;
+        _liveUsage = 0.5m;
+        _liveMaxN = 100m;
+        _liveMaxOpen = 2;
+        _liveStop = -2m;
+        _quote = 100m;
+        _lev = 2m;
         _maxOpen = 2;
-        _stop = -2.5m;
-        _dayLimit = -8m;
-        _min = 0.08m;
+        _stop = -2m;
+        _dayLimit = -6m;
+        _min = 0.02m;
         _msg = "Defaults loaded into form — press Save all settings.";
     }
 
