@@ -307,8 +307,12 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                                 Symbol = symbolStr,
                                 BestBid = d.BestBidPrice,
                                 BestAsk = d.BestAskPrice,
-                                BidQuantity = d.BestBidQuantity,
-                                AskQuantity = d.BestAskQuantity,
+                                BidQuantity = d.BestBidQuantities?.QuantityInBaseAsset
+                                    ?? (d.BestBidPrice > 0 ? d.BestBidQuantities?.GetQuantityInQuoteAsset(d.BestBidPrice) / d.BestBidPrice : 0m)
+                                    ?? 0m,
+                                AskQuantity = d.BestAskQuantities?.QuantityInBaseAsset
+                                    ?? (d.BestAskPrice > 0 ? d.BestAskQuantities?.GetQuantityInQuoteAsset(d.BestAskPrice) / d.BestAskPrice : 0m)
+                                    ?? 0m,
                                 Timestamp = DateTime.UtcNow
                             };
                             _status[key] = "book-ticker";

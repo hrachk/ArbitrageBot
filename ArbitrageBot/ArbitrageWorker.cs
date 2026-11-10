@@ -28,6 +28,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly ScalpEngine _scalp;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
+    private DateTime _lastFuturesScanLogUtc = DateTime.MinValue;
     private DateTime _lastHeartbeatLogUtc = DateTime.MinValue;
     private readonly Dictionary<string, DateTime> _skipLogAt = new(StringComparer.OrdinalIgnoreCase);
 
@@ -310,16 +311,25 @@ public class ArbitrageWorker : BackgroundService
         if (_liveGuard.CanPlaceOrders)
             await _liveExec.TryCloseConvergedAsync(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent, ct);
 
-        decimal? bestOpen = opps.Count > 0 ? opps.Max(x => x.NetSpreadPercent) : null;
-        decimal? bestRt = opps.Count > 0 ? opps.Max(x => x.NetRoundTripPercent) : null;
-        _analytics.RecordScan(opps.Count, bestOpen, bestRt, _runtime.Snapshot.MinProfitPercent);
+        var executableOpps = opps.Where(x => x.IsExecutable).ToList();
+        decimal? bestExecutableOpen = executableOpps.Count > 0 ? executableOpps.Max(x => x.NetSpreadPercent) : null;
+        decimal? bestExecutableRt = executableOpps.Count > 0 ? executableOpps.Max(x => x.NetRoundTripPercent) : null;
+        decimal? bestCandidateRt = opps.Count > 0 ? opps.Max(x => x.NetRoundTripPercent) : null;
+        _analytics.RecordScan(opps.Count, bestExecutableOpen, bestExecutableRt, _runtime.Snapshot.MinProfitPercent);
 
-        if (opps.Count > 0)
+        var scanLogNow = DateTime.UtcNow;
+        if (opps.Count > 0 && (scanLogNow - _lastFuturesScanLogUtc).TotalSeconds >= 30)
         {
+            _lastFuturesScanLogUtc = scanLogNow;
             var nExec = opps.Count(x => x.IsExecutable);
+            var blocked = string.Join(", ", opps.Where(x => !x.IsExecutable)
+                .GroupBy(x => x.GateNote ?? "unknown")
+                .OrderByDescending(g => g.Count())
+                .Take(4)
+                .Select(g => $"{g.Key}:{g.Count()}"));
             _logger.LogInformation(
-                "Futures scan: ranked={N} EXEC={E} best open={Open:F3}% RT={Best:F3}% | top={Top}",
-                opps.Count, nExec, bestOpen, bestRt,
+                "Futures scan: ranked={N} EXEC={E} blocked=[{Blocked}] best candidate RT={CandidateRt:F3}% best executable RT={ExecutableRt:F3}% | top={Top}",
+                opps.Count, nExec, blocked, bestCandidateRt, bestExecutableRt,
                 string.Join(", ", opps.Take(5).Select(x =>
                     $"{x.Symbol}:{x.LongExchange}->{x.ShortExchange} xs {x.ExcessPercent:F3}%{(x.IsExecutable ? "*" : " " + x.GateNote)}")));
         }

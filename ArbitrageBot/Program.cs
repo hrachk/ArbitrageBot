@@ -43,7 +43,9 @@ try
         .WriteTo.File(
             path: Path.Combine(exeDir, "logs", "arbitrage-.log"),
             rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 14));
+            retainedFileCountLimit: 14,
+            shared: true,
+            flushToDiskInterval: TimeSpan.FromSeconds(1)));
 
     builder.Services.Configure<ArbitrageOptions>(
         builder.Configuration.GetSection(ArbitrageOptions.SectionName));

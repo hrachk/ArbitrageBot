@@ -1140,12 +1140,12 @@ public sealed class LiveExecutionService : ILiveExecutionService
                 return new { error = result.Error?.Message, detail = Truncate(result.OriginalData) };
             // Only non-zero positions — exchanges often return many empty shells
             return (result.Data ?? [])
-                .Where(p => p.PositionSize != 0)
+                .Where(p => (p.PositionSizes?.QuantityInBaseAsset ?? p.PositionSizes?.QuantityInContracts ?? 0m) != 0m)
                 .Select(p => new
                 {
                     symbol = p.Symbol,
                     side = p.PositionSide.ToString(),
-                    quantity = p.PositionSize,
+                    quantity = p.PositionSizes?.QuantityInBaseAsset ?? p.PositionSizes?.QuantityInContracts ?? 0m,
                     entryPrice = p.AverageOpenPrice,
                     unrealizedPnl = p.UnrealizedPnl,
                     leverage = p.Leverage

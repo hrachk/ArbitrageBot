@@ -50,7 +50,7 @@ public class ArbitrageOptions
     public List<string> ExcludeToxicBases { get; set; } =
     [
         "TRUMP", "FARTCOIN", "PEPE", "BONK", "MEME", "WIF", "FLOKI", "BOME", "NEIRO",
-        "SOXL", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
+        "SOXL", "SOXS", "QQQ", "SPCX", "XAG", "SKHYNIX", "SKHY", "SAMSUNG", "SNXX", "KORU", "TSLA", "AAPL", "NVDA", "MSTR",
         "COIN", "HOOD", "MARA", "RIOT", "CL", "ZS", "CRCL",
         "SPX", "WLFI", "MU", "SNDK", "CHIP", "MRVL", "INTC", "BEAT", "ONG", "O", "TUT", "DOS", "HOME", "1000PEPE", "1000BONK"
     ];
