@@ -85,6 +85,11 @@ public sealed class LiveOrderEngine
         lock (_lock) return _closed.Take(take).ToList();
     }
 
+    public void PersistNow()
+    {
+        lock (_lock) SaveUnlocked();
+    }
+
     public async Task<object> TryOpenAsync(LiveHedgeRequest req, CancellationToken ct)
     {
         await _orderGate.WaitAsync(ct).ConfigureAwait(false);
@@ -1501,11 +1506,25 @@ public sealed class LiveOrderEngine
                 _closed.Clear();
                 _closed.AddRange(file.Closed);
             }
-            _logger.LogInformation("Live ledger restored: {O} open, {C} closed", _open.Count, _closed.Count);
+            var openN = _open.Count;
+            _logger.LogInformation("Live ledger restored: {O} open, {C} closed", openN, _closed.Count);
+            if (openN > 0)
+            {
+                _logger.LogError(
+                    "PRODUCTION: {N} open live hedges restored from ledger. " +
+                    "These positions require immediate reconciliation against exchange. " +
+                    "Do NOT place new orders until verified. Use /live page → Refresh positions.",
+                    openN);
+                foreach (var pos in _open)
+                    _logger.LogWarning(
+                        "Restored open: {Id} {Sym} {L}->{S} qty={Q} notional≈{N:F0} status={St}",
+                        pos.Id, pos.Symbol, pos.LongExchange, pos.ShortExchange,
+                        pos.BaseQty, pos.NotionalUsd, pos.Status);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Live ledger load failed");
+            _logger.LogError(ex, "Live ledger load failed — open positions may be unknown. Manual reconciliation required.");
         }
     }
 

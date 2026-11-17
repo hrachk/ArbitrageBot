@@ -26,3 +26,15 @@ cd ArbitrageBot && dotnet run
 ```
 
 Open http://localhost:5050 — sidebar: Dashboard / Market / Reports / Settings.
+
+
+## Production checklist
+
+- [ ] Confirm `LiveTradingEnabled=false` and `LiveReadOnlyMode=true` until intentionally enabled
+- [ ] On restart with open hedges: open `/live` → Refresh positions → reconcile against exchange
+- [ ] Kill switch available on `/live` and `POST /api/live/kill`
+- [ ] Health: `GET /api/health` and `GET /api/health/live` (no secrets)
+- [ ] API keys only in `data/local-settings.json` or User Secrets — never in browser or logs
+- [ ] Daily loss limit and max open positions configured before any live enable
+- [ ] Confirm phrase required to enable live orders
+- [ ] Paper mode validated on real books before small live size

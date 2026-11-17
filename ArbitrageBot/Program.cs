@@ -104,6 +104,28 @@ try
 
     var app = builder.Build();
 
+    // Production startup validation
+    try
+    {
+        var opt = app.Services.GetRequiredService<IOptions<ArbitrageOptions>>().Value;
+        if (opt.MinProfitPercent < 0)
+            app.Logger.LogWarning("MinProfitPercent is negative — check settings");
+        if (opt.FuturesPaperLeverage is < 1 or > 20)
+            app.Logger.LogWarning("Leverage {L} outside safe range 1-20", opt.FuturesPaperLeverage);
+        if (opt.LiveTradingEnabled && opt.LiveReadOnlyMode == false)
+            app.Logger.LogWarning("LIVE TRADING is enabled and NOT read-only on startup. Confirm this is intentional.");
+        if (opt.QuoteSize <= 0)
+            app.Logger.LogWarning("QuoteSize is zero or negative");
+        app.Logger.LogInformation(
+            "Startup validation: mode={M} minEdge={E}% size={S} lev={L} maxOpen={O} liveEnabled={LE}",
+            opt.StrategyMode, opt.MinProfitPercent, opt.QuoteSize,
+            opt.FuturesPaperLeverage, opt.FuturesMaxOpenPositions, opt.LiveTradingEnabled);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Startup options validation skipped");
+    }
+
     // Re-apply persisted trading/live settings from data/local-settings.json (survives restart)
     try
     {
@@ -143,6 +165,22 @@ try
     {
         var snap = state.GetSnapshot();
         return Results.Ok(new { status = "ok", utc = DateTime.UtcNow, mode = state.Mode, snapshot = snap });
+    });
+
+    app.MapGet("/api/health/live", (LiveTradingGuard guard, LiveOrderEngine orders) =>
+    {
+        var st = guard.Status();
+        var open = orders.GetOpen();
+        return Results.Ok(new
+        {
+            utc = DateTime.UtcNow,
+            live = st,
+            openLedgerCount = open.Count,
+            openSymbols = open.Select(p => p.Symbol).Distinct().ToArray(),
+            note = open.Count > 0
+                ? "Open hedges present — reconcile against exchange before new orders"
+                : "No open ledger hedges"
+        });
     });
 
     app.MapPost("/api/control/pause", (ArbitrageState state) =>
@@ -614,6 +652,22 @@ try
     // Blazor terminal UI — root "/" = Dashboard
     //app.MapRazorComponents<ArbitrageBot.Components.App>()
     //    .AddInteractiveServerRenderMode();
+
+    // Persist live ledger on shutdown
+    var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    lifetime.ApplicationStopping.Register(() =>
+    {
+        try
+        {
+            var orders = app.Services.GetService<LiveOrderEngine>();
+            orders?.PersistNow();
+            app.Logger.LogInformation("Live ledger persisted on shutdown");
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(ex, "Live ledger persist on shutdown failed");
+        }
+    });
 
     await app.RunAsync();
 }

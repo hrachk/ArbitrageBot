@@ -8,7 +8,12 @@
 
 <div class="page-hd">
   <h1>Live control</h1>
-  <p class="muted">Guard · balances · real exchange positions</p>
+  <p class="muted">Guard · balances · real exchange positions · <b>reconcile open hedges before new orders</b></p>
+</div>
+
+<div class="alert" style="margin-bottom:12px;border-color:#f05c5c">
+  <b>Production rule:</b> Live orders are allowed only when Guard shows canPlaceOrders=true, not killed, and not read-only.
+  After any restart with open ledger hedges — verify exchange positions first. Kill switch is immediate.
 </div>
 
 <div class="card">
