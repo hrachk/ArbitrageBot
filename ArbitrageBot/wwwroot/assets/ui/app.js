@@ -1,0 +1,1032 @@
+/* ArbitrageBot operator console — single-file SPA over the existing REST + SignalR API.
+   Transport: SignalR "Snapshot" + "MarketTick" when available, otherwise polling /api/snapshot. */
+(() => {
+'use strict';
+
+// ───────────────────────── utilities ─────────────────────────
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+const lc = (o) => { if (!o || typeof o !== 'object') return o; const r = {}; for (const k in o) r[k.charAt(0).toLowerCase() + k.slice(1)] = o[k]; return r; };
+const pick = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null) return o[k]; } return null; };
+
+const grp = (n, d) => n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/,/g, '\u2009');
+const fmt = {
+  pct(v, d = 3, sign = true) { const n = num(v); if (n == null) return '—'; return (sign && n > 0 ? '+' : '') + n.toFixed(d) + '%'; },
+  usd(v, d = 2, sign = true) { const n = num(v); if (n == null) return '—'; const s = grp(Math.abs(n), d); return (n < 0 ? '−' : sign && n > 0 ? '+' : '') + '$' + s; },
+  price(v) { const n = num(v); if (n == null || n === 0) return '—'; const d = n >= 1000 ? 2 : n >= 10 ? 3 : n >= 1 ? 4 : n >= 0.01 ? 5 : 7; return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); },
+  int(v) { const n = num(v); return n == null ? '—' : grp(Math.round(n), 0); },
+  qty(v) { const n = num(v); if (n == null) return '—'; return n >= 100 ? n.toFixed(1) : n >= 1 ? n.toFixed(3) : n.toPrecision(4); },
+  dur(sec) { const s = num(sec); if (s == null) return '—'; if (s < 1) return (s * 1000).toFixed(0) + ' мс'; if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' с'; if (s < 3600) return Math.floor(s / 60) + ' мин ' + Math.floor(s % 60) + ' с'; return Math.floor(s / 3600) + ' ч ' + Math.floor((s % 3600) / 60) + ' мин'; },
+  ago(iso) { if (!iso) return '—'; const t = new Date(iso).getTime(); if (!Number.isFinite(t)) return '—'; const s = (Date.now() - t) / 1000; if (s < 2) return 'только что'; if (s < 60) return Math.floor(s) + ' с назад'; if (s < 3600) return Math.floor(s / 60) + ' мин назад'; if (s < 86400) return Math.floor(s / 3600) + ' ч назад'; return new Date(t).toLocaleDateString('ru-RU'); },
+  time(iso) { if (!iso) return '—'; const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; },
+  dt(iso) { if (!iso) return '—'; const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'; },
+};
+const cls = (v) => { const n = num(v); return n == null || n === 0 ? '' : n > 0 ? 'pos' : 'neg'; };
+const signed = (v, f = fmt.usd) => `<span class="num ${cls(v)}">${f(v)}</span>`;
+
+const VENUE = { Binance: 'Binance', Bybit: 'Bybit', OKX: 'OKX', Bitget: 'Bitget', GateIo: 'Gate.io', Kucoin: 'KuCoin', KuCoin: 'KuCoin', Coinbase: 'Coinbase' };
+const venue = (v) => VENUE[v] || v || '—';
+const baseOf = (s) => String(s || '').replace(/USDT$/i, '');
+
+// ───────────────────────── icons ─────────────────────────
+const I = (p, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${p}</svg>`;
+const ICON = {
+  overview: I('<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 7h6V4h-6z"/>'),
+  market: I('<path d="M3 17l5-6 4 4 8-9"/><path d="M14 6h6v6"/>'),
+  scanner: I('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/><path d="M8.5 11h5M11 8.5v5"/>'),
+  positions: I('<path d="M4 7h16M4 12h16M4 17h10"/>'),
+  analytics: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  funding: I('<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>'),
+  live: I('<path d="M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7z"/><path d="M9 12l2 2 4-4"/>'),
+  settings: I('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.6 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.6-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>'),
+  help: I('<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 .8c0 1.7-2.5 2.2-2.5 3.7M12 17h.01"/>'),
+  pause: I('<path d="M8 5v14M16 5v14"/>'),
+  play: I('<path d="M7 4l13 8-13 8z"/>'),
+  stop: I('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
+  arrow: I('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+  close: I('<path d="M6 6l12 12M18 6L6 18"/>'),
+  ok: I('<path d="M5 12l5 5 9-10"/>'),
+  bad: I('<path d="M6 6l12 12M18 6L6 18"/>'),
+  unk: I('<circle cx="12" cy="12" r="8"/>'),
+  warn: I('<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>'),
+  info: I('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'),
+  search: I('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
+  refresh: I('<path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/>'),
+};
+
+// ───────────────────────── state ─────────────────────────
+const S = {
+  snap: null,
+  settings: null,
+  perf: null, perfDays: 7,
+  ledger: null,
+  daysSummary: null,
+  funding: null,
+  liveBalances: null,
+  livePositions: null,
+  transport: 'connecting',
+  lastSnapAt: 0,
+  page: 'overview',
+  drawer: null,
+  market: { q: '', onlyExec: false, sort: 'net', dir: -1 },
+  scanner: { q: '' },
+  trades: { src: 'recent' },
+  routeHist: new Map(),   // route -> [{t, g, n}]
+  pnlHist: [],            // [{t, v}]
+  firstHero: true,
+};
+
+// ───────────────────────── api ─────────────────────────
+const api = {
+  async req(method, url, body) {
+    const r = await fetch(url, { method, headers: body !== undefined ? { 'Content-Type': 'application/json' } : {}, body: body !== undefined ? JSON.stringify(body) : undefined });
+    const text = await r.text();
+    let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!r.ok) { const msg = (data && (data.message || data.error || data.title)) || text || r.statusText; throw new Error(String(msg).slice(0, 300)); }
+    return data;
+  },
+  get: (u) => api.req('GET', u),
+  post: (u, b) => api.req('POST', u, b === undefined ? {} : b),
+  del: (u) => api.req('DELETE', u),
+};
+
+// ───────────────────────── toasts & modal ─────────────────────────
+function toast(msg, kind = 'ok') {
+  const box = $('#toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+  el.innerHTML = (kind === 'err' ? ICON.warn : ICON.ok) + `<div>${esc(msg)}</div>`;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), kind === 'err' ? 7000 : 3500);
+}
+
+function confirmModal({ title, body, confirm = 'Подтвердить', danger = false, input = null }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mt">
+      <h3 id="mt">${esc(title)}</h3><p>${body}</p>
+      ${input ? `<div class="field"><label for="mi">${esc(input.label)}</label><input id="mi" class="input" autocomplete="off" placeholder="${esc(input.placeholder || '')}" value="${esc(input.value || '')}"></div>` : ''}
+      ${input && input.toggle ? `<label class="switch" style="margin-top:12px"><input type="checkbox" id="mt2" ${input.toggle.checked ? 'checked' : ''}><span class="track"></span><span>${esc(input.toggle.label)}</span></label>` : ''}
+      <div class="acts"><button class="btn ghost" data-a="no">Отмена</button><button class="btn ${danger ? 'solid-danger' : 'primary'}" data-a="yes">${esc(confirm)}</button></div></div>`;
+    document.body.appendChild(wrap);
+    const done = (v) => { wrap.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') done(null); if (e.key === 'Enter' && input) $('[data-a="yes"]', wrap).click(); };
+    document.addEventListener('keydown', onKey);
+    wrap.addEventListener('click', (e) => {
+      if (e.target === wrap) return done(null);
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      if (a === 'no') done(null);
+      if (a === 'yes') done(input ? { value: $('#mi', wrap).value, toggle: $('#mt2', wrap)?.checked } : true);
+    });
+    ($('#mi', wrap) || $('[data-a="yes"]', wrap)).focus();
+  });
+}
+
+async function act(fn, okMsg) {
+  try { const r = await fn(); if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg); return r; }
+  catch (e) { toast(e.message || 'Ошибка запроса', 'err'); return null; }
+}
+
+// ───────────────────────── derived data ─────────────────────────
+const snap = () => S.snap || {};
+const fp = () => snap().futuresPaper || {};
+const liveSt = () => snap().liveStatus || {};
+const minEdge = () => Math.max(0.02, num(S.settings?.trading?.minProfitPercent) ?? num(snap().minProfitPercent) ?? 0.02);
+const minTpUsd = () => num(S.settings?.trading?.minTakeProfitUsd) ?? 0.1;
+
+function modeOf() {
+  const st = liveSt();
+  if (st.killed) return { key: 'killed', label: 'Kill switch', sub: st.killReason || '' };
+  if (st.canPlaceOrders) return { key: 'live', label: 'LIVE · реальные ордера', sub: '' };
+  if (st.enabled && st.readOnly) return { key: 'readonly', label: 'Live, только чтение', sub: '' };
+  return { key: 'paper', label: 'Paper', sub: '' };
+}
+
+const GATES = [
+  ['basis-warmup', 'Базис прогревается', 'Маршрут копит историю fair basis'],
+  ['stale', 'Котировка устарела', 'Нога старше лимита, разнесена во времени или пришла из REST'],
+  ['ban', 'Маршрут в бане', 'После стопа, мёртвой книги или структурного базиса'],
+  ['spike', 'В пределах шума', 'Excess меньше обычного разброса пары'],
+  ['touch', 'Мало на вершине', 'Лучший уровень меньше 25% размера'],
+  ['gross', 'Gross ниже минимума', 'Сырой спред меньше порога'],
+  ['rt', 'Чистый edge ниже минимума', 'После 4 комиссий, выхода и запаса'],
+  ['tp', 'Ожидаемый $ мал', 'Долларовая прибыль ниже минимальной цели'],
+  ['fund', 'Funding съест edge', 'Расчёт funding в горизонте удержания'],
+  ['fill', 'Стакан не заполнит', 'Глубины не хватает на размер'],
+  ['fade', 'Спред схлопывается', 'Gross падает с прошлого скана'],
+  ['persist', 'Держится недолго', 'Сигнал ещё не простоял нужное время'],
+  ['gate', 'Прочие гейты', ''],
+];
+const gateLabel = (g) => (GATES.find(x => x[0] === g) || [g, g || '—'])[1];
+const gateIdx = (g) => GATES.findIndex(x => x[0] === g);
+
+function opps() { return (snap().opportunities || []).map(lc); }
+
+function decompose(o) {
+  const gross = num(o.grossSpreadPercent) ?? 0;
+  const fair = Math.max(0, num(o.fairBasisPercent) ?? 0);
+  const fees = 2 * ((num(o.buyFeePercent) ?? 0.05) + (num(o.sellFeePercent) ?? 0.05));
+  const exit = Math.max(0, num(o.exitCrossPercent) ?? 0);
+  const net = num(o.netRoundTripPercent) ?? 0;
+  const excess = num(o.excessPercent) ?? gross - fair;
+  const reserve = Math.max(0, excess - fees - exit - net);
+  return { gross, fair, fees, exit, reserve, net, excess };
+}
+
+function trackRoutes() {
+  const now = Date.now();
+  for (const o of opps()) {
+    const k = `${o.symbol}|${o.longExchange}|${o.shortExchange}`;
+    let h = S.routeHist.get(k); if (!h) { h = []; S.routeHist.set(k, h); }
+    const last = h[h.length - 1];
+    if (!last || now - last.t > 900) { h.push({ t: now, g: num(o.grossSpreadPercent), n: num(o.netRoundTripPercent) }); if (h.length > 240) h.shift(); }
+  }
+  if (S.routeHist.size > 400) { const keys = [...S.routeHist.keys()].slice(0, S.routeHist.size - 400); keys.forEach(k => S.routeHist.delete(k)); }
+  const total = (num(fp().realizedPnlUsd) ?? 0) + (num(fp().unrealizedPnlUsd) ?? 0);
+  const lp = S.pnlHist[S.pnlHist.length - 1];
+  if (!lp || now - lp.t > 5000) { S.pnlHist.push({ t: now, v: total }); if (S.pnlHist.length > 720) S.pnlHist.shift(); }
+}
+
+// ───────────────────────── small components ─────────────────────────
+const routeHtml = (l, s) => `<span class="route"><span class="l">${esc(venue(l))}</span>${ICON.arrow}<span class="s">${esc(venue(s))}</span></span>`;
+
+function spark(points, { w = 120, h = 28, key = 'v', color = 'var(--long)', zero = false } = {}) {
+  const vals = points.map(p => num(p[key])).filter(v => v != null);
+  if (vals.length < 2) return `<svg class="chart" width="${w}" height="${h}"></svg>`;
+  let lo = Math.min(...vals), hi = Math.max(...vals); if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  if (hi - lo < 1e-9) { hi += 1e-6; lo -= 1e-6; }
+  const xs = (i) => (i / (vals.length - 1)) * (w - 2) + 1;
+  const ys = (v) => h - 2 - ((v - lo) / (hi - lo)) * (h - 4);
+  const d = vals.map((v, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join('');
+  const z = zero ? `<line x1="0" x2="${w}" y1="${ys(0)}" y2="${ys(0)}" stroke="var(--faint)" stroke-dasharray="2 3"/>` : '';
+  return `<svg class="chart" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">${z}<path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/></svg>`;
+}
+
+function waterfall(o, { legend = true } = {}) {
+  const d = decompose(o);
+  const me = minEdge();
+  const costs = d.fair + d.fees + d.exit + d.reserve;
+  const scale = Math.max(d.gross, costs + Math.max(d.net, 0), costs + me) * 1.04 || 1;
+  const w = (v) => Math.max(0, v / scale * 100).toFixed(2) + '%';
+  const netSeg = d.net > 0 ? `<div class="wf-seg net" style="width:${w(d.net)}" title="Чистый edge ${fmt.pct(d.net)}"></div>` : '';
+  const shortSeg = d.net < 0 ? '' : '';
+  const grossPos = Math.min(100, d.gross / scale * 100);
+  const minPos = Math.min(100, (costs + me) / scale * 100);
+  return `<div class="wf">
+    <div class="wf-bar" role="img" aria-label="Разбор спреда: gross ${fmt.pct(d.gross)}, издержки ${fmt.pct(costs, 3, false)}, чистый ${fmt.pct(d.net)}">
+      <div class="wf-track">
+      <div class="wf-seg basis" style="width:${w(d.fair)}" title="Fair basis ${fmt.pct(d.fair, 3, false)}"></div>
+      <div class="wf-seg fees" style="width:${w(d.fees)}" title="4 комиссии taker ${fmt.pct(d.fees, 3, false)}"></div>
+      <div class="wf-seg exit" style="width:${w(d.exit)}" title="Ширина стаканов на выходе ${fmt.pct(d.exit, 3, false)}"></div>
+      <div class="wf-seg reserve" style="width:${w(d.reserve)}" title="Запас на исполнение ${fmt.pct(d.reserve, 3, false)}"></div>
+      ${netSeg}${shortSeg}
+      </div>
+      <div class="wf-min ${minPos > 82 ? 'edge-r' : ''}" style="left:${minPos}%"><span>порог входа</span></div>
+      ${d.net < 0 ? `<div class="wf-min gross" style="left:${grossPos}%"><span>весь gross</span></div>` : ''}
+    </div>
+    ${legend ? `<div class="wf-legend">
+      <div><span class="k">Gross спред</span><span class="v">${fmt.pct(d.gross, 3, false)}</span></div>
+      <div><span class="k"><i style="background:rgb(242 184 75 / .35)"></i>Fair basis</span><span class="v cost">−${fmt.pct(d.fair, 3, false)}</span></div>
+      <div><span class="k"><i style="background:rgb(242 184 75 / .62)"></i>4 комиссии</span><span class="v cost">−${fmt.pct(d.fees, 3, false)}</span></div>
+      <div><span class="k"><i style="background:rgb(242 184 75 / .42)"></i>Выход по стакану</span><span class="v cost">−${fmt.pct(d.exit, 3, false)}</span></div>
+      <div><span class="k"><i style="background:rgb(242 184 75 / .26)"></i>Запас</span><span class="v cost">−${fmt.pct(d.reserve, 3, false)}</span></div>
+      <div><span class="k"><i style="background:${d.net >= 0 ? 'var(--profit)' : 'var(--loss)'}"></i>Чистый edge</span><span class="v ${cls(d.net)}">${fmt.pct(d.net)}</span></div>
+    </div>` : ''}
+  </div>`;
+}
+
+function checklist(o) {
+  const d = decompose(o);
+  const t = S.settings?.trading || {};
+  const exec = !!o.isExecutable;
+  const gi = gateIdx(o.gateNote);
+  const cat = (key) => exec ? 'ok' : gi < 0 ? 'unk' : gateIdx(key) < gi ? 'ok' : gateIdx(key) === gi ? 'bad' : 'unk';
+  const openFees = (num(o.buyFeePercent) ?? 0.05) + (num(o.sellFeePercent) ?? 0.05);
+  const minGross = Math.max(num(t.minGrossSpreadPercent) || openFees + 0.04, openFees + 0.02);
+  const items = [
+    ['Fair basis прогрет', o.basisReady ? 'ok' : 'bad', o.basisReady ? `Базис ${fmt.pct(d.fair, 3, false)}` : 'Нужно ≥ ' + (t.basisMinSpanSeconds || 90) + ' с истории'],
+    ['Свежие котировки', cat('stale'), 'Обе ноги из сокетов и моложе лимита'],
+    ['Маршрут не в бане', cat('ban'), ''],
+    ['Выше шума пары', cat('spike'), `Excess ${fmt.pct(d.excess)}`],
+    ['Ликвидность на вершине', cat('touch'), '≥ 25% размера на лучшем уровне'],
+    ['Gross ≥ минимума', d.gross >= minGross ? 'ok' : 'bad', `${fmt.pct(d.gross, 3, false)} из ${fmt.pct(minGross, 3, false)}`],
+    ['Чистый edge ≥ порога', d.net >= minEdge() ? 'ok' : 'bad', `${fmt.pct(d.net)} из ${fmt.pct(minEdge(), 3, false)}`],
+    ['Ожидаемый $ ≥ цели', (num(o.estNetPnlUsd) ?? -1) >= minTpUsd() ? 'ok' : 'bad', `${fmt.usd(o.estNetPnlUsd)} из ${fmt.usd(minTpUsd(), 2, false)}`],
+    ['Funding не мешает', cat('fund'), o.expectedFundingPct != null ? `Дельта ${fmt.pct(o.expectedFundingPct, 4)}` : ''],
+    ['Стакан заполняет размер', o.fullyFilled ? 'ok' : 'bad', `${fmt.usd(o.quoteSize, 0, false)} по VWAP`],
+    ['Спред не схлопывается', cat('fade'), ''],
+    ['Сигнал удержан', cat('persist'), (t.minSpreadPersistMs || 300) + ' мс подряд'],
+  ];
+  return `<div class="checks">${items.map(([tt, st, dd]) => `<div class="check ${st}">${st === 'ok' ? ICON.ok : st === 'bad' ? ICON.bad : ICON.unk}<div><div class="t">${esc(tt)}</div>${dd ? `<div class="d">${esc(dd)}</div>` : ''}</div></div>`).join('')}</div>`;
+}
+
+function ladder(sym, ex, side) {
+  const dep = snap().orderBookDepth?.[sym]?.[ex];
+  const tk = snap().bookTickers?.[sym]?.[ex];
+  if (!dep && !tk) return `<div class="ladder"><h4>${esc(venue(ex))}</h4><div class="mut">Нет данных стакана</div></div>`;
+  const asks = (dep?.asks || (tk ? [{ price: tk.bestAsk, qty: tk.askQuantity }] : [])).slice(0, 8).map(lc);
+  const bids = (dep?.bids || (tk ? [{ price: tk.bestBid, qty: tk.bidQuantity }] : [])).slice(0, 8).map(lc);
+  const maxQ = Math.max(1e-12, ...asks.map(a => num(a.price) * num(a.qty) || 0), ...bids.map(b => num(b.price) * num(b.qty) || 0));
+  const row = (lv, k) => { const usd = (num(lv.price) || 0) * (num(lv.qty) || 0); return `<div class="lrow ${k}"><div class="bg" style="width:${(usd / maxQ * 100).toFixed(1)}%"></div><span>${fmt.price(lv.price)}</span><span>${fmt.usd(usd, 0, false)}</span></div>`; };
+  const ba = num(asks[0]?.price), bb = num(bids[0]?.price);
+  const width = ba && bb ? ((ba - bb) / bb * 100) : null;
+  return `<div class="ladder"><h4><span class="${side === 'long' ? 'long' : 'short'}">${esc(venue(ex))} · ${side === 'long' ? 'покупаем ask' : 'продаём bid'}</span><span class="mut num">${esc(dep?.source || 'ticker')}</span></h4>
+    ${asks.slice().reverse().map(a => row(a, 'ask')).join('')}
+    <div class="lmid">ширина ${width != null ? fmt.pct(width, 3, false) : '—'}</div>
+    ${bids.map(b => row(b, 'bid')).join('')}</div>`;
+}
+
+// ───────────────────────── pages ─────────────────────────
+const PAGES = {
+  overview: { title: 'Обзор', icon: 'overview' },
+  market: { title: 'Сигналы', icon: 'market' },
+  scanner: { title: 'Сканер рынка', icon: 'scanner' },
+  positions: { title: 'Позиции и сделки', icon: 'positions' },
+  analytics: { title: 'Аналитика', icon: 'analytics' },
+  funding: { title: 'Funding', icon: 'funding' },
+  live: { title: 'Live-торговля', icon: 'live' },
+  settings: { title: 'Настройки', icon: 'settings' },
+  help: { title: 'Как это работает', icon: 'help' },
+};
+
+// Overview ------------------------------------------------------
+function renderOverview() {
+  const list = opps();
+  const best = list.find(o => o.isExecutable) || list[0];
+  const p = fp();
+  const an = lc(snap().paperAnalytics || {});
+  const health = (snap().exchangeHealth || []).map(lc);
+
+  const hero = best ? `
+    <div class="lens-top">
+      <div class="lens-route">
+        <div class="mut small" style="margin-bottom:8px">${best.isExecutable ? 'Готов к входу сейчас' : 'Лучший маршрут, не прошёл: ' + esc(gateLabel(best.gateNote))}</div>
+        <div class="lens-sym">${esc(baseOf(best.symbol))}<small>USDT perp</small></div>
+        <div class="legs">
+          <div class="leg l"><span class="k">Long · ${esc(venue(best.longExchange))}</span><span class="v">${fmt.price(best.buyPriceVwap)}</span></div>
+          <div class="leg s"><span class="k">Short · ${esc(venue(best.shortExchange))}</span><span class="v">${fmt.price(best.sellPriceVwap)}</span></div>
+        </div>
+      </div>
+      <div class="lens-verdict">
+        <div class="lens-net ${cls(best.netRoundTripPercent)}">${fmt.pct(best.netRoundTripPercent)}</div>
+        <div class="lens-net-lbl">чистый edge после всех издержек</div>
+        <div class="lens-usd">${signed(best.estNetPnlUsd)} <span class="mut small">на ${fmt.usd(best.quoteSize, 0, false)}</span></div>
+      </div>
+    </div>
+    ${waterfall(best)}` : `<div class="lens-empty"><strong>Сигналов пока нет</strong>Бот сканирует ${fmt.int((snap().symbols || []).length)} символов на ${fmt.int((snap().exchanges || []).length)} биржах. Маршруты появятся, когда в стаканах будет хотя бы две свежие котировки.</div>`;
+
+  const blockers = {};
+  for (const o of list) if (!o.isExecutable) blockers[o.gateNote || 'gate'] = (blockers[o.gateNote || 'gate'] || 0) + 1;
+  const execN = list.filter(o => o.isExecutable).length;
+  const bTotal = Math.max(1, list.length);
+  const bRows = Object.entries(blockers).sort((a, b) => b[1] - a[1]).slice(0, 7);
+
+  const positions = (p.positions || []).map(lc);
+  const trades = (p.trades || []).map(lc).filter(t => !t.isOpen).slice(0, 8);
+
+  return `
+  <div class="grid cols-hero">
+    <section class="panel lens ${S.firstHero ? 'enter' : ''}" aria-label="Лучший маршрут">${hero}</section>
+    <section class="panel">
+      <div class="panel-head"><h2>Результат</h2><span class="sub">${esc(an.dayUtc || '')} UTC</span></div>
+      <div class="panel-body stack" style="gap:14px">
+        <div><div class="mut small">Сегодня, реализовано</div><div class="num" style="font-size:30px;letter-spacing:-.03em">${signed(p.dailyRealizedPnlUsd)}</div></div>
+        <div class="row between"><span class="mut small">Всего реализовано</span>${signed(p.realizedPnlUsd)}</div>
+        <div class="row between"><span class="mut small">Нереализовано</span>${signed(p.unrealizedPnlUsd)}</div>
+        <div class="row between"><span class="mut small">Открыто хеджей</span><span class="num">${fmt.int(p.openCount)}</span></div>
+        <div>${S.pnlHist.length > 1 ? spark(S.pnlHist, { w: 320, h: 56, zero: true, color: 'var(--profit)' }) : '<div class="mut small" style="height:56px;display:flex;align-items:center">Кривая начнёт строиться через несколько секунд</div>'}</div>
+        <div class="mut small">P&amp;L этой сессии браузера, точка раз в 5 с</div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <div class="kpis">
+      <div class="kpi"><div class="k">Сканов за день</div><div class="v">${fmt.int(an.scans)}</div><div class="d">всего ${fmt.int(snap().scanCount)}</div></div>
+      <div class="kpi"><div class="k">Входов / выходов</div><div class="v">${fmt.int(an.opens)} / ${fmt.int(an.closes)}</div><div class="d">за день UTC</div></div>
+      <div class="kpi"><div class="k">Маршрутов сравнено</div><div class="v">${fmt.int(snap().lastPairsCompared)}</div><div class="d">книг готово ${fmt.int(snap().lastBooksReady)}</div></div>
+      <div class="kpi"><div class="k">Лучший gross</div><div class="v">${fmt.pct(snap().lastBestGrossPercent, 3, false)}</div><div class="d">в последнем скане</div></div>
+      <div class="kpi"><div class="k">Готовых сигналов</div><div class="v ${execN ? 'pos' : ''}">${fmt.int(execN)}</div><div class="d">из ${fmt.int(list.length)} в выдаче</div></div>
+    </div>
+  </section>
+
+  <section style="margin-top:18px" aria-label="Биржи">
+    <div class="venues">${health.length ? health.map(v => `<div class="venue"><div class="n"><span class="led ${v.state === 'live' ? 'ok' : v.state === 'error' ? 'bad' : 'warn'}"></span>${esc(venue(v.name))}</div><div class="m">${v.state === 'live' ? 'Стримы ' + fmt.int(v.liveStreams) + ' из ' + fmt.int(v.totalStreams) : v.state === 'error' ? 'Ошибка подключения' : v.state === 'idle' ? 'Не подключена' : 'Подключается'}</div></div>`).join('') : '<div class="venue"><div class="m">Нет данных о биржах</div></div>'}</div>
+  </section>
+
+  <div class="grid cols-2" style="margin-top:18px">
+    <section class="panel">
+      <div class="panel-head"><h2>Почему нет входа</h2><span class="sub">первый непройденный гейт по маршрутам</span></div>
+      <div class="panel-body">${bRows.length || execN ? `<div class="bars">
+        ${execN ? `<div class="bar-row"><span class="t">Готов к входу</span><div class="track"><div class="fill ok" style="width:${execN / bTotal * 100}%"></div></div><span class="c">${execN}</span></div>` : ''}
+        ${bRows.map(([g, c]) => `<div class="bar-row"><span class="t" title="${esc((GATES.find(x => x[0] === g) || [])[2] || '')}">${esc(gateLabel(g))}</span><div class="track"><div class="fill" style="width:${c / bTotal * 100}%"></div></div><span class="c">${c}</span></div>`).join('')}
+      </div>` : '<div class="empty">Нет маршрутов для разбора</div>'}</div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Открытые хеджи</h2><div class="tools"><button class="btn sm ghost" data-go="positions">Все позиции</button></div></div>
+      <div class="panel-body flush">${positions.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Символ</th><th>Маршрут</th><th class="r">Держим</th><th class="r">P&amp;L</th></tr></thead><tbody>
+        ${positions.map(x => `<tr><td class="sym">${esc(baseOf(x.symbol))}</td><td>${routeHtml(x.longExchange, x.shortExchange)}</td><td class="r num">${fmt.dur(x.holdSeconds)}</td><td class="r">${signed(x.unrealizedPnlUsd)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty"><strong>Позиций нет</strong>Хедж откроется, когда маршрут пройдёт все гейты.</div>'}</div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <div class="panel-head"><h2>Последние сделки</h2><div class="tools"><button class="btn sm ghost" data-go="positions">Журнал</button></div></div>
+    <div class="panel-body flush">${tradesTable(trades)}</div>
+  </section>`;
+}
+
+function statusBadge(st) {
+  const s = String(st || '');
+  if (s === 'Open') return '<span class="badge long">открыта</span>';
+  const m = /Closed\(([^)]+)\)/.exec(s); const r = m ? m[1] : s;
+  const map = { tp: ['тейк', 'pos'], converge: ['схождение', 'pos'], trail: ['трейл', 'pos'], 'timeout-harvest': ['по времени', 'pos'], stop: ['стоп', 'neg'], manual: ['вручную', ''], orphan: ['сирота', 'neg'], 'stale-no-book': ['нет книги', 'neg'], 'leg-miss': ['промах ноги', 'neg'], reset: ['сброс', ''], failed: ['не сошлось', 'neg'] };
+  const [t, c] = map[r] || [r, ''];
+  return `<span class="badge ${c}">${esc(t)}</span>`;
+}
+
+function tradesTable(trades, { showOpen = false } = {}) {
+  if (!trades.length) return '<div class="empty"><strong>Сделок ещё нет</strong>Закрытые хеджи появятся здесь.</div>';
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Закрыта</th><th>Символ</th><th>Маршрут</th><th class="r">Вход L / S</th><th class="r">Держали</th><th class="r">Комиссии</th><th class="r">P&amp;L</th><th>Итог</th></tr></thead><tbody>
+  ${trades.map(t => {
+    const open = new Date(t.openedAt).getTime(), close = new Date(t.closedAt).getTime();
+    const hold = Number.isFinite(open) && Number.isFinite(close) ? (close - open) / 1000 : (num(t.holdMin) != null ? num(t.holdMin) * 60 : null);
+    const fees = (num(t.openFeesUsd) ?? 0) + (num(t.closeFeesUsd) ?? 0);
+    return `<tr title="${esc(t.message || '')}"><td class="mut">${t.closedAt ? fmt.dt(t.closedAt) : showOpen ? 'открыта' : '—'}</td><td class="sym">${esc(baseOf(t.symbol))}</td><td>${routeHtml(t.longExchange, t.shortExchange)}</td><td class="r num">${fmt.price(t.longEntry)} / ${fmt.price(t.shortEntry)}</td><td class="r num">${hold != null ? fmt.dur(hold) : '—'}</td><td class="r num mut">${fees ? fmt.usd(fees, 2, false) : '—'}</td><td class="r">${signed(t.realizedPnlUsd)}</td><td>${statusBadge(t.status)}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+// Market / signals ----------------------------------------------
+function renderMarket() {
+  const m = S.market;
+  let list = opps();
+  if (m.onlyExec) list = list.filter(o => o.isExecutable);
+  if (m.q) { const q = m.q.toLowerCase(); list = list.filter(o => (o.symbol + ' ' + o.longExchange + ' ' + o.shortExchange).toLowerCase().includes(q)); }
+  const key = { net: 'netRoundTripPercent', gross: 'grossSpreadPercent', excess: 'excessPercent', usd: 'estNetPnlUsd', sym: 'symbol' }[m.sort] || 'netRoundTripPercent';
+  list.sort((a, b) => { if (key === 'symbol') return m.dir * String(a.symbol).localeCompare(b.symbol); return m.dir * ((num(a[key]) ?? -1e9) - (num(b[key]) ?? -1e9)); });
+  const th = (k, label, r = true) => `<th class="${r ? 'r' : ''}"><button data-sort="${k}" aria-label="Сортировать по ${esc(label)}">${esc(label)}${m.sort === k ? (m.dir < 0 ? ' ↓' : ' ↑') : ''}</button></th>`;
+  return `
+  <div class="toolbar">
+    <div class="search">${ICON.search}<input class="input" id="mq" placeholder="Символ или биржа" value="${esc(m.q)}" aria-label="Фильтр сигналов"></div>
+    <label class="switch"><input type="checkbox" id="mexec" ${m.onlyExec ? 'checked' : ''}><span class="track"></span><span>Только готовые к входу</span></label>
+    <span class="grow"></span>
+    <span class="mut small">Порог входа ${fmt.pct(minEdge(), 3, false)} · обновлено ${fmt.ago(snap().lastScanUtc)}</span>
+  </div>
+  <section class="panel">
+    <div class="panel-body flush">${list.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>
+      ${th('sym', 'Символ', false)}<th>Маршрут</th><th class="r">Long ask</th><th class="r">Short bid</th>${th('gross', 'Gross')}<th class="r">Базис</th>${th('excess', 'Excess')}${th('net', 'Чистый')}${th('usd', '$ на размер')}<th class="r">Динамика</th><th>Статус</th></tr></thead><tbody>
+      ${list.map(o => { const k = `${o.symbol}|${o.longExchange}|${o.shortExchange}`; return `<tr class="click ${o.isExecutable ? 'exec' : ''}" data-route="${esc(k)}" tabindex="0">
+        <td class="sym">${esc(baseOf(o.symbol))}</td><td>${routeHtml(o.longExchange, o.shortExchange)}</td>
+        <td class="r num long">${fmt.price(o.buyPriceVwap)}</td><td class="r num short">${fmt.price(o.sellPriceVwap)}</td>
+        <td class="r num">${fmt.pct(o.grossSpreadPercent, 3, false)}</td><td class="r num cost">${o.basisReady ? fmt.pct(o.fairBasisPercent, 3, false) : '<span class="mut">прогрев</span>'}</td>
+        <td class="r num">${fmt.pct(o.excessPercent)}</td><td class="r num ${cls(o.netRoundTripPercent)}">${fmt.pct(o.netRoundTripPercent)}</td>
+        <td class="r">${signed(o.estNetPnlUsd)}</td><td class="r">${spark(S.routeHist.get(k) || [], { w: 90, h: 22, key: 'g', color: 'var(--text-2)' })}</td>
+        <td>${o.isExecutable ? '<span class="badge pos">готов</span>' : `<span class="badge cost">${esc(gateLabel(o.gateNote))}</span>`}</td></tr>`; }).join('')}
+    </tbody></table></div>` : `<div class="empty"><strong>${m.onlyExec ? 'Нет маршрутов, готовых к входу' : 'Нет сигналов'}</strong>${m.onlyExec ? 'Снимите фильтр, чтобы увидеть, какой гейт их держит.' : 'Ждём свежие стаканы минимум с двух бирж.'}</div>`}</div>
+  </section>`;
+}
+
+function renderDrawer() {
+  const d = S.drawer; if (!d) return;
+  const o = opps().find(x => `${x.symbol}|${x.longExchange}|${x.shortExchange}` === d.route);
+  const body = $('#drawerBody'); const head = $('#drawerTitle');
+  if (!o) { head.textContent = d.route.split('|')[0]; body.innerHTML = '<div class="empty"><strong>Маршрут выпал из выдачи</strong>Спред ушёл ниже порога показа или стакан устарел.</div>'; return; }
+  head.innerHTML = `${esc(baseOf(o.symbol))} <span class="mut" style="font-weight:500;font-size:14px">${routeHtml(o.longExchange, o.shortExchange)}</span>`;
+  const hist = S.routeHist.get(d.route) || [];
+  body.innerHTML = `
+    <div class="row wrap" style="gap:16px">
+      <div><div class="mut small">Чистый edge</div><div class="num ${cls(o.netRoundTripPercent)}" style="font-size:28px">${fmt.pct(o.netRoundTripPercent)}</div></div>
+      <div><div class="mut small">Ожидаемый результат</div><div style="font-size:20px">${signed(o.estNetPnlUsd)}</div></div>
+      <div><div class="mut small">Размер</div><div class="num" style="font-size:20px">${fmt.usd(o.quoteSize, 0, false)}</div></div>
+      <div style="margin-left:auto">${o.isExecutable ? '<span class="badge pos">готов к входу</span>' : `<span class="badge cost">${esc(gateLabel(o.gateNote))}</span>`}</div>
+    </div>
+    <section class="panel">${waterfall(o)}</section>
+    <section><h3 style="font-size:15px;margin:0 0 10px">Гейты входа</h3>${checklist(o)}</section>
+    <section class="panel"><div class="panel-head"><h2>Gross спред за сессию</h2><span class="sub">${hist.length} точек</span></div><div class="panel-body">${spark(hist, { w: 700, h: 90, key: 'g', color: 'var(--cost)' })}</div></section>
+    <section><h3 style="font-size:15px;margin:0 0 10px">Стаканы ног</h3><div class="ladders">${ladder(o.symbol, o.longExchange, 'long')}${ladder(o.symbol, o.shortExchange, 'short')}</div></section>
+    <section class="panel"><div class="panel-head"><h2>Все биржи по ${esc(baseOf(o.symbol))}</h2></div><div class="panel-body flush">${matrix(o.symbol)}</div></section>`;
+}
+
+function matrix(sym) {
+  const books = snap().bookTickers?.[sym] || {};
+  const rows = Object.entries(books).map(([ex, t]) => ({ ex, ...lc(t) })).filter(r => num(r.bestBid) > 0);
+  if (!rows.length) return '<div class="empty">Нет котировок</div>';
+  const maxBid = Math.max(...rows.map(r => num(r.bestBid)));
+  const minAsk = Math.min(...rows.map(r => num(r.bestAsk)));
+  return `<div class="tbl-wrap"><table class="tbl matrix"><thead><tr><th>Биржа</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Ширина</th><th class="r">Глубина вершины</th><th class="r">Возраст</th></tr></thead><tbody>
+    ${rows.map(r => { const w = (num(r.bestAsk) - num(r.bestBid)) / num(r.bestBid) * 100; const age = (Date.now() - new Date(r.timestamp).getTime()) / 1000; return `<tr><td>${esc(venue(r.ex))}</td><td class="r num ${num(r.bestBid) === maxBid ? 'best-bid' : ''}">${fmt.price(r.bestBid)}</td><td class="r num ${num(r.bestAsk) === minAsk ? 'best-ask' : ''}">${fmt.price(r.bestAsk)}</td><td class="r num">${fmt.pct(w, 3, false)}</td><td class="r num mut">${fmt.usd(num(r.bestBid) * num(r.bidQuantity), 0, false)} / ${fmt.usd(num(r.bestAsk) * num(r.askQuantity), 0, false)}</td><td class="r num ${age > 1.5 ? 'cost' : 'mut'}">${Number.isFinite(age) ? fmt.dur(Math.max(0, age)) : '—'}</td></tr>`; }).join('')}
+  </tbody></table></div><div class="mut small" style="padding:8px 12px 12px">Голубым — самый дешёвый ask (куда идёт long), лавандовым — самый дорогой bid (куда идёт short).</div>`;
+}
+
+// Scanner --------------------------------------------------------
+function renderScanner() {
+  const books = snap().bookTickers || {};
+  let rows = Object.entries(books).map(([sym, byEx]) => {
+    const q = Object.entries(byEx).map(([ex, t]) => ({ ex, ...lc(t) })).filter(r => num(r.bestBid) > 0 && num(r.bestAsk) > 0);
+    if (!q.length) return null;
+    const mids = q.map(r => (num(r.bestBid) + num(r.bestAsk)) / 2);
+    const lo = Math.min(...mids), hi = Math.max(...mids);
+    const bestBid = q.reduce((a, b) => num(b.bestBid) > num(a.bestBid) ? b : a);
+    const bestAsk = q.reduce((a, b) => num(b.bestAsk) < num(a.bestAsk) ? b : a);
+    const cross = (num(bestBid.bestBid) - num(bestAsk.bestAsk)) / num(bestAsk.bestAsk) * 100;
+    const widths = q.map(r => (num(r.bestAsk) - num(r.bestBid)) / num(r.bestBid) * 100);
+    const execN = opps().filter(o => o.symbol === sym && o.isExecutable).length;
+    return { sym, venues: q.length, disp: (hi - lo) / lo * 100, cross, bestBid: bestBid.ex, bestAsk: bestAsk.ex, avgW: widths.reduce((a, b) => a + b, 0) / widths.length, execN };
+  }).filter(Boolean);
+  if (S.scanner.q) rows = rows.filter(r => r.sym.toLowerCase().includes(S.scanner.q.toLowerCase()));
+  rows.sort((a, b) => b.cross - a.cross);
+  return `
+  <div class="toolbar">
+    <div class="search">${ICON.search}<input class="input" id="sq" placeholder="Символ" value="${esc(S.scanner.q)}" aria-label="Фильтр символов"></div>
+    <span class="grow"></span>
+    <span class="mut small">${rows.length} символов в universe · источник ${esc(snap().discoverySource || 'конфиг')}</span>
+  </div>
+  <div class="callout info" style="margin-bottom:16px">${ICON.info}<div>Сканер показывает сырой рынок до гейтов. Положительный кросс означает, что bid одной биржи выше ask другой. Сделкой это станет, только если кросс превысит fair basis и все издержки.</div></div>
+  <section class="panel"><div class="panel-body flush">${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Символ</th><th class="r">Бирж</th><th class="r">Разброс mid</th><th class="r">Лучший кросс</th><th>Дешевле всего</th><th>Дороже всего</th><th class="r">Средняя ширина</th><th>Сигналы</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="sym">${esc(baseOf(r.sym))}</td><td class="r num">${r.venues}</td><td class="r num">${fmt.pct(r.disp, 3, false)}</td><td class="r num ${cls(r.cross)}">${fmt.pct(r.cross)}</td><td class="long">${esc(venue(r.bestAsk))}</td><td class="short">${esc(venue(r.bestBid))}</td><td class="r num ${r.avgW > 0.22 ? 'cost' : 'mut'}">${fmt.pct(r.avgW, 3, false)}</td><td>${r.execN ? `<span class="badge pos">${r.execN} готов</span>` : '<span class="mut">—</span>'}</td></tr>`).join('')}
+  </tbody></table></div>` : '<div class="empty"><strong>Котировок пока нет</strong>Стаканы подключаются; обычно это занимает до минуты после старта.</div>'}</div></section>`;
+}
+
+// Positions & trades ---------------------------------------------
+function renderPositions() {
+  const p = fp();
+  const pos = (p.positions || []).map(lc);
+  const live = (snap().livePositions?.open || []).map(lc);
+  const trades = S.trades.src === 'all' && S.ledger ? S.ledger.filter(t => t.status && t.status !== 'Open') : (p.trades || []).map(lc).filter(t => !t.isOpen);
+  return `
+  <section class="panel">
+    <div class="panel-head"><h2>Paper-хеджи</h2><span class="sub">${pos.length} открыто · плечо ${esc(p.leverage ?? '—')}x</span>
+      <div class="tools">${pos.length ? '<button class="btn sm danger" data-act="paper-close-all">Закрыть все</button>' : ''}</div></div>
+    <div class="panel-body flush">${pos.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Символ</th><th>Маршрут</th><th class="r">Кол-во</th><th class="r">Вход L / S</th><th class="r">Метка L / S</th><th class="r">Ширина: вход → сейчас</th><th class="r">Держим</th><th class="r">P&amp;L</th><th></th></tr></thead><tbody>
+      ${pos.map(x => `<tr><td class="sym">${esc(baseOf(x.symbol))}</td><td>${routeHtml(x.longExchange, x.shortExchange)}</td><td class="r num">${fmt.qty(x.baseQty)}</td><td class="r num">${fmt.price(x.longEntry)} / ${fmt.price(x.shortEntry)}</td><td class="r num mut">${fmt.price(x.markLongBid)} / ${fmt.price(x.markShortAsk)}</td><td class="r num">${fmt.pct(x.entryWidthPercent, 3, false)} → ${fmt.pct(x.currentWidthPercent, 3, false)}</td><td class="r num">${fmt.dur(x.holdSeconds)}</td><td class="r">${signed(x.unrealizedPnlUsd)}</td><td class="r"><button class="btn sm" data-act="paper-close" data-id="${esc(x.tradeId)}" data-sym="${esc(x.symbol)}">Закрыть</button></td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty"><strong>Открытых paper-хеджей нет</strong>Бот откроет хедж, когда маршрут пройдёт все гейты и симуляция исполнения подтвердит заполнение обеих ног.</div>'}</div>
+  </section>
+
+  ${live.length ? `<section class="panel" style="margin-top:18px">
+    <div class="panel-head"><h2>Live-хеджи</h2><span class="sub">реальные позиции из журнала бота</span></div>
+    <div class="panel-body flush"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Символ</th><th>Маршрут</th><th class="r">Кол-во</th><th class="r">Notional</th><th class="r">Вход L / S</th><th>Статус</th><th class="r">P&amp;L</th><th></th></tr></thead><tbody>
+      ${live.map(x => `<tr><td class="sym">${esc(baseOf(x.symbol))}</td><td>${routeHtml(x.longExchange, x.shortExchange)}</td><td class="r num">${fmt.qty(x.baseQty)}</td><td class="r num">${fmt.usd(x.notionalUsd, 0, false)}</td><td class="r num">${fmt.price(x.longEntry)} / ${fmt.price(x.shortEntry)}</td><td><span class="badge ${x.status === 'Open' ? 'long' : 'cost'}">${esc(x.status)}</span></td><td class="r">${signed(x.totalUnrealizedPnlUsd ?? x.unrealizedPricePnlUsd)}</td><td class="r"><button class="btn sm danger" data-act="live-close" data-id="${esc(x.tradeId)}" data-sym="${esc(x.symbol)}">Закрыть на бирже</button></td></tr>`).join('')}
+    </tbody></table></div></div></section>` : ''}
+
+  <section class="panel" style="margin-top:18px">
+    <div class="panel-head"><h2>Журнал сделок</h2>
+      <div class="tools"><div class="seg" role="group" aria-label="Источник">
+        <button data-tsrc="recent" aria-pressed="${S.trades.src === 'recent'}">Последние 40</button>
+        <button data-tsrc="all" aria-pressed="${S.trades.src === 'all'}">Вся история</button></div></div></div>
+    <div class="panel-body flush">${S.trades.src === 'all' && !S.ledger ? '<div class="empty">Загружаем журнал…</div>' : tradesTable(trades.slice(0, 400))}</div>
+  </section>`;
+}
+
+// Analytics -------------------------------------------------------
+function holdBuckets(ledger) {
+  const B = [[0, 1, '≤ 1 с'], [1, 5, '1–5 с'], [5, 30, '5–30 с'], [30, 120, '30 с – 2 мин'], [120, 600, '2–10 мин'], [600, 1e12, '> 10 мин']];
+  const out = B.map(([a, b, l]) => ({ l, a, b, n: 0, pnl: 0 }));
+  for (const t of ledger) {
+    if (!t.status || t.status === 'Open') continue;
+    const pnl = num(t.realizedPnlUsd); if (pnl == null) continue;
+    let sec = num(t.holdMin) != null ? num(t.holdMin) * 60 : null;
+    if (sec == null && t.openedAt && t.closedAt) sec = (new Date(t.closedAt) - new Date(t.openedAt)) / 1000;
+    if (sec == null) continue;
+    const b = out.find(x => sec >= x.a && sec < x.b); if (b) { b.n++; b.pnl += pnl; }
+  }
+  return out;
+}
+
+function equityChart(curve) {
+  const pts = (curve || []).map(lc).map(p => ({ t: new Date(p.t).getTime(), v: num(p.equity) })).filter(p => Number.isFinite(p.t) && p.v != null);
+  if (pts.length < 2) return '<div class="empty"><strong>Мало закрытых сделок</strong>Кривая появится после двух закрытых хеджей в выбранном периоде.</div>';
+  const W = 900, H = 240, L = 54, R = 12, T = 12, Bm = 26;
+  let lo = Math.min(...pts.map(p => p.v)), hi = Math.max(...pts.map(p => p.v)); if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1;
+  const x = (t) => L + (t - t0) / Math.max(1, t1 - t0) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - Bm);
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+  const area = d + `L${x(t1).toFixed(1)},${H - Bm}L${L},${H - Bm}Z`;
+  const ticks = [0, .25, .5, .75, 1].map(f => lo + (hi - lo) * f);
+  const days = [0, .5, 1].map(f => t0 + (t1 - t0) * f);
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" data-eq='${esc(JSON.stringify(pts.map(p => [p.t, +p.v.toFixed(2)])))}' role="img" aria-label="Кривая капитала">
+    <defs><linearGradient id="eqfill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4fb3ff" stop-opacity=".28"/><stop offset="1" stop-color="#4fb3ff" stop-opacity="0"/></linearGradient></defs>
+    ${ticks.map(v => `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(0)}</text>`).join('')}
+    ${days.map((t, i) => `<text class="axis" x="${x(t)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}">${new Date(t).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}</text>`).join('')}
+    <path class="area" d="${area}"/><path class="curve" d="${d}"/>
+    <line id="eqx" x1="0" x2="0" y1="${T}" y2="${H - Bm}" stroke="var(--text-2)" stroke-dasharray="3 3" opacity="0"/>
+  </svg>`;
+}
+
+function dailyBars(daily) {
+  const rows = (daily || []).map(lc).filter(d => d.hasActivity !== false).slice(-30);
+  if (!rows.length) return '<div class="empty">Нет дней с активностью</div>';
+  const W = 600, H = 200, T = 10, Bm = 22;
+  const mx = Math.max(0.01, ...rows.map(r => Math.abs(num(r.pnl) || 0)));
+  const bw = (W - 20) / rows.length;
+  const mid = T + (H - T - Bm) / 2;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="P&L по дням">
+    <line class="zero" x1="0" x2="${W}" y1="${mid}" y2="${mid}"/>
+    ${rows.map((r, i) => { const v = num(r.pnl) || 0; const h = Math.abs(v) / mx * (H - T - Bm) / 2; const xx = 10 + i * bw + bw * 0.15; return `<rect class="${v >= 0 ? 'bar-pos' : 'bar-neg'}" x="${xx}" y="${v >= 0 ? mid - h : mid}" width="${bw * 0.7}" height="${Math.max(1, h)}" rx="2"><title>${esc(r.day)}: ${fmt.usd(v)} · ${fmt.int(r.trades)} сделок</title></rect>`; }).join('')}
+    ${rows.length > 1 ? `<text class="axis" x="10" y="${H - 5}">${esc(rows[0].day)}</text><text class="axis" x="${W - 10}" y="${H - 5}" text-anchor="end">${esc(rows[rows.length - 1].day)}</text>` : ''}
+  </svg>`;
+}
+
+function renderAnalytics() {
+  const r = S.perf ? lc(S.perf) : null;
+  const an = lc(snap().paperAnalytics || {});
+  const skips = (an.skipReasons || []).map(lc).slice(0, 10);
+  const sTotal = Math.max(1, ...skips.map(s => s.count));
+  const buckets = S.ledger ? holdBuckets(S.ledger) : null;
+  let phantom = null;
+  if (buckets) {
+    const fast = buckets.filter(b => b.b <= 30).reduce((a, b) => a + b.pnl, 0);
+    const total = buckets.reduce((a, b) => a + b.pnl, 0);
+    if (fast > 0 && (total <= 0 || fast / total > 0.6)) phantom = { fast, total };
+  }
+  const periods = [[1, 'День'], [7, '7 дней'], [30, '30 дней'], [0, 'Вся история']];
+  return `
+  <div class="toolbar"><div class="seg" role="group" aria-label="Период">${periods.map(([d, l]) => `<button data-days="${d}" aria-pressed="${S.perfDays === d}">${l}</button>`).join('')}</div><span class="grow"></span>
+    <button class="btn sm ghost" data-act="perf-refresh">${ICON.refresh}Обновить</button></div>
+  ${!r ? '<section class="panel"><div class="empty">Загружаем отчёт…</div></section>' : `
+  <section class="panel"><div class="kpis">
+    <div class="kpi"><div class="k">Чистый P&amp;L</div><div class="v ${cls(r.netPnl)}">${fmt.usd(r.netPnl)}</div><div class="d">${fmt.pct(r.netPctOfEquity, 2)} к капиталу</div></div>
+    <div class="kpi"><div class="k">Сделок</div><div class="v">${fmt.int(r.totalTrades)}</div><div class="d">${fmt.int(r.wins)} в плюс · ${fmt.int(r.losses)} в минус</div></div>
+    <div class="kpi"><div class="k">Win rate</div><div class="v">${num(r.winRate) != null ? num(r.winRate).toFixed(1) + '%' : '—'}</div><div class="d">PF ${num(r.profitFactor) != null ? num(r.profitFactor).toFixed(2) : '—'}</div></div>
+    <div class="kpi"><div class="k">Ожидание на сделку</div><div class="v ${cls(r.expectancy)}">${fmt.usd(r.expectancy, 3)}</div><div class="d">${fmt.pct(r.expectancyPctOfSize, 3)} от размера</div></div>
+    <div class="kpi"><div class="k">Макс. просадка</div><div class="v neg">${fmt.usd(-Math.abs(num(r.maxDrawdown) || 0))}</div><div class="d">${fmt.pct(-Math.abs(num(r.maxDrawdownPct) || 0), 2)}</div></div>
+    <div class="kpi"><div class="k">Комиссии</div><div class="v cost">${fmt.usd(-Math.abs(num(r.totalFees) || 0))}</div><div class="d">${fmt.pct(r.feesPctOfGross, 1, false)} от gross</div></div>
+  </div></section>
+  <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>Кривая капитала</h2><span class="sub">${esc(r.fromUtc || '')} — ${esc(r.toUtc || '')}</span></div><div class="panel-body">${equityChart(r.equityCurve)}</div></section>
+  <div class="grid cols-2" style="margin-top:18px">
+    <section class="panel"><div class="panel-head"><h2>P&amp;L по дням</h2></div><div class="panel-body">${dailyBars(r.daily)}</div></section>
+    <section class="panel"><div class="panel-head"><h2>Причины пропуска за день</h2></div><div class="panel-body">${skips.length ? `<div class="bars">${skips.map(s => `<div class="bar-row"><span class="t" title="${esc(s.reason)}">${esc(s.reason)}</span><div class="track"><div class="fill" style="width:${s.count / sTotal * 100}%"></div></div><span class="c">${fmt.int(s.count)}</span></div>`).join('')}</div>` : '<div class="empty">Пропусков нет</div>'}</div></section>
+  </div>`}
+  <section class="panel" style="margin-top:18px">
+    <div class="panel-head"><h2>P&amp;L по времени удержания</h2><span class="sub">проверка на фантомную прибыль</span></div>
+    <div class="panel-body stack">
+      ${phantom ? `<div class="callout bad">${ICON.warn}<div><strong>Сделки короче 30 секунд принесли ${fmt.usd(phantom.fast)} при общем результате ${fmt.usd(phantom.total)}.</strong> Такие «схождения» почти всегда — устаревшая котировка одной биржи, и в live их не будет. Доверяйте только результату с включённой симуляцией задержки.</div></div>` : ''}
+      ${buckets ? `<div class="buckets">${buckets.map(b => `<div class="bucket"><div class="k">${esc(b.l)}</div><div class="v ${cls(b.pnl)}">${fmt.usd(b.pnl)}</div><div class="n">${fmt.int(b.n)} сделок</div></div>`).join('')}</div>` : '<div class="empty">Загружаем журнал…</div>'}
+    </div>
+  </section>`;
+}
+
+// Funding -------------------------------------------------------
+function renderFunding() {
+  const rows = (S.funding || []).map(lc);
+  return `
+  <div class="callout info" style="margin-bottom:16px">${ICON.info}<div>Funding начисляется только в моменты расчёта. Бот учитывает расчёты, которые попадают в горизонт удержания (${esc(S.settings?.trading?.fundingHorizonMinutes ?? 20)} мин), по текущей ставке каждой биржи. Положительный funding не открывает сделку сам по себе.</div></div>
+  <section class="panel"><div class="panel-head"><h2>Лучшая разница ставок по символам</h2><div class="tools"><button class="btn sm ghost" data-act="funding-refresh">${ICON.refresh}Обновить</button></div></div>
+  <div class="panel-body flush">${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Символ</th><th>Long / Short</th><th class="r">Ставка long</th><th class="r">Ставка short</th><th class="r">Дельта за период</th><th class="r">Годовых</th><th class="r">Интервал</th><th class="r">До расчёта</th><th>Тренд</th></tr></thead><tbody>
+    ${rows.map(r => { const next = new Date(r.nextFundingUtc).getTime(); const left = (next - Date.now()) / 1000; const ann = (num(r.deltaRate) || 0) * (24 / (num(r.intervalHours) || 8)) * 365 * 100; return `<tr><td class="sym">${esc(baseOf(r.symbol))}</td><td>${routeHtml(r.longExchange, r.shortExchange)}</td><td class="r num">${fmt.pct((num(r.longRate) || 0) * 100, 4)}</td><td class="r num">${fmt.pct((num(r.shortRate) || 0) * 100, 4)}</td><td class="r num ${cls(r.deltaRate)}">${fmt.pct((num(r.deltaRate) || 0) * 100, 4)}</td><td class="r num ${cls(ann)}">${fmt.pct(ann, 1)}</td><td class="r num mut">${esc(r.intervalHours)} ч</td><td class="r num">${Number.isFinite(left) && left > 0 ? fmt.dur(left) : '—'}</td><td>${r.trend === 'expanding' ? '<span class="badge pos">расширяется</span>' : r.trend === 'converging' ? '<span class="badge cost">сходится</span>' : '<span class="mut">—</span>'}</td></tr>`; }).join('')}
+  </tbody></table></div>` : '<div class="empty"><strong>Ставок пока нет</strong>Сервис funding опрашивает биржи раз в 5 минут.</div>'}</div></section>`;
+}
+
+// Live -------------------------------------------------------------
+function renderLive() {
+  const st = liveSt();
+  const m = modeOf();
+  const phaseIdx = m.key === 'live' ? 2 : m.key === 'readonly' ? 1 : 0;
+  const bal = S.liveBalances ? lc(S.liveBalances) : null;
+  const exRows = (bal?.exchanges || []).map(lc);
+  const lp = S.livePositions ? lc(S.livePositions) : null;
+  const audit = st.auditTail || [];
+  return `
+  ${st.killed ? `<div class="callout bad" style="margin-bottom:16px">${ICON.warn}<div><strong>Kill switch активен.</strong> Новые ордера запрещены. Причина: ${esc(st.killReason || 'не указана')}. Сверьте позиции на биржах, затем включите live заново.</div></div>` : ''}
+  <section class="panel"><div class="phases">
+    <div class="phase ${phaseIdx > 0 ? 'done' : 'now'}"><div class="t">1. Paper</div><div class="d">Реальные стаканы, виртуальная маржа, ордеров нет.</div></div>
+    <div class="phase ${phaseIdx > 1 ? 'done' : phaseIdx === 1 ? 'now' : ''}"><div class="t">2. Только чтение</div><div class="d">Ключи подключены, бот видит балансы и позиции, но не торгует.</div></div>
+    <div class="phase ${phaseIdx === 2 ? 'now danger' : ''}"><div class="t">3. Реальные ордера</div><div class="d">Хеджи открываются на биржах в пределах лимитов ниже.</div></div>
+  </div>
+  <div class="panel-body row wrap" style="gap:10px;border-top:1px solid var(--line-soft)">
+    ${phaseIdx === 0 && !st.killed ? '<button class="btn" data-act="live-enable-ro">Включить только чтение</button><button class="btn danger" data-act="live-enable">Включить реальные ордера</button>' : ''}
+    ${phaseIdx === 1 ? '<button class="btn danger" data-act="live-enable">Перейти к реальным ордерам</button><button class="btn ghost" data-act="live-disable">Вернуться в paper</button>' : ''}
+    ${phaseIdx === 2 ? '<button class="btn" data-act="live-disable">Остановить live, вернуться в paper</button>' : ''}
+    ${st.killed ? '<button class="btn" data-act="live-disable">Сбросить и вернуться в paper</button>' : ''}
+    <span class="grow" style="flex:1"></span>
+    <span class="mut small">Лимиты: до ${fmt.int(st.maxOpenPositions)} хеджей · до ${fmt.usd(st.maxNotionalUsd, 0, false)} на хедж · стоп дня ${fmt.usd(st.dailyLossLimitUsd, 0)} · сегодня ${fmt.usd(st.dayRealizedUsd)}</span>
+  </div></section>
+
+  <div class="killbox" style="margin-top:18px">
+    <div class="txt"><strong>Аварийная остановка</strong><span>Мгновенно запрещает новые ордера. Открытые позиции остаются на биржах — закройте их вручную или со страницы позиций.</span></div>
+    <button class="btn solid-danger" data-act="kill">${ICON.stop}Kill switch</button>
+  </div>
+
+  <div class="grid cols-3-2" style="margin-top:18px">
+    <section class="panel"><div class="panel-head"><h2>Балансы на биржах</h2><span class="sub">${bal ? 'обновлено ' + fmt.ago(bal.utc) : ''}</span><div class="tools"><button class="btn sm ghost" data-act="live-balances">${ICON.refresh}Обновить</button></div></div>
+      <div class="panel-body flush">${!bal ? '<div class="empty">Нажмите «Обновить», чтобы запросить балансы по ключам.</div>' : `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Биржа</th><th>Ключ</th><th class="r">USDT</th><th class="r">Позиций</th><th>Состояние</th></tr></thead><tbody>
+        ${exRows.map(e => `<tr><td>${esc(venue(e.exchange))}</td><td>${e.hasKey === false ? '<span class="mut">нет</span>' : `<span class="badge ${e.permission === 'trade' ? 'neg' : ''}">${esc(e.permission || 'есть')}</span>`}</td><td class="r num">${fmt.usd(pick(e, 'usdt', 'usdtBalance', 'total', 'equity'), 2, false)}</td><td class="r num">${Array.isArray(e.positions) ? e.positions.length : '—'}</td><td>${e.ok ? '<span class="badge pos">ok</span>' : `<span class="mut small">${esc(e.error || '—')}</span>`}</td></tr>`).join('')}
+        <tr><td colspan="2" class="mut">Всего, примерно</td><td class="r num">${fmt.usd(bal.totalUsdtApprox, 2, false)}</td><td colspan="2"></td></tr>
+      </tbody></table></div>`}</div></section>
+    <section class="panel"><div class="panel-head"><h2>Журнал guard</h2></div><div class="panel-body">${audit.length ? `<div class="audit">${audit.map(a => `<div>${esc(typeof a === 'string' ? a : JSON.stringify(a))}</div>`).join('')}</div>` : '<div class="mut">Событий нет</div>'}</div></section>
+  </div>
+
+  <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>Сверка позиций</h2><span class="sub">журнал бота против фактических ног на биржах</span><div class="tools"><button class="btn sm ghost" data-act="live-positions">${ICON.refresh}Сверить</button></div></div>
+    <div class="panel-body">${!lp ? '<div class="mut">Нажмите «Сверить» после рестарта и перед включением ордеров: позиции в журнале должны совпадать с ногами на биржах.</div>' : `
+      <div class="row wrap" style="gap:24px;margin-bottom:12px"><div><span class="mut small">В журнале</span><div class="num" style="font-size:20px">${fmt.int(lp.openLedgerCount)}</div></div><div><span class="mut small">Ног на биржах</span><div class="num" style="font-size:20px">${fmt.int(lp.exchangeLegCount)}</div></div><div><span class="mut small">Реализовано live</span><div style="font-size:20px">${signed(lp.realizedPnlUsd)}</div></div></div>
+      ${(num(lp.exchangeLegCount) || 0) !== (num(lp.openLedgerCount) || 0) * 2 ? `<div class="callout">${ICON.warn}<div>Число ног на биржах не равно удвоенному числу хеджей в журнале. Проверьте позиции вручную, прежде чем разрешать новые ордера.</div></div>` : `<div class="callout info">${ICON.ok}<div>Журнал и биржи совпадают.</div></div>`}`}</div></section>`;
+}
+
+// Settings ---------------------------------------------------------
+const SETTINGS = [
+  { id: 'mode', title: 'Режим', lead: 'Как бот работает с сигналами.', fields: [
+    ['paperTrading', 'Paper-торговля', 'bool', 'Виртуальная маржа на реальных стаканах'],
+    ['paperAutoExecute', 'Автоисполнение', 'bool', 'Открывать хеджи автоматически при прохождении гейтов'],
+    ['includeFunding', 'Учитывать funding', 'bool', 'Расчёты funding в горизонте удержания могут запретить вход'],
+    ['spatialScalpMode', 'Скальп-контур', 'bool', 'Отдельная стратегия, по умолчанию выключена. Не включайте без отдельной проверки'],
+  ]},
+  { id: 'size', title: 'Размер и риск', lead: 'Сколько денег участвует в одном хедже и где бот остановится.', fields: [
+    ['quoteSize', 'Размер хеджа', 'num', 'Notional одной ноги', 'USDT'],
+    ['maxNotionalUsd', 'Потолок notional', 'num', 'Жёсткий предел на хедж в paper', 'USDT'],
+    ['futuresPaperLeverage', 'Плечо paper', 'num', 'От 1 до 10', 'x'],
+    ['futuresMaxOpenPositions', 'Макс. открытых хеджей', 'int', ''],
+    ['maxLegsPerVenue', 'Макс. ног на бирже', 'int', 'Ограничивает концентрацию маржи'],
+    ['maxMarginUsagePercent', 'Доля свободной маржи', 'num', '0.35 = не больше 35% на ногу', ''],
+    ['futuresStopLossUsd', 'Стоп на хедж', 'num', 'Отрицательное число', 'USDT'],
+    ['futuresDailyLossLimitUsd', 'Дневной лимит убытка', 'num', 'Отрицательное число', 'USDT'],
+    ['paperStartingQuote', 'Стартовая маржа на биржу', 'num', 'Для paper-кошелька', 'USDT'],
+  ]},
+  { id: 'entry', title: 'Фильтры входа', lead: 'Пороги, которые сигнал проходит до ордера. Код больше не занижает эти значения — работает то, что вы задали.', fields: [
+    ['minProfitPercent', 'Мин. чистый edge', 'num', 'После 4 комиссий, выхода и запаса', '%'],
+    ['minGrossSpreadPercent', 'Мин. gross спред', 'num', 'Не ниже комиссий открытия + 0.02', '%'],
+    ['minTakeProfitUsd', 'Мин. ожидаемый результат', 'num', 'В долларах на размер хеджа', 'USDT'],
+    ['openEdgeBufferPercent', 'Запас на исполнение', 'num', 'От 0.02 до 0.04', '%'],
+    ['minSpreadPersistMs', 'Удержание сигнала', 'int', 'От 200 мс до 5 с', 'мс'],
+    ['requireRoundTripEdge', 'Требовать round-trip edge', 'bool', ''],
+    ['requireDepthFullFill', 'Требовать полный fill', 'bool', 'Стакан должен закрыть весь размер'],
+    ['paperRequireFullFill', 'Полный fill в paper', 'bool', ''],
+    ['requireSpreadingEdge', 'Отсекать схлопывающийся спред', 'bool', ''],
+    ['paperCooldownMs', 'Пауза между сделками', 'int', '', 'мс'],
+  ]},
+  { id: 'exec', title: 'Реализм исполнения', lead: 'Защита от фантомного арбитража: свежесть котировок, прогрев базиса, задержка и IOC-лимиты. Одни и те же значения используют paper и live.', fields: [
+    ['tradeMaxQuoteAgeMs', 'Макс. возраст котировки ноги', 'int', 'REST-котировки никогда не торгуются', 'мс'],
+    ['maxLegSkewMs', 'Макс. разнос ног во времени', 'int', '', 'мс'],
+    ['basisMinSamples', 'Точек для базиса', 'int', 'Примерно одна точка в 0.7 с'],
+    ['basisMinSpanSeconds', 'Окно прогрева базиса', 'int', '', 'с'],
+    ['paperFillLatencyMs', 'Задержка исполнения paper', 'int', 'Поставьте измеренную задержку ваших ордеров', 'мс'],
+    ['iocSlipBps', 'Запас IOC-лимита', 'num', 'Сверх цены сигнала', 'bps'],
+    ['fundingHorizonMinutes', 'Горизонт funding', 'int', '', 'мин'],
+    ['liveConcurrentLegs', 'Обе ноги одновременно (live)', 'bool', 'Рекомендуется: меньше времени на одной ноге'],
+    ['maxBookAgeMs', 'Макс. возраст книги для показа', 'int', '', 'мс'],
+    ['scanIntervalMs', 'Период скана', 'int', 'От 100 мс', 'мс'],
+  ]},
+  { id: 'exit', title: 'Выход', lead: 'Когда бот закрывает хедж.', fields: [
+    ['closeBelowNetPercent', 'Закрыть при сходимости ниже', 'num', '', '%'],
+    ['maxHoldMinutes', 'Макс. удержание', 'int', '0 — без лимита', 'мин'],
+    ['futuresMaxHoldSeconds', 'Макс. удержание (точно)', 'int', '0 — без лимита', 'с'],
+    ['paperCloseFeeFactor', 'Множитель комиссии выхода paper', 'num', '1 — честный taker. Меньше 1 приукрашивает paper'],
+  ]},
+  { id: 'universe', title: 'Набор символов', lead: 'Какие перпы бот отслеживает.', fields: [
+    ['dynamicSymbols', 'Динамический набор', 'bool', 'Подбирать ликвидные символы автоматически'],
+    ['dynamicTopN', 'Сколько символов', 'int', ''],
+    ['dynamicMinQuoteVolumeUsd', 'Мин. объём за сутки', 'num', '', 'USDT'],
+    ['dynamicMaxQuoteVolumeUsd', 'Макс. объём за сутки', 'num', 'Отсекает самые эффективные рынки', 'USDT'],
+    ['dynamicRefreshMinutes', 'Обновлять набор каждые', 'int', '', 'мин'],
+  ]},
+  { id: 'live', title: 'Лимиты live', lead: 'Действуют только для реальных ордеров.', fields: [
+    ['liveEquityPerExchangeUsd', 'Капитал на биржу', 'num', '', 'USDT'],
+    ['liveMarginUsageFraction', 'Доля маржи на ногу', 'num', 'От 0.15 до 0.85'],
+    ['liveMaxNotionalUsd', 'Макс. notional хеджа', 'num', '', 'USDT'],
+    ['liveMaxOpenPositions', 'Макс. открытых хеджей', 'int', ''],
+    ['liveStopLossUsd', 'Стоп на хедж', 'num', '', 'USDT'],
+    ['liveDailyLossLimitUsd', 'Дневной лимит убытка', 'num', '', 'USDT'],
+  ]},
+];
+const settingsDraft = { values: {}, dirty: new Set() };
+
+function renderSettings() {
+  const t = S.settings?.trading;
+  if (!t) return '<section class="panel"><div class="empty">Загружаем настройки…</div></section>';
+  const conns = S.settings.connections || {};
+  const val = (k) => settingsDraft.dirty.has(k) ? settingsDraft.values[k] : t[k];
+  const field = ([k, label, type, hint, unit]) => {
+    const id = 'f_' + k;
+    if (type === 'bool') return `<div class="field"><span class="lbl">${esc(label)}</span><label class="switch"><input type="checkbox" id="${id}" data-k="${k}" ${val(k) ? 'checked' : ''}><span class="track"></span><span class="small mut">${val(k) ? 'включено' : 'выключено'}</span></label>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
+    return `<div class="field"><label for="${id}">${esc(label)}</label><div class="input-wrap"><input class="input num ${settingsDraft.dirty.has(k) ? 'dirty' : ''}" id="${id}" data-k="${k}" data-t="${type}" inputmode="decimal" value="${esc(val(k) ?? '')}">${unit ? `<span class="unit">${esc(unit)}</span>` : ''}</div>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
+  };
+  return `<div class="settings">
+    <nav class="toc" aria-label="Разделы настроек">${SETTINGS.map(s => `<a href="#sec-${s.id}">${esc(s.title)}</a>`).join('')}<a href="#sec-keys">Ключи бирж</a><a href="#sec-danger">Сброс</a></nav>
+    <div class="stack">
+      ${SETTINGS.map(s => `<section class="panel form-sec" id="sec-${s.id}"><div class="panel-head"><h2>${esc(s.title)}</h2></div><div class="panel-body"><p class="lead">${esc(s.lead)}</p>${s.fields.map(field).join('')}</div></section>`).join('')}
+      <section class="panel form-sec" id="sec-keys"><div class="panel-head"><h2>Ключи бирж</h2><span class="sub">секреты не возвращаются в браузер</span></div>
+        <div class="panel-body" style="display:block"><p class="prose" style="margin:0 0 14px">Создавайте ключи без права вывода и с белым списком IP. Для paper ключи не нужны; для режима «только чтение» достаточно прав на чтение.</p>
+        <div class="keys">${Object.entries(conns).map(([ex, c]) => { c = lc(c); return `<form class="keycard" data-ex="${esc(ex)}" autocomplete="off">
+          <div class="h">${esc(venue(ex))}${c.hasApiKey ? `<span class="badge ${c.permission === 'trade' ? 'neg' : 'pos'}">${c.permission === 'trade' ? 'торговля' : 'чтение'} · ${esc(c.apiKeyMasked || '')}</span>` : '<span class="badge">не подключена</span>'}</div>
+          <input class="input" name="apiKey" placeholder="${c.hasApiKey ? 'API key сохранён — введите новый для замены' : 'API key'}" aria-label="API key ${esc(venue(ex))}">
+          <input class="input" name="apiSecret" type="password" placeholder="API secret" aria-label="API secret ${esc(venue(ex))}">
+          ${c.needsPassphrase ? `<input class="input" name="passphrase" type="password" placeholder="Passphrase" aria-label="Passphrase ${esc(venue(ex))}">` : ''}
+          <div class="row"><select class="input" name="permission" style="width:auto" aria-label="Права ключа"><option value="read-only" ${c.permission !== 'trade' ? 'selected' : ''}>Только чтение</option><option value="trade" ${c.permission === 'trade' ? 'selected' : ''}>Торговля</option></select>
+          <span style="flex:1"></span>${c.hasApiKey ? `<button type="button" class="btn sm ghost" data-act="key-clear">Удалить</button>` : ''}<button type="submit" class="btn sm primary">Сохранить ключ</button></div></form>`; }).join('')}</div></div></section>
+      <section class="panel form-sec" id="sec-danger"><div class="panel-head"><h2>Сброс paper</h2></div><div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <p class="lead">Сброс обнуляет виртуальные балансы и открытые paper-позиции. Журнал сделок на диске сохраняется.</p>
+        <button class="btn" data-act="prune">Закрыть позиции вне набора символов</button><button class="btn danger" data-act="paper-reset">Сбросить paper-кошелёк</button></div></section>
+      <div class="savebar ${settingsDraft.dirty.size ? 'on' : ''}" id="savebar"><span class="grow">Изменено параметров: <strong id="dirtyN">${settingsDraft.dirty.size}</strong>. Применяются сразу, без рестарта.</span><button class="btn ghost" data-act="settings-discard">Отменить</button><button class="btn primary" data-act="settings-save">Сохранить</button></div>
+    </div></div>`;
+}
+
+// Help ---------------------------------------------------------------
+function renderHelp() {
+  return `<section class="panel"><div class="panel-body prose">
+    <h3 style="margin-top:0">Что делает бот</h3>
+    <p>Покупает perp на бирже, где он дешевле (long), и одновременно продаёт тот же perp там, где он дороже (short). Направление рынка не важно: прибыль появляется, когда цены двух бирж снова сближаются. Монеты между биржами не переводятся — на каждой заранее лежит USDT.</p>
+    <h3>Почему сделок мало</h3>
+    <p>Спред между биржами почти всегда объясняется постоянной разницей (fair basis) и издержками: четыре комиссии taker, ширина стаканов на выходе и запас на проскальзывание. Бот торгует только то, что остаётся сверх этого. Полоса разбора на обзоре показывает это наглядно: янтарные части — издержки, мятная — чистый edge.</p>
+    <h3>Почему paper теперь честнее</h3>
+    <p>Ордер в paper «прибывает» через заданную задержку и исполняется по стакану, который есть в этот момент, с теми же IOC-лимитами, что и в live. Если исполнилась только одна нога, её откат стоит две комиссии и ширину стакана — ровно как на бирже. Котировки из REST и устаревшие ноги не торгуются.</p>
+    <h3>Порядок перехода к live</h3>
+    <p>Минимум неделя paper с плюсом после промахов ног. Затем режим «только чтение»: подключите ключи без права вывода и сверьте балансы и позиции. Затем реальные ордера на $100 на биржу и один хедж за раз. Kill switch всегда в верхней панели, пока включён live.</p>
+    <h3>Горячие клавиши</h3>
+    <p><span class="num">1–9</span> — разделы, <span class="num">/</span> — поиск по сигналам, <span class="num">Esc</span> — закрыть панель маршрута.</p>
+  </div></section>`;
+}
+
+// ───────────────────────── chrome ─────────────────────────
+function renderStrip() {
+  const m = modeOf();
+  const health = (snap().exchangeHealth || []).map(lc);
+  const live = health.filter(h => h.state === 'live').length;
+  const age = S.lastSnapAt ? (Date.now() - S.lastSnapAt) / 1000 : null;
+  const feedCls = S.transport === 'down' || age == null || age > 10 ? 'bad' : age > 3 ? 'warn' : 'ok';
+  const paused = !!snap().isPaused;
+  $('#strip').innerHTML = `
+    <h1>${esc(PAGES[S.page].title)}</h1>
+    <span class="mode" data-mode="${m.key}" title="${esc(m.sub)}"><span class="dot"></span>${esc(m.label)}</span>
+    <span class="feed" title="Источник данных: ${esc(S.transport)}"><span class="led ${feedCls}"></span>${S.transport === 'signalr' ? 'Поток' : S.transport === 'poll' ? 'Опрос' : 'Нет связи'} · бирж ${live}/${health.length || '—'}</span>
+    <span class="feed hide-sm">скан ${fmt.ago(snap().lastScanUtc)}</span>
+    <span class="spacer"></span>
+    <button class="btn ${paused ? 'primary' : ''}" data-act="toggle-pause" aria-pressed="${paused}">${paused ? ICON.play + 'Продолжить' : ICON.pause + 'Пауза'}</button>
+    ${m.key === 'live' || m.key === 'readonly' ? `<button class="btn solid-danger" data-act="kill">${ICON.stop}<span class="hide-sm">Kill switch</span></button>` : ''}`;
+  const p = fp();
+  $('#railFoot').innerHTML = `<div class="row"><span>Реализовано</span>${signed(p.realizedPnlUsd)}</div><div class="row"><span>Хеджей</span><span class="num">${fmt.int(p.openCount)}</span></div><div class="row"><span>Символов</span><span class="num">${fmt.int((snap().symbols || []).length)}</span></div>`;
+  const execN = opps().filter(o => o.isExecutable).length;
+  const b1 = $('#nb-market'); if (b1) { b1.textContent = execN; b1.classList.toggle('hide', !execN); }
+  const b2 = $('#nb-positions'); if (b2) { b2.textContent = p.openCount || 0; b2.classList.toggle('hide', !p.openCount); }
+  document.title = `${m.key === 'live' ? '● LIVE ' : ''}${fmt.usd(p.dailyRealizedPnlUsd)} · ArbitrageBot`;
+}
+
+function renderNav() {
+  $('#nav').innerHTML = Object.entries(PAGES).map(([k, p], i) => `<button data-go="${k}" ${S.page === k ? 'aria-current="page"' : ''} title="${esc(p.title)} (${i + 1})">${ICON[p.icon]}<span>${esc(p.title)}</span>${k === 'market' ? '<span class="badge pos hide" id="nb-market"></span>' : k === 'positions' ? '<span class="badge long hide" id="nb-positions"></span>' : ''}</button>`).join('');
+}
+
+// ───────────────────────── render loop ─────────────────────────
+const RENDER = { overview: renderOverview, market: renderMarket, scanner: renderScanner, positions: renderPositions, analytics: renderAnalytics, funding: renderFunding, live: renderLive, settings: renderSettings, help: renderHelp };
+let renderQueued = false, lastRender = 0;
+function schedule(force = false) {
+  if (force) { lastRender = 0; }
+  if (renderQueued) return;
+  renderQueued = true;
+  const wait = Math.max(0, 350 - (Date.now() - lastRender));
+  setTimeout(() => requestAnimationFrame(() => { renderQueued = false; lastRender = Date.now(); render(); }), wait);
+}
+function render() {
+  renderStrip();
+  const page = $('#page');
+  // Settings is a form: only redraw it on demand, never on every tick (would wipe typing).
+  if (S.page === 'settings' && page.dataset.page === 'settings' && !page.dataset.redraw) { return; }
+  // Keep focus & caret in search inputs across redraws
+  const active = document.activeElement; const fid = active && page.contains(active) ? active.id : null;
+  const caret = fid && active.selectionStart != null ? active.selectionStart : null;
+  const scrollers = $$('.tbl-wrap', page).map(el => el.scrollLeft);
+  page.innerHTML = RENDER[S.page]();
+  page.dataset.page = S.page; delete page.dataset.redraw;
+  $$('.tbl-wrap', page).forEach((el, i) => { if (scrollers[i]) el.scrollLeft = scrollers[i]; });
+  if (fid) { const el = document.getElementById(fid); if (el) { el.focus(); if (caret != null && el.setSelectionRange) try { el.setSelectionRange(caret, caret); } catch { } } }
+  if (S.page === 'overview' && S.snap && S.firstHero) setTimeout(() => { S.firstHero = false; }, 900);
+  if (S.drawer) renderDrawer();
+  wireCharts();
+}
+
+function go(page) {
+  if (!PAGES[page]) page = 'overview';
+  if (S.page === 'settings' && settingsDraft.dirty.size && page !== 'settings' && !window.confirm('Есть несохранённые настройки. Уйти без сохранения?')) return;
+  S.page = page;
+  if (location.hash !== '#/' + page) history.replaceState(null, '', '#/' + page);
+  renderNav();
+  $('#page').dataset.redraw = '1';
+  window.scrollTo(0, 0);
+  onEnter(page);
+  schedule(true);
+}
+
+function onEnter(page) {
+  if (page === 'analytics') { loadPerf(); loadLedger(); }
+  if (page === 'positions' && S.trades.src === 'all') loadLedger();
+  if (page === 'funding' && !S.funding) loadFunding();
+  if (page === 'settings') loadSettings(true);
+}
+
+// charts: hover tooltip on equity
+function wireCharts() {
+  const svg = $('svg[data-eq]'); if (!svg) return;
+  const pts = JSON.parse(svg.dataset.eq || '[]'); if (pts.length < 2) return;
+  const tip = $('#tip'); const line = $('#eqx', svg);
+  svg.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect(); const vb = svg.viewBox.baseVal;
+    const fx = (e.clientX - r.left) / r.width * vb.width;
+    const t0 = pts[0][0], t1 = pts[pts.length - 1][0]; const L = 54, R = 12;
+    const t = t0 + (fx - L) / (vb.width - L - R) * (t1 - t0);
+    let best = pts[0]; for (const p of pts) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+    const bx = L + (best[0] - t0) / Math.max(1, t1 - t0) * (vb.width - L - R);
+    line.setAttribute('x1', bx); line.setAttribute('x2', bx); line.setAttribute('opacity', '1');
+    tip.innerHTML = `${new Date(best[0]).toLocaleString('ru-RU')}<br>капитал ${best[1].toFixed(2)}`;
+    tip.style.left = (e.clientX + 14) + 'px'; tip.style.top = (e.clientY - 10) + 'px'; tip.classList.add('on');
+  };
+  svg.onmouseleave = () => { tip.classList.remove('on'); line.setAttribute('opacity', '0'); };
+}
+
+// ───────────────────────── loaders ─────────────────────────
+async function loadSettings(redraw = false) {
+  try { S.settings = await api.get('/api/settings'); if (redraw && S.page === 'settings') { $('#page').dataset.redraw = '1'; schedule(true); } } catch (e) { if (redraw) toast('Не удалось загрузить настройки: ' + e.message, 'err'); }
+}
+async function loadPerf() { try { S.perf = await api.get('/api/analytics/performance?days=' + S.perfDays); schedule(true); } catch (e) { toast('Отчёт недоступен: ' + e.message, 'err'); } }
+async function loadLedger() { try { const rows = await api.get('/api/analytics/trades?take=3000&skip=0'); S.ledger = (rows || []).map(lc).map(r => { const o = {}; for (const k in r) o[k.charAt(0).toLowerCase() + k.slice(1)] = r[k]; return o; }); schedule(true); } catch (e) { toast('Журнал недоступен: ' + e.message, 'err'); } }
+async function loadFunding() { try { S.funding = await api.get('/api/funding'); schedule(true); } catch (e) { toast('Funding недоступен: ' + e.message, 'err'); } }
+
+// ───────────────────────── transport ─────────────────────────
+function onSnapshot(data) {
+  if (!data) return;
+  S.snap = data; S.lastSnapAt = Date.now();
+  trackRoutes();
+  schedule();
+}
+function onTick(t) {
+  if (!S.snap || !t) return;
+  if (t.bookTickers) S.snap.bookTickers = t.bookTickers;
+  if (t.orderBookDepth) S.snap.orderBookDepth = t.orderBookDepth;
+  if (t.connectionStatus) S.snap.connectionStatus = t.connectionStatus;
+  S.lastSnapAt = Date.now();
+  if (S.page === 'scanner' || S.drawer) schedule();
+}
+let pollTimer = null;
+function startPolling() {
+  S.transport = 'poll';
+  if (pollTimer) return;
+  const tick = async () => { try { onSnapshot(await api.get('/api/snapshot')); if (S.transport === 'down') S.transport = 'poll'; } catch { S.transport = 'down'; schedule(); } };
+  tick(); pollTimer = setInterval(tick, 1000);
+}
+function startSignalR() {
+  if (typeof signalR === 'undefined') return startPolling();
+  try {
+    const c = new signalR.HubConnectionBuilder().withUrl('/hubs/arbitrage').withAutomaticReconnect().build();
+    c.on('Snapshot', onSnapshot); c.on('MarketTick', onTick);
+    c.onreconnecting(() => { S.transport = 'poll'; startPolling(); schedule(); });
+    c.onreconnected(() => { S.transport = 'signalr'; if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } schedule(); });
+    c.onclose(() => startPolling());
+    c.start().then(() => { S.transport = 'signalr'; if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } schedule(); }).catch(() => startPolling());
+  } catch { startPolling(); }
+  api.get('/api/snapshot').then(onSnapshot).catch(() => { });
+}
+
+// ───────────────────────── actions ─────────────────────────
+const ACTIONS = {
+  async 'toggle-pause'() { const r = await act(() => api.post('/api/control/toggle'), (r) => r.isPaused ? 'Сканирование на паузе' : 'Сканирование продолжено'); if (r && S.snap) { S.snap.isPaused = r.isPaused; schedule(true); } },
+  async kill() {
+    const r = await confirmModal({ title: 'Остановить live-торговлю?', body: 'Новые ордера будут запрещены сразу. Открытые позиции останутся на биржах.', confirm: 'Включить kill switch', danger: true, input: { label: 'Причина (необязательно)', placeholder: 'например, расхождение позиций' } });
+    if (!r) return; await act(() => api.post('/api/live/kill', { reason: r.value || 'manual kill (UI)' }), 'Kill switch включён'); refreshSnap();
+  },
+  async 'live-enable'() {
+    const r = await confirmModal({ title: 'Включить реальные ордера', body: 'Бот начнёт открывать хеджи на биржах в пределах лимитов live. Чтобы подтвердить, введите фразу <span class="num">ENABLE LIVE TRADING</span>.', confirm: 'Включить ордера', danger: true, input: { label: 'Фраза подтверждения', placeholder: 'ENABLE LIVE TRADING' } });
+    if (!r) return; await act(() => api.post('/api/live/enable', { confirmPhrase: r.value, readOnly: false }), (x) => x?.message || 'Live включён'); refreshSnap();
+  },
+  async 'live-enable-ro'() {
+    const r = await confirmModal({ title: 'Режим «только чтение»', body: 'Бот подключится к биржам по ключам, но ордеров не будет. Введите фразу <span class="num">ENABLE LIVE TRADING</span>.', confirm: 'Включить чтение', input: { label: 'Фраза подтверждения', placeholder: 'ENABLE LIVE TRADING' } });
+    if (!r) return; await act(() => api.post('/api/live/enable', { confirmPhrase: r.value, readOnly: true }), (x) => x?.message || 'Режим чтения включён'); refreshSnap();
+  },
+  async 'live-disable'() { if (!await confirmModal({ title: 'Вернуться в paper?', body: 'Live будет выключен, бот продолжит работу на виртуальной марже.', confirm: 'Вернуться в paper' })) return; await act(() => api.post('/api/live/disable'), 'Live выключен, работает paper'); refreshSnap(); },
+  async 'live-balances'() { const r = await act(() => api.get('/api/live/balances')); if (r) { S.liveBalances = r; schedule(true); } },
+  async 'live-positions'() { const r = await act(() => api.get('/api/live/positions')); if (r) { S.livePositions = r; schedule(true); } },
+  async 'paper-close'(el) { if (!await confirmModal({ title: `Закрыть хедж ${baseOf(el.dataset.sym)}?`, body: 'Обе ноги закроются по текущим стаканам с комиссией taker.', confirm: 'Закрыть хедж' })) return; await act(() => api.post('/api/paper/close/' + el.dataset.id), (r) => `Хедж закрыт: ${fmt.usd(r?.realizedPnlUsd ?? r?.trade?.realizedPnlUsd)}`); refreshSnap(); },
+  async 'paper-close-all'() { if (!await confirmModal({ title: 'Закрыть все paper-хеджи?', body: 'Все открытые позиции закроются по текущим ценам.', confirm: 'Закрыть все', danger: true })) return; await act(() => api.post('/api/paper/close-all'), 'Все хеджи закрыты'); refreshSnap(); },
+  async 'live-close'(el) { if (!await confirmModal({ title: `Закрыть live-хедж ${baseOf(el.dataset.sym)}?`, body: 'Бот отправит реальные ордера на закрытие обеих ног.', confirm: 'Закрыть на бирже', danger: true })) return; await act(() => api.post('/api/live/close/' + el.dataset.id), (r) => r?.ok === false ? (r.error || 'Не закрыто') : 'Ордера на закрытие отправлены'); refreshSnap(); },
+  async 'paper-reset'() { if (!await confirmModal({ title: 'Сбросить paper-кошелёк?', body: 'Балансы вернутся к стартовым, открытые paper-позиции исчезнут. Журнал на диске останется.', confirm: 'Сбросить', danger: true })) return; await act(() => api.post('/api/paper/reset'), 'Paper-кошелёк сброшен'); refreshSnap(); },
+  async prune() { await act(() => api.post('/api/paper/prune-orphans'), (r) => `Закрыто позиций: ${r?.pruned ?? r?.closed ?? 0}`); refreshSnap(); },
+  'perf-refresh'() { loadPerf(); loadLedger(); },
+  'funding-refresh'() { loadFunding(); },
+  'settings-discard'() { settingsDraft.dirty.clear(); settingsDraft.values = {}; $('#page').dataset.redraw = '1'; schedule(true); },
+  async 'settings-save'() {
+    const t = S.settings?.trading; if (!t) return;
+    const body = { ...t };
+    for (const k of settingsDraft.dirty) body[k] = settingsDraft.values[k];
+    const r = await act(() => api.post('/api/settings/trading', body), 'Настройки сохранены и применены');
+    if (r) { settingsDraft.dirty.clear(); settingsDraft.values = {}; await loadSettings(true); }
+  },
+  async 'key-clear'(el) { const ex = el.closest('form').dataset.ex; if (!await confirmModal({ title: `Удалить ключ ${venue(ex)}?`, body: 'Ключ и секрет будут стёрты из локальных настроек.', confirm: 'Удалить ключ', danger: true })) return; await act(() => api.del('/api/settings/exchanges/' + encodeURIComponent(ex)), 'Ключ удалён'); loadSettings(true); },
+};
+async function refreshSnap() { try { onSnapshot(await api.get('/api/snapshot')); } catch { } }
+
+function wire() {
+  document.addEventListener('click', (e) => {
+    const goEl = e.target.closest('[data-go]'); if (goEl) { go(goEl.dataset.go); return; }
+    const a = e.target.closest('[data-act]'); if (a && ACTIONS[a.dataset.act]) { e.preventDefault(); ACTIONS[a.dataset.act](a); return; }
+    const sort = e.target.closest('[data-sort]'); if (sort) { const k = sort.dataset.sort; if (S.market.sort === k) S.market.dir *= -1; else { S.market.sort = k; S.market.dir = -1; } schedule(true); return; }
+    const days = e.target.closest('[data-days]'); if (days) { S.perfDays = Number(days.dataset.days); S.perf = null; schedule(true); loadPerf(); return; }
+    const ts = e.target.closest('[data-tsrc]'); if (ts) { S.trades.src = ts.dataset.tsrc; if (ts.dataset.tsrc === 'all' && !S.ledger) loadLedger(); schedule(true); return; }
+    const row = e.target.closest('tr[data-route]'); if (row) { openDrawer(row.dataset.route); return; }
+    const toc = e.target.closest('.toc a'); if (toc) { e.preventDefault(); document.querySelector(toc.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  });
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target.tagName || '').toLowerCase(); const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+    if (e.key === 'Escape' && S.drawer) { closeDrawer(); return; }
+    if (e.key === 'Enter' && e.target.matches?.('tr[data-route]')) { openDrawer(e.target.dataset.route); return; }
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (/^[1-9]$/.test(e.key)) { const k = Object.keys(PAGES)[Number(e.key) - 1]; if (k) go(k); }
+    if (e.key === '/') { e.preventDefault(); if (S.page !== 'market') go('market'); setTimeout(() => $('#mq')?.focus(), 400); }
+  });
+  document.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.id === 'mq') { S.market.q = t.value; schedule(); }
+    if (t.id === 'sq') { S.scanner.q = t.value; schedule(); }
+    if (t.dataset.k && t.type !== 'checkbox') {
+      const k = t.dataset.k; const raw = t.value.replace(',', '.');
+      const v = t.dataset.t === 'int' ? parseInt(raw, 10) : parseFloat(raw);
+      if (raw === '' || !Number.isFinite(v)) { t.classList.add('dirty'); return; }
+      if (String(S.settings.trading[k]) === String(v)) { settingsDraft.dirty.delete(k); t.classList.remove('dirty'); }
+      else { settingsDraft.values[k] = v; settingsDraft.dirty.add(k); t.classList.add('dirty'); }
+      syncSavebar();
+    }
+  });
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.id === 'mexec') { S.market.onlyExec = t.checked; schedule(true); }
+    if (t.dataset.k && t.type === 'checkbox') {
+      const k = t.dataset.k;
+      if (!!S.settings.trading[k] === t.checked) settingsDraft.dirty.delete(k); else { settingsDraft.values[k] = t.checked; settingsDraft.dirty.add(k); }
+      const lbl = t.parentElement.querySelector('.small'); if (lbl) lbl.textContent = t.checked ? 'включено' : 'выключено';
+      syncSavebar();
+    }
+  });
+  document.addEventListener('submit', async (e) => {
+    const f = e.target.closest('form.keycard'); if (!f) return; e.preventDefault();
+    const ex = f.dataset.ex; const fd = new FormData(f);
+    const body = { enabled: true, apiKey: fd.get('apiKey')?.trim(), apiSecret: fd.get('apiSecret')?.trim(), passphrase: fd.get('passphrase')?.trim() || null, permission: fd.get('permission') };
+    if (!body.apiKey || !body.apiSecret) { toast('Нужны и API key, и secret', 'err'); return; }
+    const r = await act(() => api.post('/api/settings/exchanges/' + encodeURIComponent(ex), body), `Ключ ${venue(ex)} сохранён`);
+    if (r) { f.reset(); loadSettings(true); }
+  });
+  $('#scrim').addEventListener('click', closeDrawer);
+  $('#drawerClose').addEventListener('click', closeDrawer);
+  window.addEventListener('hashchange', () => { const p = location.hash.replace(/^#\/?/, ''); if (p && p !== S.page) go(p); });
+  window.addEventListener('beforeunload', (e) => { if (settingsDraft.dirty.size) { e.preventDefault(); e.returnValue = ''; } });
+}
+function syncSavebar() { const b = $('#savebar'); if (!b) return; b.classList.toggle('on', settingsDraft.dirty.size > 0); const n = $('#dirtyN'); if (n) n.textContent = settingsDraft.dirty.size; }
+
+let lastFocus = null;
+function openDrawer(route) { lastFocus = document.activeElement; S.drawer = { route }; $('#drawer').classList.add('open'); $('#scrim').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false'); renderDrawer(); $('#drawerClose').focus(); }
+function closeDrawer() { S.drawer = null; $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true'); if (lastFocus) lastFocus.focus(); }
+
+// periodic background loads
+setInterval(() => { if (S.page === 'funding') loadFunding(); if (S.page === 'live' && S.liveBalances) ACTIONS['live-balances'](); }, 30_000);
+setInterval(() => { if (S.page !== 'settings') schedule(); }, 1000); // keep "x s ago" labels honest
+
+// ───────────────────────── boot ─────────────────────────
+function boot() {
+  const p = location.hash.replace(/^#\/?/, '');
+  S.page = PAGES[p] ? p : 'overview';
+  renderNav(); wire();
+  loadSettings(false).then(() => schedule(true));
+  startSignalR();
+  onEnter(S.page);
+  schedule(true);
+}
+document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', boot) : boot();
+})();

@@ -73,6 +73,16 @@ public class TradingUiSettings
     public decimal MinDepthScoreForUniverse { get; set; } = 0.8m;
     public int MaxLegsPerVenue { get; set; } = 2;
     public decimal MaxWidthExpansionPercent { get; set; } = 0.10m;
+
+    // Execution realism (0 / null = keep the current value).
+    public int TradeMaxQuoteAgeMs { get; set; }
+    public int MaxLegSkewMs { get; set; }
+    public int BasisMinSamples { get; set; }
+    public int BasisMinSpanSeconds { get; set; }
+    public int PaperFillLatencyMs { get; set; } = -1;
+    public decimal IocSlipBps { get; set; }
+    public int FundingHorizonMinutes { get; set; }
+    public bool? LiveConcurrentLegs { get; set; }
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 16;
     public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;
