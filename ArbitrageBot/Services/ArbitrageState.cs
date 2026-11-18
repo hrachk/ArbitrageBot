@@ -221,7 +221,12 @@ public class ArbitrageState
                     longFundingRate       = o.LongFundingRate,
                     shortFundingRate      = o.ShortFundingRate,
                     expectedFundingPct    = o.ExpectedFundingPercent,
-                    detectedAt            = o.DetectedAt
+                    detectedAt            = o.DetectedAt,
+                    fairBasisPercent      = o.FairBasisPercent,
+                    excessPercent         = o.ExcessPercent,
+                    exitCrossPercent      = o.ExitCrossPercent,
+                    basisReady            = o.BasisReady,
+                    gateNote              = o.GateNote
                 }).ToList(),
                 bookTickers = books,
                 orderBookDepth = OrderBookDepth,

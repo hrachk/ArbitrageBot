@@ -321,7 +321,12 @@ public class ArbitrageWorker : BackgroundService
             SellSlippagePercent    = o.SlippagePercent / 2,
             LongFundingRate        = o.LongFundingRate,
             ShortFundingRate       = o.ShortFundingRate,
-            ExpectedFundingPercent = o.ExpectedFundingPercent
+            ExpectedFundingPercent = o.ExpectedFundingPercent,
+            FairBasisPercent       = o.FairBasisPercent,
+            ExcessPercent          = o.ExcessPercent,
+            ExitCrossPercent       = o.ExitCrossPercent,
+            BasisReady             = o.BasisReady,
+            GateNote               = o.GateNote
         }).ToList();
 
         _state.UpdateScan(mapped, tickersBySymbol);
@@ -518,12 +523,15 @@ public class ArbitrageWorker : BackgroundService
 
     private void PushFuturesPaper()
     {
+        // Same depth-walked marks the close logic uses, so UI uPnL matches what a close would book.
+        var mtmPositions = _futPaper.GetOpenPositions();
         _futPaper.UpdateMarkToMarket((symbol, longEx, shortEx) =>
         {
-            var books = _futMarket.GetBookTickers(symbol);
-            if (!books.TryGetValue(longEx, out var lb) || !books.TryGetValue(shortEx, out var sb))
-                return null;
-            return (lb.BestBid, sb.BestAsk);
+            var qty = mtmPositions.FirstOrDefault(p =>
+                p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase)
+                && p.LongExchange.Equals(longEx, StringComparison.OrdinalIgnoreCase)
+                && p.ShortExchange.Equals(shortEx, StringComparison.OrdinalIgnoreCase))?.BaseQty ?? 0m;
+            return _futMarket.ExitMarks(symbol, longEx, shortEx, qty);
         });
 
         var trades = _futPaper.GetTrades(40);

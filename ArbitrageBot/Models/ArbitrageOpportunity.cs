@@ -39,6 +39,13 @@ public record ArbitrageOpportunity
 
     public DateTime DetectedAt { get; init; } = DateTime.UtcNow;
 
+    // Edge decomposition for the UI (why a route is or is not tradable).
+    public decimal FairBasisPercent { get; init; }
+    public decimal ExcessPercent { get; init; }
+    public decimal ExitCrossPercent { get; init; }
+    public bool BasisReady { get; init; }
+    public string? GateNote { get; init; }
+
     public override string ToString() =>
         $"{Symbol}: {BuyExchange}->{SellExchange} | " +
         $"gross {GrossSpreadVwapPercent:F3}% net {NetProfitPercent:F3}% RT {NetRoundTripPercent:F3}% | " +

@@ -67,6 +67,14 @@ public sealed class RuntimeRiskConfig
             if (t.MinDepthScoreForUniverse > 0) _opts.MinDepthScoreForUniverse = t.MinDepthScoreForUniverse;
             if (t.MaxLegsPerVenue > 0) _opts.MaxLegsPerVenue = t.MaxLegsPerVenue;
             if (t.MaxWidthExpansionPercent > 0) _opts.MaxWidthExpansionPercent = t.MaxWidthExpansionPercent;
+            if (t.TradeMaxQuoteAgeMs > 0) _opts.TradeMaxQuoteAgeMs = Math.Clamp(t.TradeMaxQuoteAgeMs, 100, 10_000);
+            if (t.MaxLegSkewMs > 0) _opts.MaxLegSkewMs = Math.Clamp(t.MaxLegSkewMs, 50, 10_000);
+            if (t.BasisMinSamples > 0) _opts.BasisMinSamples = Math.Clamp(t.BasisMinSamples, 4, 5000);
+            if (t.BasisMinSpanSeconds > 0) _opts.BasisMinSpanSeconds = Math.Clamp(t.BasisMinSpanSeconds, 1, 86_400);
+            if (t.PaperFillLatencyMs >= 0) _opts.PaperFillLatencyMs = Math.Clamp(t.PaperFillLatencyMs, 0, 5000);
+            if (t.IocSlipBps > 0) _opts.IocSlipBps = Math.Clamp(t.IocSlipBps, 0.5m, 50m);
+            if (t.FundingHorizonMinutes > 0) _opts.FundingHorizonMinutes = Math.Clamp(t.FundingHorizonMinutes, 1, 1440);
+            if (t.LiveConcurrentLegs is { } lcl) _opts.LiveConcurrentLegs = lcl;
             _opts.DynamicSymbols = t.DynamicSymbols;
             if (t.DynamicTopN > 0) _opts.DynamicTopN = t.DynamicTopN;
             if (t.DynamicMinQuoteVolumeUsd > 0) _opts.DynamicMinQuoteVolumeUsd = t.DynamicMinQuoteVolumeUsd;
