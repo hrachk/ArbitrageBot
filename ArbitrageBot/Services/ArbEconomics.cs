@@ -107,27 +107,45 @@ public static class ArbEconomics
     /// <summary>Net edge that must remain after fees and a realistic exit allowance.</summary>
     public const decimal MinNetAfterCostsPercent = 0.02m;
 
+    /// <summary>
+    /// Net edge (percent, after ALL costs) the operator demands. Floors protect against a
+    /// zero/negative setting; there is deliberately NO downward cap. The previous version
+    /// silently lowered a saved 0.12 to 0.04 — the bot then traded far thinner edges than
+    /// the operator configured, the opposite of "conservative".
+    /// </summary>
     public static decimal RequiredNetPercent(decimal minProfit)
     {
         var v = minProfit > 0 ? minProfit : MinNetAfterCostsPercent;
-        if (v < 0.015m) v = 0.015m;
-        // A saved 0.20 on top of four taker fees asked for a spike this market does not print.
-        if (v > 0.04m) v = 0.04m;
+        if (v < MinNetAfterCostsPercent) v = MinNetAfterCostsPercent;
+        if (v > 2m) v = 2m; // sanity only
         return v;
     }
 
     /// <summary>
-    /// Dollar form of the net gate. Do not add another 0.60% of notional on top of fees:
-    /// that stack is why a whole day produced zero entries.
+    /// Dollar form of the net gate: the larger of the configured target and the
+    /// percent floor on this notional. A configured value is never reduced.
     /// </summary>
     public static decimal RequiredTakeProfitUsd(decimal configured, decimal notional)
     {
         var fromEdge = notional > 0 ? notional * MinNetAfterCostsPercent / 100m : 0.10m;
         if (fromEdge < 0.10m) fromEdge = 0.10m;
         if (configured <= 0) return fromEdge;
-        var cap = notional > 0 ? Math.Max(notional * 0.0008m, fromEdge) : configured;
-        if (configured > cap) return cap;
         return Math.Max(configured, fromEdge);
+    }
+
+    /// <summary>Minimum gross spread: configured value, never below open fees + 0.02. No cap.</summary>
+    public static decimal RequiredGrossPercent(decimal configured, decimal openFeesPercent)
+    {
+        var floor = openFeesPercent + 0.02m;
+        var v = configured > 0 ? configured : openFeesPercent + 0.04m;
+        return Math.Max(v, floor);
+    }
+
+    /// <summary>How long a fully-green signal must hold before it is executable. 200 ms – 5 s.</summary>
+    public static int PersistMs(int configured)
+    {
+        var v = configured > 0 ? configured : 300;
+        return Math.Clamp(v, 200, 5000);
     }
 
     /// <summary>

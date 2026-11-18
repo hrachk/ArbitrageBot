@@ -11,6 +11,9 @@ public sealed class RuntimeRiskConfig
 {
     private readonly object _lock = new();
     private ArbitrageOptions _opts;
+    // Snapshot is read several times per directed pair per scan. Cloning on every read
+    // allocated thousands of option objects per second; cache it and rebuild on change.
+    private ArbitrageOptions? _cached;
 
     public RuntimeRiskConfig(IOptions<ArbitrageOptions> options)
     {
@@ -19,13 +22,14 @@ public sealed class RuntimeRiskConfig
 
     public ArbitrageOptions Snapshot
     {
-        get { lock (_lock) return Clone(_opts); }
+        get { lock (_lock) return _cached ??= Clone(_opts); }
     }
 
     public void ApplyTrading(TradingUiSettings t)
     {
         lock (_lock)
         {
+            _cached = null;
             if (!string.IsNullOrWhiteSpace(t.StrategyMode))
                 _opts.StrategyMode = t.StrategyMode;
             _opts.PaperTrading = t.PaperTrading;
@@ -110,6 +114,7 @@ public sealed class RuntimeRiskConfig
     {
         lock (_lock)
         {
+            _cached = null;
             if (r.MaxHoldMinutes > 0) _opts.FuturesMaxHoldMinutes = r.MaxHoldMinutes;
             if (r.CloseBelowNetPercent >= 0) _opts.FuturesCloseBelowNetPercent = r.CloseBelowNetPercent;
             if (r.MaxMarginUsagePercent > 0)
@@ -177,6 +182,14 @@ public sealed class RuntimeRiskConfig
         DynamicRefreshMinutes = o.DynamicRefreshMinutes,
         ExcludeMajorBases = o.ExcludeMajorBases?.ToList() ?? [],
         FuturesPaperLeverage = o.FuturesPaperLeverage,
+        TradeMaxQuoteAgeMs = o.TradeMaxQuoteAgeMs,
+        MaxLegSkewMs = o.MaxLegSkewMs,
+        BasisMinSamples = o.BasisMinSamples,
+        BasisMinSpanSeconds = o.BasisMinSpanSeconds,
+        PaperFillLatencyMs = o.PaperFillLatencyMs,
+        IocSlipBps = o.IocSlipBps,
+        FundingHorizonMinutes = o.FundingHorizonMinutes,
+        LiveConcurrentLegs = o.LiveConcurrentLegs,
         LivePaperLeverage = o.LivePaperLeverage,
         FuturesMaxOpenPositions = o.FuturesMaxOpenPositions,
         FuturesMaxHoldMinutes = o.FuturesMaxHoldMinutes,
