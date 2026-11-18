@@ -35,6 +35,7 @@ const I = (p, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="curre
 const ICON = {
   overview: I('<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 7h6V4h-6z"/>'),
   market: I('<path d="M3 17l5-6 4 4 8-9"/><path d="M14 6h6v6"/>'),
+  signals: I('<path d="M4 18h3l2-6 3 9 3-13 2 10h3"/>'),
   scanner: I('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/><path d="M8.5 11h5M11 8.5v5"/>'),
   positions: I('<path d="M4 7h16M4 12h16M4 17h10"/>'),
   analytics: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
@@ -76,6 +77,8 @@ const S = {
   routeHist: new Map(),   // route -> [{t, g, n}]
   pnlHist: [],            // [{t, v}]
   firstHero: true,
+  mk: { sym: null, bookEx: null, longEx: null, shortEx: null, size: null, lev: 2, view: 'dev', venuesKey: '' },
+  midHist: new Map(),     // sym -> { ex -> [{t, m}] }
 };
 
 // ───────────────────────── api ─────────────────────────
@@ -283,7 +286,8 @@ function ladder(sym, ex, side) {
 // ───────────────────────── pages ─────────────────────────
 const PAGES = {
   overview: { title: 'Обзор', icon: 'overview' },
-  market: { title: 'Сигналы', icon: 'market' },
+  market: { title: 'Рынок', icon: 'market' },
+  signals: { title: 'Сигналы', icon: 'signals' },
   scanner: { title: 'Сканер рынка', icon: 'scanner' },
   positions: { title: 'Позиции и сделки', icon: 'positions' },
   analytics: { title: 'Аналитика', icon: 'analytics' },
@@ -442,7 +446,7 @@ function renderDrawer() {
       <div><div class="mut small">Чистый edge</div><div class="num ${cls(o.netRoundTripPercent)}" style="font-size:28px">${fmt.pct(o.netRoundTripPercent)}</div></div>
       <div><div class="mut small">Ожидаемый результат</div><div style="font-size:20px">${signed(o.estNetPnlUsd)}</div></div>
       <div><div class="mut small">Размер</div><div class="num" style="font-size:20px">${fmt.usd(o.quoteSize, 0, false)}</div></div>
-      <div style="margin-left:auto">${o.isExecutable ? '<span class="badge pos">готов к входу</span>' : `<span class="badge cost">${esc(gateLabel(o.gateNote))}</span>`}</div>
+      <div style="margin-left:auto" class="row">${o.isExecutable ? '<span class="badge pos">готов к входу</span>' : `<span class="badge cost">${esc(gateLabel(o.gateNote))}</span>`}<button class="btn sm" data-act="to-terminal" data-sym="${esc(o.symbol)}" data-l="${esc(o.longExchange)}" data-s="${esc(o.shortExchange)}">Открыть в терминале</button></div>
     </div>
     <section class="panel">${waterfall(o)}</section>
     <section><h3 style="font-size:15px;margin:0 0 10px">Гейты входа</h3>${checklist(o)}</section>
@@ -460,6 +464,201 @@ function matrix(sym) {
   return `<div class="tbl-wrap"><table class="tbl matrix"><thead><tr><th>Биржа</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Ширина</th><th class="r">Глубина вершины</th><th class="r">Возраст</th></tr></thead><tbody>
     ${rows.map(r => { const w = (num(r.bestAsk) - num(r.bestBid)) / num(r.bestBid) * 100; const age = (Date.now() - new Date(r.timestamp).getTime()) / 1000; return `<tr><td>${esc(venue(r.ex))}</td><td class="r num ${num(r.bestBid) === maxBid ? 'best-bid' : ''}">${fmt.price(r.bestBid)}</td><td class="r num ${num(r.bestAsk) === minAsk ? 'best-ask' : ''}">${fmt.price(r.bestAsk)}</td><td class="r num">${fmt.pct(w, 3, false)}</td><td class="r num mut">${fmt.usd(num(r.bestBid) * num(r.bidQuantity), 0, false)} / ${fmt.usd(num(r.bestAsk) * num(r.askQuantity), 0, false)}</td><td class="r num ${age > 1.5 ? 'cost' : 'mut'}">${Number.isFinite(age) ? fmt.dur(Math.max(0, age)) : '—'}</td></tr>`; }).join('')}
   </tbody></table></div><div class="mut small" style="padding:8px 12px 12px">Голубым — самый дешёвый ask (куда идёт long), лавандовым — самый дорогой bid (куда идёт short).</div>`;
+}
+
+
+// Market terminal --------------------------------------------------
+function quotesFor(sym) {
+  const bt = snap().bookTickers?.[sym] || {};
+  return Object.entries(bt).map(([ex, t]) => ({ ex, ...lc(t) })).filter(r => num(r.bestBid) > 0 && num(r.bestAsk) > 0);
+}
+function symbolsList() {
+  const syms = new Set([...(snap().symbols || []), ...Object.keys(snap().bookTickers || {})]);
+  return [...syms].map(sym => {
+    const q = quotesFor(sym); if (q.length < 2) return { sym, cross: null, n: q.length };
+    const bb = Math.max(...q.map(r => num(r.bestBid))), ba = Math.min(...q.map(r => num(r.bestAsk)));
+    return { sym, cross: (bb - ba) / ba * 100, n: q.length };
+  }).sort((a, b) => (b.cross ?? -9) - (a.cross ?? -9));
+}
+function bestRoute(sym) {
+  const q = quotesFor(sym); if (q.length < 2) return null;
+  const l = q.reduce((a, b) => num(b.bestAsk) < num(a.bestAsk) ? b : a);
+  const sq = q.filter(r => r.ex !== l.ex); const sh = sq.reduce((a, b) => num(b.bestBid) > num(a.bestBid) ? b : a);
+  return { longEx: l.ex, shortEx: sh.ex };
+}
+function ensureMk() {
+  const m = S.mk;
+  const list = symbolsList();
+  if (!m.sym || !list.find(x => x.sym === m.sym)) m.sym = list[0]?.sym || null;
+  if (m.size == null) m.size = num(S.settings?.trading?.quoteSize) || num(snap().quoteSize) || 100;
+  const q = m.sym ? quotesFor(m.sym) : [];
+  const exs = q.map(r => r.ex);
+  if (!m.longEx || !exs.includes(m.longEx) || !m.shortEx || !exs.includes(m.shortEx) || m.longEx === m.shortEx) {
+    const br = m.sym ? bestRoute(m.sym) : null; if (br) { m.longEx = br.longEx; m.shortEx = br.shortEx; }
+  }
+  if (!m.bookEx || !exs.includes(m.bookEx)) m.bookEx = m.longEx || exs[0] || null;
+  return { list, q };
+}
+
+function brushScore(sym) {
+  const h = S.midHist.get(sym); if (!h) return null;
+  const series = Object.values(h).filter(a => a.length);
+  if (!series.length) return null;
+  const n = Math.min(...series.map(a => a.length)); if (n < 12) return { score: 0, regime: 'cold', note: 'копим историю цены', rangePct: 0 };
+  const ms = []; for (let i = 0; i < n; i++) { const v = series.map(a => a[a.length - n + i].m).sort((x, y) => x - y); ms.push(v[Math.floor(v.length / 2)]); }
+  let hi = Math.max(...ms), lo = Math.min(...ms); const mid = (hi + lo) / 2, range = hi - lo, rangePct = mid > 0 ? range / mid * 100 : 0;
+  let osc = 0, cross = 0;
+  for (let i = 2; i < n; i++) { const d0 = ms[i - 1] - ms[i - 2], d1 = ms[i] - ms[i - 1]; if (d0 && d1 && d0 * d1 < 0) osc++; }
+  for (let i = 1; i < n; i++) if ((ms[i - 1] - mid) * (ms[i] - mid) < 0) cross++;
+  const trend = range > 0 ? Math.abs(ms[n - 1] - ms[0]) / range : 1;
+  let rs = 0; if (rangePct >= 0.08 && rangePct <= 2.5) rs = rangePct <= 1.2 ? 30 : 22; else if (rangePct > 2.5 && rangePct <= 4) rs = 10; else if (rangePct > 0) rs = 6;
+  let score = Math.round(Math.min(100, rs + Math.min(35, osc / Math.max(1, n - 2) * 120) + Math.min(20, cross / Math.max(1, n - 1) * 80) + Math.max(0, 15 * (1 - Math.min(1, trend)))));
+  if (n < 30) score = Math.round(score * (0.55 + 0.45 * n / 30));
+  const regime = score >= 70 && trend < 0.55 && rangePct >= 0.1 ? 'brush' : score >= 55 ? 'watch' : trend > 0.75 && rangePct > 0.3 ? 'trend' : 'cold';
+  const note = { brush: 'пила в коридоре', watch: 'похоже на диапазон', trend: 'направленное движение', cold: 'нет выраженного диапазона' }[regime];
+  return { score, regime, note, rangePct };
+}
+
+function priceChart(sym) {
+  const h = S.midHist.get(sym); const m = S.mk;
+  if (!h) return '<div class="empty">Копим историю цен…</div>';
+  const exs = Object.keys(h).filter(ex => h[ex].length > 1);
+  if (!exs.length) return '<div class="empty">Копим историю цен…</div>';
+  const W = 900, H = 400, L = 8, R = 92, T = 14, Bm = 22;
+  const tMax = Math.max(...exs.map(ex => h[ex][h[ex].length - 1].t));
+  const tFirst = Math.min(...exs.map(ex => h[ex][0].t));
+  const tMin = Math.max(tMax - 4 * 60 * 1000, Math.min(tFirst, tMax - 30 * 1000));
+  // median across venues at each venue sample time (approx: latest-by-time per venue)
+  const medAt = (t) => { const v = exs.map(ex => { const a = h[ex]; let best = null; for (let i = a.length - 1; i >= 0; i--) { if (a[i].t <= t) { best = a[i].m; break; } } return best; }).filter(x => x != null).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
+  const series = exs.map(ex => ({ ex, pts: h[ex].filter(p => p.t >= tMin).map(p => { if (m.view === 'price') return { t: p.t, v: p.m }; const md = medAt(p.t); return md ? { t: p.t, v: (p.m - md) / md * 10000 } : null; }).filter(Boolean) })).filter(s => s.pts.length > 1);
+  if (!series.length) return '<div class="empty">Копим историю цен…</div>';
+  let lo = Math.min(...series.flatMap(s => s.pts.map(p => p.v))), hi = Math.max(...series.flatMap(s => s.pts.map(p => p.v)));
+  if (m.view !== 'price') { const a = Math.max(Math.abs(lo), Math.abs(hi), 2); lo = -a; hi = a; } else { const pd = (hi - lo) * 0.1 || hi * 0.0005; lo -= pd; hi += pd; }
+  const x = (t) => L + (t - tMin) / (tMax - tMin) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - Bm);
+  const order = series.sort((a, b) => (a.ex === m.longEx || a.ex === m.shortEx) - (b.ex === m.longEx || b.ex === m.shortEx));
+  const lines = order.map(s => {
+    const role = s.ex === m.longEx ? 'long' : s.ex === m.shortEx ? 'short' : '';
+    const col = role === 'long' ? 'var(--long)' : role === 'short' ? 'var(--short)' : 'var(--faint)';
+    const d = s.pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+    const last = s.pts[s.pts.length - 1];
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${role ? 2.2 : 1.2}" opacity="${role ? 1 : .8}"/>
+      <text x="${x(last.t) + 6}" y="${y(last.v) + 4}" class="axis" style="fill:${role ? col : 'var(--muted)'};font-family:var(--ui);font-size:11.5px">${esc(venue(s.ex))}</text>`;
+  }).join('');
+  const zero = m.view !== 'price' ? `<line class="zero" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/><text class="axis" x="${L + 2}" y="${y(0) - 5}">медиана</text>` : '';
+  const ticks = m.view !== 'price' ? [hi, hi / 2, -hi / 2, lo].map(v => `<text class="axis" x="${W - R + 50}" y="${y(v) + 4}" text-anchor="end">${v > 0 ? '+' : ''}${v.toFixed(1)}</text>`).join('') : [hi, (hi + lo) / 2, lo].map(v => `<text class="axis" x="${W - 4}" y="${y(v) + 4}" text-anchor="end">${fmt.price(v)}</text>`).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Цены ${esc(baseOf(sym))} по биржам">
+    ${[0.25, 0.5, 0.75].map(f => `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${T + f * (H - T - Bm)}" y2="${T + f * (H - T - Bm)}"/>`).join('')}
+    ${zero}${lines}${ticks}
+    <text class="axis" x="${L}" y="${H - 5}">−${fmt.dur((tMax - tMin) / 1000)}</text><text class="axis" x="${W - R}" y="${H - 5}" text-anchor="end">сейчас</text></svg>`;
+}
+
+function ticketPreview() {
+  const m = S.mk; const q = quotesFor(m.sym || '');
+  const l = q.find(r => r.ex === m.longEx), sh = q.find(r => r.ex === m.shortEx);
+  if (!l || !sh || m.longEx === m.shortEx) return '<div class="mut small">Выберите две разные биржи с котировками.</div>';
+  const la = num(l.bestAsk), sb = num(sh.bestBid);
+  const gross = (sb - la) / la * 100;
+  const fl = ArbFee(m.longEx), fs = ArbFee(m.shortEx);
+  const feesRt = 2 * (fl + fs);
+  const exitW = (num(l.bestAsk) - num(l.bestBid)) / num(l.bestBid) * 100 + (num(sh.bestAsk) - num(sh.bestBid)) / num(sh.bestBid) * 100;
+  const net0 = gross - feesRt - exitW;
+  const size = num(m.size) || 0; const lev = num(m.lev) || 1;
+  const sig = opps().find(o => o.symbol === m.sym && o.longExchange === m.longEx && o.shortExchange === m.shortEx);
+  return `<div class="tk-rows">
+    <div class="row between"><span class="mut">Покупка (long) ${esc(venue(m.longEx))}</span><span class="num long">${fmt.price(la)}</span></div>
+    <div class="row between"><span class="mut">Продажа (short) ${esc(venue(m.shortEx))}</span><span class="num short">${fmt.price(sb)}</span></div>
+    <div class="row between"><span class="mut">Gross спред</span><span class="num ${cls(gross)}">${fmt.pct(gross)}</span></div>
+    <div class="row between"><span class="mut">4 комиссии + выход по стакану</span><span class="num cost">−${fmt.pct(feesRt + exitW, 3, false)}</span></div>
+    <div class="row between" style="white-space:nowrap"><strong>При схождении цен</strong><span class="num ${cls(net0)}" style="font-size:15px">${fmt.pct(net0)}</span></div>
+    <div class="row between"><span class="mut">В долларах на ${fmt.usd(size, 0, false)}</span><span class="num ${cls(net0)}">${fmt.usd(size * net0 / 100)}</span></div>
+    ${sig ? `<div class="row between"><span class="mut">С учётом fair basis</span><span class="num ${cls(sig.netRoundTripPercent)}">${fmt.pct(sig.netRoundTripPercent)}</span></div>` : ''}
+    <div class="row between"><span class="mut">Маржа на каждую ногу</span><span class="num">${fmt.usd(size / lev, 2, false)}</span></div>
+  </div>
+  ${net0 <= 0 ? `<div class="callout" style="margin-top:12px">${ICON.warn}<div>Даже при полном схождении цен эта сделка убыточна после комиссий и выхода.</div></div>` : ''}`;
+}
+function ArbFee(ex) { const t = S.settings?.trading; return ({ BITGET: .06, KUCOIN: .06, BYBIT: .055 })[String(ex).toUpperCase()] ?? .05; }
+
+function compareTable(sym) {
+  const q = quotesFor(sym); const m = S.mk;
+  if (!q.length) return '<div class="empty">Нет котировок</div>';
+  const maxBid = Math.max(...q.map(r => num(r.bestBid))), minAsk = Math.min(...q.map(r => num(r.bestAsk)));
+  return `<div class="tbl-wrap"><table class="tbl matrix"><thead><tr><th>Биржа</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Ширина</th><th class="r">Глубина bid / ask</th><th class="r">Возраст</th><th class="r">Нога</th></tr></thead><tbody>
+  ${q.map(r => { const w = (num(r.bestAsk) - num(r.bestBid)) / num(r.bestBid) * 100; const age = (Date.now() - new Date(r.timestamp).getTime()) / 1000; return `<tr>
+    <td>${esc(venue(r.ex))}</td><td class="r num ${num(r.bestBid) === maxBid ? 'best-bid' : ''}">${fmt.price(r.bestBid)}</td><td class="r num ${num(r.bestAsk) === minAsk ? 'best-ask' : ''}">${fmt.price(r.bestAsk)}</td>
+    <td class="r num">${fmt.pct(w, 3, false)}</td><td class="r num mut">${fmt.usd(num(r.bestBid) * num(r.bidQuantity), 0, false)} / ${fmt.usd(num(r.bestAsk) * num(r.askQuantity), 0, false)}</td>
+    <td class="r num ${age > 1.5 ? 'cost' : 'mut'}">${Number.isFinite(age) ? fmt.dur(Math.max(0, age)) : '—'}</td>
+    <td class="r"><div class="row" style="justify-content:flex-end;gap:6px"><button class="btn sm ${m.longEx === r.ex ? 'leg-on-l' : 'ghost'}" data-mk-long="${esc(r.ex)}" aria-pressed="${m.longEx === r.ex}" aria-label="Long на ${esc(venue(r.ex))}">Long</button><button class="btn sm ${m.shortEx === r.ex ? 'leg-on-s' : 'ghost'}" data-mk-short="${esc(r.ex)}" aria-pressed="${m.shortEx === r.ex}" aria-label="Short на ${esc(venue(r.ex))}">Short</button></div></td></tr>`; }).join('')}
+  </tbody></table></div>`;
+}
+
+function bookPanel(sym) {
+  const m = S.mk; const q = quotesFor(sym);
+  return `<div class="seg" role="group" aria-label="Биржа стакана" style="margin-bottom:12px;flex-wrap:wrap">${q.map(r => `<button data-mk-book="${esc(r.ex)}" aria-pressed="${m.bookEx === r.ex}">${esc(venue(r.ex))}</button>`).join('')}</div>
+    ${m.bookEx ? ladder(sym, m.bookEx, m.bookEx === m.shortEx ? 'short' : 'long') : ''}`;
+}
+
+function renderTerminal() {
+  const { list, q } = ensureMk(); const m = S.mk;
+  if (!m.sym) return '<section class="panel"><div class="empty"><strong>Котировок пока нет</strong>Стаканы подключаются; обычно это занимает до минуты после старта.</div></section>';
+  return `<div id="mkRoot">
+  <div class="chips" id="mkChips"></div>
+  <div class="grid cols-hero" style="margin-top:14px">
+    <section class="panel">
+      <div class="panel-head"><h2 id="mkTitle"></h2><span class="sub" id="mkBrush"></span>
+        <div class="tools"><div class="seg" role="group" aria-label="Вид графика"><button data-mk-view="dev" aria-pressed="${m.view === 'dev'}">Отклонение, bps</button><button data-mk-view="price" aria-pressed="${m.view === 'price'}">Цена</button></div></div></div>
+      <div class="panel-body" id="mkChart"></div>
+    </section>
+    <section class="panel ticket" id="mkTicket">
+      <div class="panel-head"><h2>Ручной хедж</h2><span class="sub" id="mkMode"></span></div>
+      <div class="panel-body stack" style="gap:14px">
+        <div class="cols-2 grid" style="gap:10px">
+          <div class="field"><label for="mkLong" class="long">Long на</label><select class="input" id="mkLong"></select></div>
+          <div class="field"><label for="mkShort" class="short">Short на</label><select class="input" id="mkShort"></select></div>
+        </div>
+        <button class="btn sm ghost" data-act="mk-best" style="align-self:flex-start">Подставить лучший маршрут</button>
+        <div class="cols-2 grid" style="gap:10px">
+          <div class="field"><label for="mkSize">Размер ноги</label><div class="input-wrap"><input class="input num" id="mkSize" inputmode="decimal" value="${esc(m.size)}"><span class="unit">USDT</span></div></div>
+          <div class="field"><label for="mkLev">Плечо (live)</label><div class="input-wrap"><input class="input num" id="mkLev" inputmode="decimal" value="${esc(m.lev)}"><span class="unit">x</span></div></div>
+        </div>
+        <div id="mkPreview"></div>
+        <div id="mkWarn"></div>
+        <button class="btn primary" data-act="mk-open" id="mkOpen" style="height:42px">Открыть хедж</button>
+      </div>
+    </section>
+  </div>
+  <div class="grid cols-3-2" style="margin-top:18px">
+    <section class="panel"><div class="panel-head"><h2>Биржи</h2><span class="sub">выберите ноги прямо в таблице</span></div><div class="panel-body flush" id="mkCompare"></div></section>
+    <section class="panel"><div class="panel-head"><h2>Стакан</h2></div><div class="panel-body" id="mkBook"></div></section>
+  </div></div>`;
+}
+
+function updateTerminal() {
+  const root = $('#mkRoot'); if (!root) return;
+  const { list, q } = ensureMk(); const m = S.mk; const md = modeOf();
+  $('#mkChips').innerHTML = list.slice(0, 40).map(x => `<button class="chip ${x.sym === m.sym ? 'on' : ''}" data-mk-sym="${esc(x.sym)}"><span>${esc(baseOf(x.sym))}</span><span class="num ${cls(x.cross)}">${x.cross == null ? '—' : fmt.pct(x.cross, 2)}</span></button>`).join('');
+  $('#mkTitle').innerHTML = `${esc(baseOf(m.sym))} <span class="mut" style="font-weight:500">по всем биржам</span>`;
+  const b = brushScore(m.sym);
+  $('#mkBrush').innerHTML = b ? `Ёршик ${b.score}/100 · ${esc(b.note)}${b.rangePct ? ' · диапазон ' + fmt.pct(b.rangePct, 2, false) : ''}` : '';
+  $('#mkChart').innerHTML = priceChart(m.sym);
+  $('#mkCompare').innerHTML = compareTable(m.sym);
+  $('#mkBook').innerHTML = bookPanel(m.sym);
+  const key = m.sym + '|' + q.map(r => r.ex).join(',');
+  if (key !== m.venuesKey) {
+    m.venuesKey = key;
+    const opt = (sel) => q.map(r => `<option value="${esc(r.ex)}" ${r.ex === sel ? 'selected' : ''}>${esc(venue(r.ex))}</option>`).join('');
+    $('#mkLong').innerHTML = opt(m.longEx); $('#mkShort').innerHTML = opt(m.shortEx);
+  } else {
+    if ($('#mkLong').value !== m.longEx && document.activeElement !== $('#mkLong')) $('#mkLong').value = m.longEx;
+    if ($('#mkShort').value !== m.shortEx && document.activeElement !== $('#mkShort')) $('#mkShort').value = m.shortEx;
+  }
+  $('#mkPreview').innerHTML = ticketPreview();
+  const live = md.key === 'live', ro = md.key === 'readonly', killed = md.key === 'killed';
+  $('#mkMode').innerHTML = live ? '<span class="badge neg">реальные деньги</span>' : `<span class="badge long">paper</span>`;
+  $('#mkWarn').innerHTML = live ? `<div class="callout bad">${ICON.warn}<div>Live включён: хедж откроется реальными ордерами на ${esc(venue(m.longEx))} и ${esc(venue(m.shortEx))}.</div></div>`
+    : (ro || killed) ? `<div class="callout info">${ICON.info}<div>${killed ? 'Kill switch активен, live-ордера запрещены.' : 'Live в режиме чтения.'} Хедж откроется в paper.</div></div>` : '';
+  const btn = $('#mkOpen'); btn.className = 'btn ' + (live ? 'solid-danger' : 'primary'); btn.textContent = live ? 'Открыть хедж реальными ордерами' : 'Открыть paper-хедж';
+  btn.disabled = !m.longEx || !m.shortEx || m.longEx === m.shortEx || !(num(m.size) > 0);
 }
 
 // Scanner --------------------------------------------------------
@@ -805,11 +1004,11 @@ function renderStrip() {
 }
 
 function renderNav() {
-  $('#nav').innerHTML = Object.entries(PAGES).map(([k, p], i) => `<button data-go="${k}" ${S.page === k ? 'aria-current="page"' : ''} title="${esc(p.title)} (${i + 1})">${ICON[p.icon]}<span>${esc(p.title)}</span>${k === 'market' ? '<span class="badge pos hide" id="nb-market"></span>' : k === 'positions' ? '<span class="badge long hide" id="nb-positions"></span>' : ''}</button>`).join('');
+  $('#nav').innerHTML = Object.entries(PAGES).map(([k, p], i) => `<button data-go="${k}" ${S.page === k ? 'aria-current="page"' : ''} title="${esc(p.title)} (${i + 1})">${ICON[p.icon]}<span>${esc(p.title)}</span>${k === 'signals' ? '<span class="badge pos hide" id="nb-market"></span>' : k === 'positions' ? '<span class="badge long hide" id="nb-positions"></span>' : ''}</button>`).join('');
 }
 
 // ───────────────────────── render loop ─────────────────────────
-const RENDER = { overview: renderOverview, market: renderMarket, scanner: renderScanner, positions: renderPositions, analytics: renderAnalytics, funding: renderFunding, live: renderLive, settings: renderSettings, help: renderHelp };
+const RENDER = { overview: renderOverview, market: renderTerminal, signals: renderMarket, scanner: renderScanner, positions: renderPositions, analytics: renderAnalytics, funding: renderFunding, live: renderLive, settings: renderSettings, help: renderHelp };
 let renderQueued = false, lastRender = 0;
 function schedule(force = false) {
   if (force) { lastRender = 0; }
@@ -823,6 +1022,7 @@ function render() {
   const page = $('#page');
   // Settings is a form: only redraw it on demand, never on every tick (would wipe typing).
   if (S.page === 'settings' && page.dataset.page === 'settings' && !page.dataset.redraw) { return; }
+  if (S.page === 'market' && page.dataset.page === 'market' && !page.dataset.redraw && $('#mkRoot')) { updateTerminal(); if (S.drawer) renderDrawer(); return; }
   // Keep focus & caret in search inputs across redraws
   const active = document.activeElement; const fid = active && page.contains(active) ? active.id : null;
   const caret = fid && active.selectionStart != null ? active.selectionStart : null;
@@ -833,6 +1033,7 @@ function render() {
   if (fid) { const el = document.getElementById(fid); if (el) { el.focus(); if (caret != null && el.setSelectionRange) try { el.setSelectionRange(caret, caret); } catch { } } }
   if (S.page === 'overview' && S.snap && S.firstHero) setTimeout(() => { S.firstHero = false; }, 900);
   if (S.drawer) renderDrawer();
+  if (S.page === 'market') updateTerminal();
   wireCharts();
 }
 
@@ -883,10 +1084,21 @@ async function loadLedger() { try { const rows = await api.get('/api/analytics/t
 async function loadFunding() { try { S.funding = await api.get('/api/funding'); schedule(true); } catch (e) { toast('Funding недоступен: ' + e.message, 'err'); } }
 
 // ───────────────────────── transport ─────────────────────────
+function sampleMids() {
+  const bt = snap().bookTickers || {}; const now = Date.now();
+  for (const [sym, byEx] of Object.entries(bt)) {
+    let h = S.midHist.get(sym); if (!h) { h = {}; S.midHist.set(sym, h); }
+    for (const [ex, t0] of Object.entries(byEx)) {
+      const t = lc(t0); const b = num(t.bestBid), a = num(t.bestAsk); if (!(b > 0 && a > 0)) continue;
+      const arr = h[ex] || (h[ex] = []); const last = arr[arr.length - 1];
+      if (!last || now - last.t >= 700) { arr.push({ t: now, m: (a + b) / 2 }); if (arr.length > 360) arr.shift(); }
+    }
+  }
+}
 function onSnapshot(data) {
   if (!data) return;
   S.snap = data; S.lastSnapAt = Date.now();
-  trackRoutes();
+  trackRoutes(); sampleMids();
   schedule();
 }
 function onTick(t) {
@@ -895,7 +1107,8 @@ function onTick(t) {
   if (t.orderBookDepth) S.snap.orderBookDepth = t.orderBookDepth;
   if (t.connectionStatus) S.snap.connectionStatus = t.connectionStatus;
   S.lastSnapAt = Date.now();
-  if (S.page === 'scanner' || S.drawer) schedule();
+  sampleMids();
+  if (S.page === 'scanner' || S.page === 'market' || S.drawer) schedule();
 }
 let pollTimer = null;
 function startPolling() {
@@ -940,6 +1153,20 @@ const ACTIONS = {
   async 'live-close'(el) { if (!await confirmModal({ title: `Закрыть live-хедж ${baseOf(el.dataset.sym)}?`, body: 'Бот отправит реальные ордера на закрытие обеих ног.', confirm: 'Закрыть на бирже', danger: true })) return; await act(() => api.post('/api/live/close/' + el.dataset.id), (r) => r?.ok === false ? (r.error || 'Не закрыто') : 'Ордера на закрытие отправлены'); refreshSnap(); },
   async 'paper-reset'() { if (!await confirmModal({ title: 'Сбросить paper-кошелёк?', body: 'Балансы вернутся к стартовым, открытые paper-позиции исчезнут. Журнал на диске останется.', confirm: 'Сбросить', danger: true })) return; await act(() => api.post('/api/paper/reset'), 'Paper-кошелёк сброшен'); refreshSnap(); },
   async prune() { await act(() => api.post('/api/paper/prune-orphans'), (r) => `Закрыто позиций: ${r?.pruned ?? r?.closed ?? 0}`); refreshSnap(); },
+  'to-terminal'(el) { closeDrawer(); S.mk.sym = el.dataset.sym; S.mk.longEx = el.dataset.l; S.mk.shortEx = el.dataset.s; S.mk.bookEx = el.dataset.l; S.mk.venuesKey = ''; go('market'); },
+  'mk-best'() { const br = bestRoute(S.mk.sym); if (br) { S.mk.longEx = br.longEx; S.mk.shortEx = br.shortEx; S.mk.venuesKey = ''; schedule(true); } },
+  async 'mk-open'() {
+    const m = S.mk; const live = modeOf().key === 'live';
+    const size = num(m.size), lev = num(m.lev) || 2;
+    if (!(size > 0)) return toast('Укажите размер ноги', 'err');
+    const ok = await confirmModal({ title: live ? 'Открыть хедж реальными ордерами?' : 'Открыть paper-хедж?', body: `${esc(baseOf(m.sym))}: long на ${esc(venue(m.longEx))}, short на ${esc(venue(m.shortEx))}, по ${fmt.usd(size, 0, false)} на ногу${live ? `, плечо ${lev}x. Ордера уйдут на биржи сразу.` : '. Лимиты риска paper продолжают действовать.'}`, confirm: live ? 'Отправить ордера' : 'Открыть хедж', danger: live });
+    if (!ok) return;
+    const body = { symbol: m.sym, longExchange: m.longEx, shortExchange: m.shortEx, notionalUsd: size, leverage: lev };
+    const r = await act(() => api.post(live ? '/api/live/hedge' : '/api/paper/hedge', body));
+    if (!r) return;
+    if (r.ok) { toast(live ? 'Ордера отправлены, хедж открыт' : 'Paper-хедж открыт'); refreshSnap(); }
+    else toast('Не открыт: ' + (r.error || r.message || r.status || 'причина не указана'), 'err');
+  },
   'perf-refresh'() { loadPerf(); loadLedger(); },
   'funding-refresh'() { loadFunding(); },
   'settings-discard'() { settingsDraft.dirty.clear(); settingsDraft.values = {}; $('#page').dataset.redraw = '1'; schedule(true); },
@@ -962,6 +1189,11 @@ function wire() {
     const days = e.target.closest('[data-days]'); if (days) { S.perfDays = Number(days.dataset.days); S.perf = null; schedule(true); loadPerf(); return; }
     const ts = e.target.closest('[data-tsrc]'); if (ts) { S.trades.src = ts.dataset.tsrc; if (ts.dataset.tsrc === 'all' && !S.ledger) loadLedger(); schedule(true); return; }
     const row = e.target.closest('tr[data-route]'); if (row) { openDrawer(row.dataset.route); return; }
+    const mks = e.target.closest('[data-mk-sym]'); if (mks) { S.mk.sym = mks.dataset.mkSym; S.mk.longEx = S.mk.shortEx = S.mk.bookEx = null; S.mk.venuesKey = ''; ensureMk(); schedule(true); return; }
+    const mkl = e.target.closest('[data-mk-long]'); if (mkl) { const ex = mkl.dataset.mkLong; if (S.mk.shortEx === ex) S.mk.shortEx = S.mk.longEx; S.mk.longEx = ex; S.mk.venuesKey = ''; schedule(true); return; }
+    const mksh = e.target.closest('[data-mk-short]'); if (mksh) { const ex = mksh.dataset.mkShort; if (S.mk.longEx === ex) S.mk.longEx = S.mk.shortEx; S.mk.shortEx = ex; S.mk.venuesKey = ''; schedule(true); return; }
+    const mkb = e.target.closest('[data-mk-book]'); if (mkb) { S.mk.bookEx = mkb.dataset.mkBook; schedule(true); return; }
+    const mkv = e.target.closest('[data-mk-view]'); if (mkv) { S.mk.view = mkv.dataset.mkView; $$('[data-mk-view]').forEach(b => b.setAttribute('aria-pressed', String(b === mkv))); schedule(true); return; }
     const toc = e.target.closest('.toc a'); if (toc) { e.preventDefault(); document.querySelector(toc.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   });
   document.addEventListener('keydown', (e) => {
@@ -970,12 +1202,14 @@ function wire() {
     if (e.key === 'Enter' && e.target.matches?.('tr[data-route]')) { openDrawer(e.target.dataset.route); return; }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/^[1-9]$/.test(e.key)) { const k = Object.keys(PAGES)[Number(e.key) - 1]; if (k) go(k); }
-    if (e.key === '/') { e.preventDefault(); if (S.page !== 'market') go('market'); setTimeout(() => $('#mq')?.focus(), 400); }
+    if (e.key === '/') { e.preventDefault(); if (S.page !== 'signals') go('signals'); setTimeout(() => $('#mq')?.focus(), 400); }
   });
   document.addEventListener('input', (e) => {
     const t = e.target;
     if (t.id === 'mq') { S.market.q = t.value; schedule(); }
     if (t.id === 'sq') { S.scanner.q = t.value; schedule(); }
+    if (t.id === 'mkSize') { S.mk.size = parseFloat(t.value.replace(',', '.')); schedule(); }
+    if (t.id === 'mkLev') { S.mk.lev = parseFloat(t.value.replace(',', '.')); schedule(); }
     if (t.dataset.k && t.type !== 'checkbox') {
       const k = t.dataset.k; const raw = t.value.replace(',', '.');
       const v = t.dataset.t === 'int' ? parseInt(raw, 10) : parseFloat(raw);
@@ -988,6 +1222,8 @@ function wire() {
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.id === 'mexec') { S.market.onlyExec = t.checked; schedule(true); }
+    if (t.id === 'mkLong') { if (t.value === S.mk.shortEx) S.mk.shortEx = S.mk.longEx; S.mk.longEx = t.value; S.mk.venuesKey = ''; schedule(true); }
+    if (t.id === 'mkShort') { if (t.value === S.mk.longEx) S.mk.longEx = S.mk.shortEx; S.mk.shortEx = t.value; S.mk.venuesKey = ''; schedule(true); }
     if (t.dataset.k && t.type === 'checkbox') {
       const k = t.dataset.k;
       if (!!S.settings.trading[k] === t.checked) settingsDraft.dirty.delete(k); else { settingsDraft.values[k] = t.checked; settingsDraft.dirty.add(k); }

@@ -139,26 +139,31 @@ public class FuturesPaperService : IFuturesPaperService
                 return Fail(opp, $"Toxic/excluded {opp.Symbol}");
             if (TradeBan.IsRouteBanned(opp.Symbol, opp.LongExchange, opp.ShortExchange))
                 return Fail(opp, $"Banned {opp.Symbol} after stop, dead book, or structural basis");
-            if (!opp.IsExecutable || !opp.BasisReady)
-                return Fail(opp, "Opportunity did not pass executable gates or fair-basis warmup");
+            // Strategy gates apply to automatic entries only. A manual hedge is the operator's
+            // decision; risk limits below (positions, venue legs, margin, daily loss) still apply.
+            if (!opp.IsManual)
+            {
+                if (!opp.IsExecutable || !opp.BasisReady)
+                    return Fail(opp, "Opportunity did not pass executable gates or fair-basis warmup");
 
-            var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
-            if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
-                return Fail(opp, $"Cooldown open {cooldown}ms");
-            if ((DateTime.UtcNow - _lastCloseUtc).TotalMilliseconds < cooldown)
-                return Fail(opp, $"Cooldown close {cooldown}ms");
+                var cooldown = R.PaperCooldownMs > 0 ? R.PaperCooldownMs : 8000;
+                if ((DateTime.UtcNow - _lastOpenUtc).TotalMilliseconds < cooldown)
+                    return Fail(opp, $"Cooldown open {cooldown}ms");
+                if ((DateTime.UtcNow - _lastCloseUtc).TotalMilliseconds < cooldown)
+                    return Fail(opp, $"Cooldown close {cooldown}ms");
 
-            // QUALITY: reject if round-trip edge cannot cover close fees
-            var minEdge = ArbEconomics.RequiredNetPercent(R.MinProfitPercent);
-            if (opp.NetRoundTripPercent < minEdge)
-                return Fail(opp, $"RT {opp.NetRoundTripPercent:F3}% < min {minEdge:F3}%");
-            var minTp = ArbEconomics.RequiredTakeProfitUsd(
-                R.MinTakeProfitUsd, opp.NotionalUsd > 0 ? opp.NotionalUsd : (R.QuoteSize > 0 ? R.QuoteSize : 250m));
-            if (opp.EstNetPnlUsd < minTp)
-                return Fail(opp, $"edge ${opp.EstNetPnlUsd:F2} < ${minTp:F2} after fees, books and slip");
+                // QUALITY: reject if round-trip edge cannot cover close fees
+                var minEdge = ArbEconomics.RequiredNetPercent(R.MinProfitPercent);
+                if (opp.NetRoundTripPercent < minEdge)
+                    return Fail(opp, $"RT {opp.NetRoundTripPercent:F3}% < min {minEdge:F3}%");
+                var minTp = ArbEconomics.RequiredTakeProfitUsd(
+                    R.MinTakeProfitUsd, opp.NotionalUsd > 0 ? opp.NotionalUsd : (R.QuoteSize > 0 ? R.QuoteSize : 250m));
+                if (opp.EstNetPnlUsd < minTp)
+                    return Fail(opp, $"edge ${opp.EstNetPnlUsd:F2} < ${minTp:F2} after fees, books and slip");
 
-            if (R.PaperRequireFullFill && !opp.FullyFilled)
-                return Fail(opp, "Require full fill");
+                if (R.PaperRequireFullFill && !opp.FullyFilled)
+                    return Fail(opp, "Require full fill");
+            }
 
             var maxPos = R.FuturesMaxOpenPositions > 0 ? R.FuturesMaxOpenPositions : 3;
             if (_positions.Count >= maxPos)
@@ -242,7 +247,7 @@ public class FuturesPaperService : IFuturesPaperService
                 ? opp.EstNetPnlUsd * (notional / opp.NotionalUsd)
                 : opp.EstNetPnlUsd;
             var scaledMinTp = ArbEconomics.RequiredTakeProfitUsd(R.MinTakeProfitUsd, notional);
-            if (scaledExpectedPnl < scaledMinTp)
+            if (!opp.IsManual && scaledExpectedPnl < scaledMinTp)
                 return Fail(opp, $"Margin-clamped edge ${scaledExpectedPnl:F2} < ${scaledMinTp:F2} minimum net target");
 
             var openFees = opp.LongAskVwap * baseQty * (opp.LongFeePercent / 100m)
