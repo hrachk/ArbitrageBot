@@ -306,8 +306,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .lrow.bid .bg { background: var(--profit-a); }
 .lrow span { position: relative; }
 .lrow span:last-child { text-align: right; color: var(--text-2); }
-.lrow.ask span:first-child { color: var(--loss); }
-.lrow.bid span:first-child { color: var(--profit); }
+.lrow { grid-template-columns: 1fr 1fr; }
+.lrow.ask span:first-of-type { color: var(--loss); }
+.lrow.bid span:first-of-type { color: var(--profit); }
 .lmid { text-align: center; color: var(--muted); padding: 4px 0; font-size: 11.5px; }
 
 /* matrix */
@@ -439,3 +440,15 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   .phases { grid-template-columns: 1fr; }
   .kpi { border-left: 0; border-top: 1px solid var(--line-soft); }
 }
+
+/* ---------- market terminal ---------- */
+.chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.chip { flex: none; display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text-2); cursor: pointer; font-weight: 600; font-size: 13px; }
+.chip .num { font-weight: 400; font-size: 12px; }
+.chip:hover { background: var(--raised); color: var(--text); }
+.chip.on { background: var(--raised); border-color: var(--long); color: var(--text); }
+.ticket .field label.long { color: var(--long); }
+.ticket .field label.short { color: var(--short); }
+.tk-rows { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; padding: 12px; border-radius: var(--r-md); background: var(--bg-deep); border: 1px solid var(--line-soft); }
+.btn.leg-on-l { background: var(--long-a); border-color: rgb(79 179 255 / .5); color: var(--long); }
+.btn.leg-on-s { background: var(--short-a); border-color: rgb(180 140 255 / .5); color: var(--short); }

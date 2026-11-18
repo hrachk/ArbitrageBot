@@ -581,8 +581,8 @@ try
             return Results.Ok(new { ok = false, error = "stale book prices" });
         var qty = LiveOrderEngine.RoundBaseQty(notional / longAsk, longAsk);
         var gross = (shortBid - longAsk) / longAsk * 100m;
-        var longFee  = snap.EstimatedTakerFees.GetValueOrDefault(body.LongExchange, 0.06m);
-        var shortFee = snap.EstimatedTakerFees.GetValueOrDefault(body.ShortExchange, 0.06m);
+        var longFee  = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, body.LongExchange);
+        var shortFee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, body.ShortExchange);
         var opp = new ArbitrageBot.Models.FuturesOpportunity
         {
             Symbol       = body.Symbol,
@@ -596,6 +596,8 @@ try
             BaseQty      = qty,
             FullyFilled  = true,
             IsExecutable = true,
+            IsManual     = true,
+            BasisReady   = true,
             GrossSpreadPercent   = gross,
             NetSpreadPercent     = gross - longFee - shortFee,
             NetRoundTripPercent  = gross - 2 * (longFee + shortFee),
@@ -603,8 +605,10 @@ try
             ShortFeePercent      = shortFee,
             EstNetPnlUsd         = (shortBid - longAsk) * qty - notional * (longFee + shortFee) / 100m
         };
+        if (body.LongExchange.Equals(body.ShortExchange, StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(new { ok = false, error = "long and short must be on different exchanges" });
         var trade = paper.TryOpen(opp);
-        return Results.Ok(new { ok = trade?.Status == "Open", status = trade?.Status, message = trade?.Message });
+        return Results.Ok(new { ok = trade?.Status == "Open", status = trade?.Status, message = trade?.Message, error = trade?.Status == "Open" ? null : trade?.Message });
     });
 
     // Live: open a manual hedge (requires CanPlaceOrders)

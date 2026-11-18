@@ -2,6 +2,8 @@ namespace ArbitrageBot.Models;
 
 public record FuturesOpportunity
 {
+    /// <summary>Operator-initiated hedge: skips strategy gates (basis, edge, cooldown) but never risk limits.</summary>
+    public bool IsManual { get; init; }
     public required string Symbol { get; init; }
     public required string LongExchange { get; init; }
     public required string ShortExchange { get; init; }
