@@ -143,6 +143,24 @@ public class ArbitrageOptions
     /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
     public bool RequireDepthFullFill { get; set; } = true;
 
+    // ---- Execution realism (audit 2026-11) ----
+    /// <summary>A traded leg's quote must be younger than this (ms). REST snapshots are never a traded leg.</summary>
+    public int TradeMaxQuoteAgeMs { get; set; } = 1000;
+    /// <summary>Max age difference between the two traded legs (ms). Larger skew = latency, not a spread.</summary>
+    public int MaxLegSkewMs { get; set; } = 600;
+    /// <summary>Basis must have at least this many samples (~1 per 0.7 s) before a route can trade.</summary>
+    public int BasisMinSamples { get; set; } = 60;
+    /// <summary>Basis must span at least this many seconds of wall-clock before a route can trade.</summary>
+    public int BasisMinSpanSeconds { get; set; } = 90;
+    /// <summary>Paper: the order "arrives" this many ms after the signal and fills against that book.</summary>
+    public int PaperFillLatencyMs { get; set; } = 250;
+    /// <summary>IOC limit allowance beyond the scanned touch, in basis points (paper and live use the same).</summary>
+    public decimal IocSlipBps { get; set; } = 4m;
+    /// <summary>Funding settlements inside this horizon are charged against the edge.</summary>
+    public int FundingHorizonMinutes { get; set; } = 20;
+    /// <summary>Live: submit both legs concurrently (true) instead of long-then-short.</summary>
+    public bool LiveConcurrentLegs { get; set; } = true;
+
     /// <summary>Leverage used for live orders (separate from paper simulation).</summary>
     public decimal LivePaperLeverage { get; set; } = 2m;
 

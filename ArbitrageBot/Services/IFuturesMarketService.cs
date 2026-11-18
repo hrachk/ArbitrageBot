@@ -12,12 +12,18 @@ public interface IFuturesMarketService
     Dictionary<string, object> GetDepth(string symbol, int levels = 12);
     IReadOnlyDictionary<string, string> ConnectionStatus { get; }
     bool IsReady { get; }
+    /// <summary>Fresh IOC entry prices for a fixed base quantity on one route.</summary>
+    (decimal? LongAskVwap, decimal? ShortBidVwap, bool Fresh) QuoteEntry(string symbol, string longEx, string shortEx, decimal baseQty);
+    /// <summary>Depth-walked exit marks (long sold at bids, short bought at asks) for a base quantity.</summary>
+    (decimal longBid, decimal shortAsk)? ExitMarks(string symbol, string longEx, string shortEx, decimal baseQty);
 }
 
 public interface IFuturesPaperService
 {
     void Initialize(IEnumerable<string> exchanges);
     FuturesPaperTrade? TryOpen(FuturesOpportunity opp);
+    /// <summary>Book the cost of unwinding a single filled leg after the other IOC leg missed.</summary>
+    void RecordLegMiss(FuturesOpportunity opp, string filledExchange, decimal costUsd);
     int TryCloseConverged(Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks, decimal closeMinNetPercent);
     IReadOnlyList<FuturesPaperTrade> GetTrades(int take = 40);
     IReadOnlyList<FuturesPaperPosition> GetOpenPositions();

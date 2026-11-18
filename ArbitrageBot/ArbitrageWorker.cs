@@ -1,6 +1,7 @@
 using ArbitrageBot.Configuration;
 using ArbitrageBot.Hubs;
 using ArbitrageBot.Services;
+using ArbitrageBot.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 
@@ -217,6 +218,62 @@ public class ArbitrageWorker : BackgroundService
         else await _spotBooks.StopAsync(stoppingToken);
     }
 
+    // Paper orders in flight: the signal fires, the "order" lands PaperFillLatencyMs later
+    // and fills against the book that exists then. Filling at the signal's own prices was
+    // the main source of phantom paper profit (sub-second "convergences" of stale quotes).
+    private readonly Dictionary<string, (FuturesOpportunity Opp, DateTime DueUtc)> _paperInFlight =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static string RouteKey(FuturesOpportunity o) => $"{o.Symbol}|{o.LongExchange}|{o.ShortExchange}";
+
+    private void ResolvePaperInFlight(ArbitrageOptions snap)
+    {
+        if (_paperInFlight.Count == 0) return;
+        var now = DateTime.UtcNow;
+        foreach (var key in _paperInFlight.Keys.ToList())
+        {
+            var (o, due) = _paperInFlight[key];
+            if (now < due) continue;
+            _paperInFlight.Remove(key);
+
+            var q = _futMarket.QuoteEntry(o.Symbol, o.LongExchange, o.ShortExchange, o.BaseQty);
+            var outcome = q.Fresh
+                ? FillSimulator.Evaluate(o.LongAskVwap, o.ShortBidVwap, q.LongAskVwap, q.ShortBidVwap, snap.IocSlipBps)
+                : LegFillOutcome.None; // a stale leg at arrival time is not a fill
+            switch (outcome)
+            {
+                case LegFillOutcome.Both:
+                {
+                    var filled = o with { LongAskVwap = q.LongAskVwap!.Value, ShortBidVwap = q.ShortBidVwap!.Value };
+                    var trade = _futPaper.TryOpen(filled);
+                    if (trade is { Status: "Open" })
+                        _logger.LogInformation("Paper hedge filled after {Ms}ms: {Sym} {L}->{S} L@{La} S@{Sb} (signal L@{Ol} S@{Os})",
+                            snap.PaperFillLatencyMs, o.Symbol, o.LongExchange, o.ShortExchange,
+                            filled.LongAskVwap, filled.ShortBidVwap, o.LongAskVwap, o.ShortBidVwap);
+                    else if (trade != null && ShouldLogSkip(o.Symbol, trade.Message))
+                        _logger.LogInformation("Paper skip {Sym}: {Msg}", o.Symbol, trade.Message);
+                    break;
+                }
+                case LegFillOutcome.LongOnly:
+                case LegFillOutcome.ShortOnly:
+                {
+                    // Exactly what live does: one leg filled, the other missed -> unwind the filled leg.
+                    var ex = outcome == LegFillOutcome.LongOnly ? o.LongExchange : o.ShortExchange;
+                    var fee = outcome == LegFillOutcome.LongOnly ? o.LongFeePercent : o.ShortFeePercent;
+                    var tk = _futMarket.GetBookTickers(o.Symbol);
+                    var width = tk.TryGetValue(ex, out var t) ? ArbEconomics.BookSpreadPercent(t.BestBid, t.BestAsk) : 0.10m;
+                    if (width > 1m) width = 0.10m;
+                    var cost = FillSimulator.OneLegUnwindCostUsd(o.NotionalUsd, fee, width);
+                    _futPaper.RecordLegMiss(o, ex, cost);
+                    break;
+                }
+                default:
+                    _analytics.RecordSkip(o, "ioc-miss", $"{o.LongExchange}->{o.ShortExchange} spread gone after {snap.PaperFillLatencyMs}ms");
+                    break;
+            }
+        }
+    }
+
     private async Task RunFuturesCycleAsync(CancellationToken ct)
     {
         var opps = await _futMarket.ScanAsync(ct);
@@ -276,12 +333,17 @@ public class ArbitrageWorker : BackgroundService
         _state.OrderBookDepth = depthMap;
 
         // Close converged hedges first (paper always; live only if orders allowed)
+        // Exit marks are depth-walked for the position's own size (top-of-book overstated exits).
+        var paperOpen = _futPaper.GetOpenPositions();
         (decimal longBid, decimal shortAsk)? Marks(string symbol, string longEx, string shortEx)
         {
-            var books = _futMarket.GetBookTickers(symbol);
-            if (!books.TryGetValue(longEx, out var l) || !books.TryGetValue(shortEx, out var s))
-                return null;
-            return (l.BestBid, s.BestAsk);
+            var qty = 0m;
+            foreach (var p in paperOpen)
+                if (p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase)
+                    && p.LongExchange.Equals(longEx, StringComparison.OrdinalIgnoreCase)
+                    && p.ShortExchange.Equals(shortEx, StringComparison.OrdinalIgnoreCase))
+                { qty = p.BaseQty; break; }
+            return _futMarket.ExitMarks(symbol, longEx, shortEx, qty);
         }
 
         _futPaper.TryCloseConverged(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent);
@@ -310,6 +372,8 @@ public class ArbitrageWorker : BackgroundService
 
         if (_liveGuard.CanPlaceOrders)
             await _liveExec.TryCloseConvergedAsync(Marks, _runtime.Snapshot.FuturesCloseBelowNetPercent, ct);
+
+        ResolvePaperInFlight(_runtime.Snapshot);
 
         var executableOpps = opps.Where(x => x.IsExecutable).ToList();
         decimal? bestExecutableOpen = executableOpps.Count > 0 ? executableOpps.Max(x => x.NetSpreadPercent) : null;
@@ -387,6 +451,16 @@ public class ArbitrageWorker : BackgroundService
                     continue;
                 }
 
+                if (snap.PaperFillLatencyMs > 0)
+                {
+                    var rk = RouteKey(o);
+                    if (_paperInFlight.ContainsKey(rk)) continue;
+                    if (_paperInFlight.Keys.Any(k => k.StartsWith(o.Symbol + "|", StringComparison.OrdinalIgnoreCase))) continue;
+                    if (_futPaper.GetOpenPositions().Any(p => p.Symbol.Equals(o.Symbol, StringComparison.OrdinalIgnoreCase))) continue;
+                    _paperInFlight[rk] = (o, DateTime.UtcNow.AddMilliseconds(snap.PaperFillLatencyMs));
+                    openedThisCycle++;
+                    continue;
+                }
                 var trade = _futPaper.TryOpen(o);
                 if (trade is null) continue;
                 if (trade.Status == "Open")

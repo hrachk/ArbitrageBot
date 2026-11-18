@@ -24,4 +24,6 @@ public record BookTicker
     public decimal BidQuantity { get; init; }
     public decimal AskQuantity { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+    /// <summary>True when this quote came from a REST poll, not a live socket book.</summary>
+    public bool IsRest { get; init; }
 }

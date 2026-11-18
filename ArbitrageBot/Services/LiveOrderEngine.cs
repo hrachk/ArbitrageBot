@@ -275,14 +275,64 @@ public sealed class LiveOrderEngine
             return new { ok = false, error = "safety: " + reserved.reason };
         }
 
+        // IOC limits with the same slip allowance the paper fill model uses.
+        var slip = Math.Max(0m, _runtime.Snapshot.IocSlipBps) / 10_000m;
+        if (slip <= 0m) slip = 0.0004m;
+        var longLimit = SnapLimit(req.LongAsk.Value, req.LongAsk.Value * (1m + slip), up: true);
+        var shortLimit = SnapLimit(req.ShortBid.Value, req.ShortBid.Value * (1m - slip), up: false);
+
+        // Both legs go out at once. Long-then-wait-for-confirm-then-short left the hedge
+        // one-legged for a full REST round trip plus fill confirmation (hundreds of ms),
+        // during which the spread usually closed and the short IOC missed — the most
+        // expensive failure mode of cross-venue arbitrage (unwind = 2 fees + spread).
+        Task<OrderExecution> SendShort() => SendOrderAsync(
+            shortClient, req.ShortExchange, sharedSym, SharedOrderSide.Sell, shortQty, lev,
+            SharedPositionSide.Short, isClose: false, clientId + "-S", ct,
+            limitPrice: shortLimit, expectedBaseQty: roundedQty);
+        var concurrentLegs = _runtime.Snapshot.LiveConcurrentLegs;
+        var shortTask = concurrentLegs ? SendShort() : null;
+
+        // If the long leg fails while a concurrent short is in flight, the short must be
+        // flattened (or quarantined) before returning. Returns an error object or null.
+        async Task<object?> FlattenConcurrentShortAsync(string why)
+        {
+            if (shortTask is null) return null;
+            OrderExecution sr;
+            try { sr = await shortTask.ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                QuarantineUnknownOrder(req, roundedQty, "concurrent short (" + why + ")", ex.Message);
+                return new { ok = false, error = "concurrent short state unknown; live killed for reconciliation" };
+            }
+            if (sr.Accepted && !sr.Verified)
+            {
+                QuarantineUnknownOrder(req, roundedQty, "concurrent short (" + why + ")", sr.Error);
+                return new { ok = false, error = "concurrent short accepted but unverified; live killed for reconciliation" };
+            }
+            if (sr.Verified && sr.FilledBaseQty > 0)
+            {
+                var u = await TryReduceAsync(shortClient, req.ShortExchange, sharedSym,
+                    QtyForExchange(req.ShortExchange, req.Symbol, sr.FilledBaseQty),
+                    SharedOrderSide.Buy, SharedPositionSide.Short, ct, sr.FilledBaseQty).ConfigureAwait(false);
+                if (!u.Ok)
+                {
+                    QuarantineUnknownOrder(req, sr.FilledBaseQty, "concurrent short unwind (" + why + ")", u.Error);
+                    return new { ok = false, error = "concurrent short fill could not be safely unwound" };
+                }
+            }
+            return null;
+        }
+
         // 1) LONG — hedge first; if the account is one-way, SendOrderAsync retries without positionSide.
         var longResult = await SendOrderAsync(
             longClient, req.LongExchange, sharedSym, SharedOrderSide.Buy, longQty, lev,
             SharedPositionSide.Long, isClose: false, clientId + "-L", ct,
-            limitPrice: SnapLimit(req.LongAsk.Value, req.LongAsk.Value * 1.0004m, up: true),
+            limitPrice: longLimit,
             expectedBaseQty: roundedQty).ConfigureAwait(false);
         if (!longResult.Ok)
         {
+            var shortFlat = await FlattenConcurrentShortAsync("long failed").ConfigureAwait(false);
+            if (shortFlat != null) return shortFlat;
             if (longResult.Accepted && !longResult.Verified)
             {
                 QuarantineUnknownOrder(req, roundedQty, "long", longResult.Error);
@@ -325,6 +375,8 @@ public sealed class LiveOrderEngine
         lock (_lock) SaveUnlocked();
         if (longResult.AveragePrice <= 0)
         {
+            var shortFlat2 = await FlattenConcurrentShortAsync("long price missing").ConfigureAwait(false);
+            if (shortFlat2 != null) return shortFlat2;
             var unwind = await TryReduceAsync(longClient, req.LongExchange, sharedSym,
                 QtyForExchange(req.LongExchange, req.Symbol, longResult.FilledBaseQty),
                 SharedOrderSide.Sell, SharedPositionSide.Long, ct, longResult.FilledBaseQty).ConfigureAwait(false);
@@ -333,12 +385,10 @@ public sealed class LiveOrderEngine
             return new { ok = false, error = "long fill confirmed but average price missing; hedge unwound or reconciliation required" };
         }
 
-        // 2) SHORT — same size; on fail always unwind long
-        var shortResult = await SendOrderAsync(
-            shortClient, req.ShortExchange, sharedSym, SharedOrderSide.Sell, shortQty, lev,
-            SharedPositionSide.Short, isClose: false, clientId + "-S", ct,
-            limitPrice: SnapLimit(req.ShortBid.Value, req.ShortBid.Value * 0.9996m, up: false),
-            expectedBaseQty: roundedQty).ConfigureAwait(false);
+        // 2) SHORT — same size (already in flight when concurrent); on fail always unwind long
+        var shortResult = shortTask != null
+            ? await shortTask.ConfigureAwait(false)
+            : await SendShort().ConfigureAwait(false);
         if (shortResult.Verified && shortResult.FilledBaseQty > 0)
         {
             pendingPosition.ShortBaseQty = shortResult.FilledBaseQty;

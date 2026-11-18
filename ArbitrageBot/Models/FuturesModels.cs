@@ -68,6 +68,8 @@ public record FuturesPaperTrade
 
 public class FuturesPaperPosition
 {
+    /// <summary>First time marks went missing; reset when a mark comes back. Orphan logic uses this, not OpenedAt.</summary>
+    public DateTime? NoMarkSinceUtc { get; set; }
     public required string Symbol { get; set; }
     public required string LongExchange { get; set; }
     public required string ShortExchange { get; set; }

@@ -303,6 +303,43 @@ public class FuturesPaperService : IFuturesPaperService
     }
 
 
+    /// <summary>
+    /// One leg filled and the other missed (IOC). Live unwinds the filled leg immediately;
+    /// paper books that cost so the paper PnL carries the same legging risk live does.
+    /// </summary>
+    public void RecordLegMiss(FuturesOpportunity opp, string filledExchange, decimal costUsd)
+    {
+        lock (_lock)
+        {
+            if (costUsd < 0) costUsd = 0;
+            _margin.AddOrUpdate(filledExchange, -costUsd, (_, v) => v - costUsd);
+            RealizedPnlUsd -= costUsd;
+            if (DateTime.UtcNow.Date != _dayUtc) { _dayUtc = DateTime.UtcNow.Date; DailyRealizedPnlUsd = 0; }
+            DailyRealizedPnlUsd -= costUsd;
+            _lastCloseUtc = DateTime.UtcNow;
+            var t = new FuturesPaperTrade
+            {
+                Symbol = opp.Symbol,
+                LongExchange = opp.LongExchange,
+                ShortExchange = opp.ShortExchange,
+                BaseQty = opp.BaseQty,
+                LongEntry = opp.LongAskVwap,
+                ShortEntry = opp.ShortBidVwap,
+                ClosedAt = DateTime.UtcNow,
+                IsOpen = false,
+                RealizedPnlUsd = -costUsd,
+                Status = "Closed(leg-miss)",
+                Message = $"IOC leg miss: only {filledExchange} filled, unwound | cost {costUsd:F4} USD"
+            };
+            _trades.Insert(0, t);
+            Trim();
+            _analytics.RecordClose(t);
+            SaveOpenState();
+            _logger.LogWarning("PAPER LEG MISS {Sym} {L}->{S}: only {Ex} filled, unwind cost {C:F4}",
+                opp.Symbol, opp.LongExchange, opp.ShortExchange, filledExchange, costUsd);
+        }
+    }
+
     public FuturesPaperTrade? ForceClose(
         Guid tradeId,
         Func<string, string, string, (decimal longBid, decimal shortAsk)?> getMarks,
@@ -328,8 +365,8 @@ public class FuturesPaperService : IFuturesPaperService
                 (longBid, shortAsk) = marks.Value;
             }
 
-            var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
-            var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
+            var longFee = ArbEconomics.TakerPercent(R.EstimatedTakerFees, pos.LongExchange);
+            var shortFee = ArbEconomics.TakerPercent(R.EstimatedTakerFees, pos.ShortExchange);
             var closeFactor = R.PaperCloseFeeFactor > 0 && R.PaperCloseFeeFactor <= 1m ? R.PaperCloseFeeFactor : 1m;
                 // Scalp/realistic: partial maker on exit reduces close fee drag
                 var closeFees = (longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m)) * closeFactor;
@@ -403,7 +440,11 @@ public class FuturesPaperService : IFuturesPaperService
                     // No live book → the quote that opened this hedge is gone.
                     // Three minutes, then book the open fee and ban the name for 6h.
                     // An 8-minute $0 orphan was how AKE reloaded twenty times.
-                    if ((DateTime.UtcNow - pos.OpenedAt).TotalMinutes >= 3)
+                    // Three CONTINUOUS minutes without a mark. The old check used position age,
+                    // so one missed tick on any hedge older than 3 minutes force-closed it at a
+                    // fee loss and banned the symbol for 6 hours.
+                    pos.NoMarkSinceUtc ??= DateTime.UtcNow;
+                    if ((DateTime.UtcNow - pos.NoMarkSinceUtc.Value).TotalMinutes >= 3)
                     {
                         var marginEachOrphan = pos.LockedMarginUsd > 0
                             ? pos.LockedMarginUsd
@@ -441,13 +482,14 @@ public class FuturesPaperService : IFuturesPaperService
                     }
                     continue;
                 }
+                pos.NoMarkSinceUtc = null;
                 var (longBid, shortAsk) = marks.Value;
 
                 // Close: sell long at bid, buy back short at ask
                 var exitSpreadPct = (longBid - shortAsk) / shortAsk * 100m; // usually negative when converged
                 // Entry locked edge roughly (shortEntry - longEntry); exit cost is crossing
-                var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m);
-                var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m);
+                var longFee = ArbEconomics.TakerPercent(R.EstimatedTakerFees, pos.LongExchange);
+                var shortFee = ArbEconomics.TakerPercent(R.EstimatedTakerFees, pos.ShortExchange);
                 var closeFactor = R.PaperCloseFeeFactor > 0 && R.PaperCloseFeeFactor <= 1m ? R.PaperCloseFeeFactor : 1m;
                 // Scalp/realistic: partial maker on exit reduces close fee drag
                 var closeFees = (longBid * pos.BaseQty * (longFee / 100m) + shortAsk * pos.BaseQty * (shortFee / 100m)) * closeFactor;
@@ -639,8 +681,8 @@ public class FuturesPaperService : IFuturesPaperService
                 var (longBid, shortAsk) = marks.Value;
                 if (longBid <= 0 || shortAsk <= 0) continue;
                 // Close long at bid, cover short at ask
-                var longFee = R.EstimatedTakerFees.GetValueOrDefault(pos.LongExchange, 0.05m) / 100m;
-                var shortFee = R.EstimatedTakerFees.GetValueOrDefault(pos.ShortExchange, 0.05m) / 100m;
+                var longFee = ArbEconomics.TakerPercent(R.EstimatedTakerFees, pos.LongExchange) / 100m;
+                var shortFee = ArbEconomics.TakerPercent(R.EstimatedTakerFees, pos.ShortExchange) / 100m;
                 var longPnl = (longBid - pos.LongEntry) * pos.BaseQty - pos.LongEntry * pos.BaseQty * longFee - longBid * pos.BaseQty * longFee;
                 var shortPnl = (pos.ShortEntry - shortAsk) * pos.BaseQty - pos.ShortEntry * pos.BaseQty * shortFee - shortAsk * pos.BaseQty * shortFee;
                 pos.LongUnrealizedPnlUsd = longPnl;

@@ -38,7 +38,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     public int LastScanPersistPending { get; private set; }
     private readonly ConcurrentDictionary<string, (decimal gross, DateTime utc)> _grossHistory = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _edgeFirstSeen = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, BasisStat> _basis = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, BasisEstimator> _basis = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (decimal rate, DateTime at)> _fundingCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _restSourced = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, decimal> _basePerContract = new(StringComparer.OrdinalIgnoreCase);
@@ -438,6 +438,70 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         return FillEstimate.Fail("no data");
     }
 
+    private IReadOnlyList<(decimal Price, decimal Quantity)>? Levels(string exchange, string symbol, bool asks)
+    {
+        var key = $"{exchange}:{symbol}";
+        if (_books.TryGetValue(key, out var book) && !_restSourced.ContainsKey(key))
+        {
+            var lv = asks
+                ? book.Asks?.Select(x => (x.Price, x.Quantity)).ToList()
+                : book.Bids?.Select(x => (x.Price, x.Quantity)).ToList();
+            if (lv is { Count: > 0 }) return lv;
+        }
+        if (_tickers.TryGetValue(key, out var t))
+        {
+            var px = asks ? t.BestAsk : t.BestBid;
+            var q = asks ? t.AskQuantity : t.BidQuantity;
+            if (px > 0 && q > 0) return [(px, q)];
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Fresh entry prices for a fixed base quantity on one route: what an IOC order sent now
+    /// would pay. Fresh is false when either leg fails the traded-leg freshness rule.
+    /// </summary>
+    public (decimal? LongAskVwap, decimal? ShortBidVwap, bool Fresh) QuoteEntry(
+        string symbol, string longEx, string shortEx, decimal baseQty)
+    {
+        var tk = GetBookTickers(symbol);
+        var fresh = false;
+        if (tk.TryGetValue(longEx, out var l) && tk.TryGetValue(shortEx, out var sh))
+        {
+            var snap = _runtime.Snapshot;
+            var now = DateTime.UtcNow;
+            fresh = QuoteGate.LegsFresh(
+                (now - l.Timestamp).TotalMilliseconds, (now - sh.Timestamp).TotalMilliseconds,
+                l.IsRest || _restSourced.ContainsKey($"{longEx}:{symbol}"),
+                sh.IsRest || _restSourced.ContainsKey($"{shortEx}:{symbol}"),
+                snap.TradeMaxQuoteAgeMs, snap.MaxLegSkewMs, out _);
+        }
+        var la = Levels(longEx, symbol, asks: true);
+        var sb = Levels(shortEx, symbol, asks: false);
+        return (la is null ? null : DepthMath.VwapForBaseQty(la, baseQty),
+                sb is null ? null : DepthMath.VwapForBaseQty(sb, baseQty),
+                fresh);
+    }
+
+    /// <summary>
+    /// Exit marks for an open hedge sized by depth: sell the long through the bids, buy the
+    /// short through the asks. Top-of-book marks overstate exits for anything but tiny size.
+    /// Returns null when a leg has no usable (age-filtered) quote.
+    /// </summary>
+    public (decimal longBid, decimal shortAsk)? ExitMarks(string symbol, string longEx, string shortEx, decimal baseQty)
+    {
+        var tk = GetBookTickers(symbol);
+        if (!tk.TryGetValue(longEx, out var l) || !tk.TryGetValue(shortEx, out var sh)) return null;
+        if (l.BestBid <= 0 || sh.BestAsk <= 0) return null;
+        if (baseQty <= 0) return (l.BestBid, sh.BestAsk);
+        var lb = Levels(longEx, symbol, asks: false);
+        var sa = Levels(shortEx, symbol, asks: true);
+        var lv = lb is null ? null : DepthMath.VwapForBaseQty(lb, baseQty);
+        var sv = sa is null ? null : DepthMath.VwapForBaseQty(sa, baseQty);
+        // Book too thin for the whole size: mark the remainder conservatively at 0.3% through the touch.
+        return (lv ?? l.BestBid * 0.997m, sv ?? sh.BestAsk * 1.003m);
+    }
+
     private static FillEstimate Walk(IReadOnlyList<(decimal Price, decimal Quantity)> levels, decimal quoteAmount, bool isBuy)
     {
         decimal remaining = quoteAmount, filledBase = 0, filledQuote = 0;
@@ -477,8 +541,11 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
     public async Task<IReadOnlyList<FuturesOpportunity>> ScanAsync(CancellationToken ct = default)
     {
-        if (_options.FuturesIncludeFunding)
-            await RefreshFundingCacheAsync(ct);
+        // Never await this here: it sleeps 350 ms per symbol, so awaiting it froze the
+        // whole scan loop for several seconds every 45 minutes while books kept ageing.
+        if (_options.FuturesIncludeFunding && DateTime.UtcNow - _lastFundingRefreshUtc >= FundingCacheTtl)
+            _ = Task.Run(() => RefreshFundingCacheAsync(_restCts.Token));
+        await Task.CompletedTask;
 
         var list = new List<FuturesOpportunity>();
         // Professional: one size for scan/paper/live. Cap by max notional so we never skip "180 > 100".
@@ -551,11 +618,20 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (!tickers.TryGetValue(longEx, out var longTk) || !tickers.TryGetValue(shortEx, out var shortTk))
                         continue;
                     var widthOk = ArbEconomics.BooksTradable(longTk.BestBid, longTk.BestAsk, shortTk.BestBid, shortTk.BestAsk);
+                    var nowUtc = DateTime.UtcNow;
+                    var snapF = _runtime.Snapshot;
+                    var freshOk = QuoteGate.LegsFresh(
+                        (nowUtc - longTk.Timestamp).TotalMilliseconds,
+                        (nowUtc - shortTk.Timestamp).TotalMilliseconds,
+                        longTk.IsRest || _restSourced.ContainsKey($"{longEx}:{symbol}"),
+                        shortTk.IsRest || _restSourced.ContainsKey($"{shortEx}:{symbol}"),
+                        snapF.TradeMaxQuoteAgeMs, snapF.MaxLegSkewMs, out _);
+                    if (!freshOk) LastScanStaleSkipped++;
                     // Learn this route's fair cross from tight books only, including flat and inverted.
                     // A wide print must not become the basis, or the next wide print looks like edge.
                     var grossNow = (shortVwap - longVwap) / longVwap * 100m;
                     var edgeKey = $"{symbol}|{longEx}|{shortEx}";
-                    if (widthOk && grossNow < ArbEconomics.MaxSaneGrossPercent && grossNow > -ArbEconomics.MaxSaneGrossPercent)
+                    if (widthOk && freshOk && grossNow < ArbEconomics.MaxSaneGrossPercent && grossNow > -ArbEconomics.MaxSaneGrossPercent)
                         NoteBasis(edgeKey, grossNow);
                     if (shortVwap <= longVwap) continue;
                     var twoSided = mids.Count < 3 || ArbEconomics.TwoSidedDislocation(median, longVwap, shortVwap);
@@ -602,6 +678,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     decimal fundPct = 0;
                     if (snap.FuturesIncludeFunding && frLong is not null && frShort is not null)
                         fundPct = (frShort.Value - frLong.Value) * periods * 100m;
+                    // Settlement-aware funding: only settlements inside the hold horizon cost money.
+                    var nextLong = _fundingSvc?.GetLatest(symbol, longEx)?.NextFundingUtc;
+                    var nextShort = _fundingSvc?.GetLatest(symbol, shortEx)?.NextFundingUtc;
+                    var timed = nextLong is { } nl && nl != default && nextShort is { } ns && ns != default;
+                    var horizon = TimeSpan.FromMinutes(snap.FundingHorizonMinutes > 0 ? snap.FundingHorizonMinutes : 20);
+                    var fundCostInHorizon = timed
+                        ? FundingModel.CostInHorizonPercent(frLong, nextLong, frShort, nextShort, DateTime.UtcNow, horizon)
+                        : null;
 
                     // Display only. Positive funding must not turn a losing price hedge into a buy.
                     var netAfterFund = netRt + fundPct;
@@ -614,12 +698,14 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     var reserveNow = ArbEconomics.ExecutionReservePercent(snap.OpenEdgeBufferPercent);
                     var minEdge = ArbEconomics.RequiredNetPercent(snap.MinProfitPercent);
-                    var configuredGross = snap.MinGrossSpreadPercent > 0 ? snap.MinGrossSpreadPercent : openFees + 0.04m;
-                    if (configuredGross > 0.22m) configuredGross = 0.22m;
-                    var minGross = Math.Max(configuredGross, openFees + 0.02m);
+                    // Operator's minimum gross is respected (the old code capped it at 0.22).
+                    var minGross = ArbEconomics.RequiredGrossPercent(snap.MinGrossSpreadPercent, openFees);
                     var minTp = ArbEconomics.RequiredTakeProfitUsd(snap.MinTakeProfitUsd, matchedNotional);
                     // Next funding interval would cost more than the price edge can carry.
-                    var fundingOk = fundPct >= -0.02m || fundPct >= -(netRt * 0.35m);
+                    var fundingOk = !snap.FuturesIncludeFunding
+                        || (timed
+                            ? FundingModel.Allows(fundCostInHorizon, netRt)
+                            : (fundPct >= -0.02m || fundPct >= -(netRt * 0.35m)));
 
                     var spreadingOk = true;
                     if (snap.RequireSpreadingEdge)
@@ -652,7 +738,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
 
                     // Persist counts only while the trade is actually good. A pair seen earlier at 0.05%
                     // must not make a one-tick 0.5% spike look "held for 800ms".
-                    var gateNow = basisReady && !banned && spikeOk && widthOk && touchOk && twoSided && sane
+                    var gateNow = basisReady && freshOk && !banned && spikeOk && widthOk && touchOk && twoSided && sane
                         && gross >= minGross && netRt >= minEdge && pricePnl >= minTp && fundingOk && fillOk && spreadingOk;
                     bool persistOk;
                     if (!gateNow)
@@ -662,9 +748,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     }
                     else
                     {
-                        var persistMs = snap.MinSpreadPersistMs;
-                        if (persistMs < 200) persistMs = 200;
-                        if (persistMs > 500) persistMs = 500;
+                        var persistMs = ArbEconomics.PersistMs(snap.MinSpreadPersistMs);
                         var first = _edgeFirstSeen.GetOrAdd(edgeKey, _ => DateTime.UtcNow);
                         var heldMs = (DateTime.UtcNow - first).TotalMilliseconds;
                         persistOk = heldMs >= persistMs;
@@ -675,6 +759,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     var executable = gateNow && persistOk;
                     var gateNote = executable ? null
                         : !basisReady ? "basis-warmup"
+                        : !freshOk ? "stale"
                         : banned ? "ban"
                         : !spikeOk ? "spike"
                         : !touchOk ? "touch"
@@ -929,45 +1014,20 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         return true;
     }
 
-    private sealed class BasisStat
-    {
-        public decimal Ema;
-        public decimal Dev;
-        public long FirstMs;
-        public long LastMs;
-        public int N;
-    }
-
     /// <summary>
     /// Slow baseline of this directed cross. Half-life ~35s at 1 Hz:
     /// a two-minute structural premium is learned, a one-second print is not.
     /// </summary>
     private void NoteBasis(string key, decimal gross)
-    {
-        if (gross > 25m || gross < -25m) return;
-        var now = Environment.TickCount64;
-        var s = _basis.GetOrAdd(key, _ => new BasisStat());
-        if (s.N > 0 && now - s.LastMs < 700) return;
-        s.LastMs = now;
-        s.N++;
-        if (s.N == 1)
-        {
-            s.Ema = gross;
-            s.FirstMs = now;
-            return;
-        }
-        const decimal alpha = 0.02m;
-        var err = gross - s.Ema;
-        s.Ema += alpha * err;
-        var ad = err < 0 ? -err : err;
-        s.Dev += alpha * (ad - s.Dev);
-    }
+        => _basis.GetOrAdd(key, _ => new BasisEstimator()).Observe(gross, Environment.TickCount64);
 
     private (decimal Fair, decimal Dev, bool Ready) ReadBasis(string key)
     {
-        if (!_basis.TryGetValue(key, out var s) || s.N < 4) return (0m, 0m, false);
-        if (s.LastMs - s.FirstMs < 12_000) return (s.Ema, s.Dev, false);
-        return (s.Ema, s.Dev, true);
+        if (!_basis.TryGetValue(key, out var b)) return (0m, 0m, false);
+        var snap = _runtime.Snapshot;
+        var minSamples = snap.BasisMinSamples > 0 ? snap.BasisMinSamples : 60;
+        var minSpanMs = (snap.BasisMinSpanSeconds > 0 ? snap.BasisMinSpanSeconds : 90) * 1000L;
+        return b.Read(minSamples, minSpanMs);
     }
 
     private async Task StoreRestBookAsync(string exchange, string symbol, CancellationToken ct)
@@ -985,7 +1045,8 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             BestAsk = ask.Price,
             BidQuantity = bid.Qty,
             AskQuantity = ask.Qty,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            IsRest = true
         };
         _restSourced[key] = 1;
         _status[key] = "rest-book";
