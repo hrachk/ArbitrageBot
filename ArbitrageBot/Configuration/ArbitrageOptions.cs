@@ -164,6 +164,9 @@ public class ArbitrageOptions
     public int ScalpCooldownSeconds { get; set; } = 20;
     /// <summary>Scalp with real orders. Needs live orders enabled as well; off by default.</summary>
     public bool ScalpLive { get; set; } = false;
+    /// <summary>Venues the scalper may trade, comma separated (e.g. "Binance"). Empty = every venue.
+    /// The lag is still measured against all venues. Live scalping also skips venues without trade keys.</summary>
+    public string ScalpVenues { get; set; } = "";
 
     // ---- Execution realism (audit 2026-11) ----
     /// <summary>A traded leg's quote must be younger than this (ms). REST snapshots are never a traded leg.</summary>

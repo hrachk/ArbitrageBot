@@ -912,7 +912,7 @@ function renderScalp() {
   return `
   <section class="panel">
     <div class="panel-body row wrap" style="gap:18px;align-items:center">
-      <div style="flex:1;min-width:260px"><div class="row" style="gap:10px"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}</div>
+      <div style="flex:1;min-width:260px"><div class="row" style="gap:10px"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}<span class="badge">биржи: ${esc(sc.venues || 'все')}</span>${sc.live ? `<span class="badge ${sc.liveVenues?.length ? 'pos' : 'neg'}">${sc.liveVenues?.length ? 'реально на: ' + esc(sc.liveVenues.join(', ')) : 'нет бирж с trade-ключами'}</span>` : ''}</div>
         <p class="prose" style="margin:8px 0 0">Ловит момент, когда рынок на большинстве бирж уже сдвинулся, а одна биржа отстала. Берёт одну ногу на отстающей бирже в сторону рынка и выходит, когда она догонит. Торгует на отдельном депозите и не трогает символы, которые держит арбитраж.</p></div>
       <button class="btn ${sc.enabled ? '' : 'primary'}" data-act="scalp-toggle" style="height:40px">${sc.enabled ? ICON.pause + 'Выключить' : ICON.play + 'Включить скальпер'}</button>
     </div>
@@ -1042,6 +1042,7 @@ const SETTINGS = [
   { id: 'scalp', title: 'Скальпер', lead: 'Одна нога на отстающей бирже, отдельный депозит. Не занимает лимиты, маржу и дневной стоп арбитража и не торгует символы, которые держит арбитраж.', fields: [
     ['spatialScalpMode', 'Скальпер включён', 'bool', 'Без этого он только наблюдает за рынком'],
     ['scalpLive', 'Скальпить реальными ордерами', 'bool', 'Действует, только когда live-ордера включены. Иначе скальп идёт в paper'],
+    ['scalpVenues', 'Биржи скальпера', 'text', 'Через запятую, например Binance. Пусто — все. Реальные ордера идут только туда, где есть ключи с правом trade'],
     ['scalpDepositUsd', 'Депозит скальпера', 'num', 'Держите эти USDT на биржах сверх капитала арбитража', 'USDT'],
     ['scalpLeverage', 'Плечо', 'num', 'От 1 до 5. Большее значение будет снижено до 5', 'x'],
     ['scalpMaxOpen', 'Позиций одновременно', 'int', 'Депозит делится между ними'],
@@ -1071,6 +1072,7 @@ function renderSettings() {
   const field = ([k, label, type, hint, unit]) => {
     const id = 'f_' + k;
     if (type === 'bool') return `<div class="field"><span class="lbl">${esc(label)}</span><label class="switch"><input type="checkbox" id="${id}" data-k="${k}" ${val(k) ? 'checked' : ''}><span class="track"></span><span class="small mut">${val(k) ? 'включено' : 'выключено'}</span></label>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
+    if (type === 'text') return `<div class="field"><label for="${id}">${esc(label)}</label><div class="input-wrap"><input class="input ${settingsDraft.dirty.has(k) ? 'dirty' : ''}" id="${id}" data-k="${k}" data-t="text" autocomplete="off" spellcheck="false" value="${esc(val(k) ?? '')}"></div>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
     return `<div class="field"><label for="${id}">${esc(label)}</label><div class="input-wrap"><input class="input num ${settingsDraft.dirty.has(k) ? 'dirty' : ''}" id="${id}" data-k="${k}" data-t="${type}" inputmode="decimal" value="${esc(val(k) ?? '')}">${unit ? `<span class="unit">${esc(unit)}</span>` : ''}</div>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
   };
   return `<div class="settings">
@@ -1362,7 +1364,14 @@ function wire() {
     if (t.id === 'mkSize') { S.mk.size = parseFloat(t.value.replace(',', '.')); schedule(); }
     if (t.id === 'mkLev') { S.mk.lev = parseFloat(t.value.replace(',', '.')); schedule(); }
     if (t.dataset.k && t.type !== 'checkbox') {
-      const k = t.dataset.k; const raw = t.value.replace(',', '.');
+      const k = t.dataset.k;
+      if (t.dataset.t === 'text') {
+        const v = t.value.trim();
+        if ((S.settings.trading[k] ?? '') === v) { settingsDraft.dirty.delete(k); t.classList.remove('dirty'); }
+        else { settingsDraft.values[k] = v; settingsDraft.dirty.add(k); t.classList.add('dirty'); }
+        syncSavebar(); return;
+      }
+      const raw = t.value.replace(',', '.');
       let v = t.dataset.t === 'int' ? parseInt(raw, 10) : parseFloat(raw);
       if (k === 'scalpLeverage' && Number.isFinite(v)) v = Math.min(5, Math.max(1, v));
       if (raw === '' || !Number.isFinite(v)) { t.classList.add('dirty'); return; }

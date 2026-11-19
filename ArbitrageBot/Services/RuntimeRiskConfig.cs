@@ -85,6 +85,7 @@ public sealed class RuntimeRiskConfig
             if (t.ScalpMaxHoldSeconds is { } sh && sh > 0) _opts.ScalpMaxHoldSeconds = Math.Clamp(sh, 5, 3600);
             if (t.ScalpCooldownSeconds is { } sc && sc >= 0) _opts.ScalpCooldownSeconds = Math.Clamp(sc, 0, 3600);
             if (t.ScalpLive is { } slv) _opts.ScalpLive = slv;
+            if (t.ScalpVenues != null) _opts.ScalpVenues = t.ScalpVenues.Trim();
             _opts.DynamicSymbols = t.DynamicSymbols;
             if (t.DynamicTopN > 0) _opts.DynamicTopN = t.DynamicTopN;
             if (t.DynamicMinQuoteVolumeUsd > 0) _opts.DynamicMinQuoteVolumeUsd = t.DynamicMinQuoteVolumeUsd;
@@ -218,6 +219,7 @@ public sealed class RuntimeRiskConfig
         ScalpMaxHoldSeconds = o.ScalpMaxHoldSeconds,
         ScalpCooldownSeconds = o.ScalpCooldownSeconds,
         ScalpLive = o.ScalpLive,
+        ScalpVenues = o.ScalpVenues,
         LivePaperLeverage = o.LivePaperLeverage,
         FuturesMaxOpenPositions = o.FuturesMaxOpenPositions,
         FuturesMaxHoldMinutes = o.FuturesMaxHoldMinutes,

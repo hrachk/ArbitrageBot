@@ -746,6 +746,15 @@ public sealed class LiveOrderEngine
         }
     }
 
+    /// <summary>True when this venue has enabled keys with trade permission (no client is created).</summary>
+    public bool HasTradeCredentials(string exchange)
+    {
+        var cred = _settings.GetCredential(exchange);
+        return cred != null && cred.Enabled
+            && string.Equals(cred.Permission, "trade", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(cred.ApiKey) && !string.IsNullOrWhiteSpace(cred.ApiSecret);
+    }
+
     private ExchangeRestClient? CreateClient(string exchange)
     {
         var cred = _settings.GetCredential(exchange);

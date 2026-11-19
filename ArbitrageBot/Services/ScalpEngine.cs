@@ -112,6 +112,11 @@ public sealed class ScalpEngine
                 enabled = snap.SpatialScalpMode,
                 live = LiveScalping,
                 liveRequested = snap.ScalpLive,
+                venues = string.IsNullOrWhiteSpace(snap.ScalpVenues) ? "все" : snap.ScalpVenues,
+                liveVenues = LiveScalping
+                    ? new[] { "Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin" }
+                        .Where(x => VenueTradable(x, ParseVenues(snap.ScalpVenues), true)).ToArray()
+                    : Array.Empty<string>(),
                 lastNote = _lastNote,
                 settings = new
                 {
@@ -323,11 +328,27 @@ public sealed class ScalpEngine
     private void PauseSymbol(string symbol, int ms)
         => _symbolPauseUntil[symbol] = DateTime.UtcNow.AddMilliseconds(ms);
 
+    private static HashSet<string>? ParseVenues(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return null;
+        var set = new HashSet<string>(csv.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim()), StringComparer.OrdinalIgnoreCase);
+        return set.Count == 0 ? null : set;
+    }
+
+    private bool VenueTradable(string exchange, HashSet<string>? allowed, bool liveMode)
+        => (allowed == null || allowed.Contains(exchange))
+           && (!liveMode || (_orders.HasTradeCredentials(exchange)
+               && (_runtime.Snapshot.LiveAllowedExchanges is not { Count: > 0 } la
+                   || la.Contains(exchange, StringComparer.OrdinalIgnoreCase))));
+
     private (string Symbol, LagSignal Signal)? Pick(decimal notional, ArbitrageOptions snap)
     {
         (string, LagSignal)? best = null;
         var now = Environment.TickCount64;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allowed = ParseVenues(snap.ScalpVenues);
+        var liveMode = LiveScalping;
         foreach (var symbol in _markets.Symbols)
         {
             var move = MarketMove(symbol);
@@ -337,6 +358,9 @@ public sealed class ScalpEngine
             if (live.Count < 3) continue;
             foreach (var v in live)
             {
+                // The lag is measured against every venue, but we only trade on allowed venues
+                // and, for real orders, only where trade keys exist.
+                if (!VenueTradable(v.Exchange, allowed, liveMode)) continue;
                 var (fair, ready) = FairOffset(symbol, v.Exchange);
                 if (!ready) continue;
                 var r = LeadLag.ReferenceMid(live, v.Exchange);
