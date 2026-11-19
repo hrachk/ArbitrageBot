@@ -1043,7 +1043,7 @@ const SETTINGS = [
     ['spatialScalpMode', 'Скальпер включён', 'bool', 'Без этого он только наблюдает за рынком'],
     ['scalpLive', 'Скальпить реальными ордерами', 'bool', 'Действует, только когда live-ордера включены. Иначе скальп идёт в paper'],
     ['scalpDepositUsd', 'Депозит скальпера', 'num', 'Держите эти USDT на биржах сверх капитала арбитража', 'USDT'],
-    ['scalpLeverage', 'Плечо', 'num', 'От 1 до 5', 'x'],
+    ['scalpLeverage', 'Плечо', 'num', 'От 1 до 5. Большее значение будет снижено до 5', 'x'],
     ['scalpMaxOpen', 'Позиций одновременно', 'int', 'Депозит делится между ними'],
     ['scalpDailyLossUsd', 'Дневной лимит убытка', 'num', 'После него скальпер не открывает сделки до конца дня UTC', 'USDT'],
     ['scalpEntryPercent', 'Мин. отставание биржи', 'num', 'От её обычного смещения к остальным', '%'],
@@ -1363,7 +1363,8 @@ function wire() {
     if (t.id === 'mkLev') { S.mk.lev = parseFloat(t.value.replace(',', '.')); schedule(); }
     if (t.dataset.k && t.type !== 'checkbox') {
       const k = t.dataset.k; const raw = t.value.replace(',', '.');
-      const v = t.dataset.t === 'int' ? parseInt(raw, 10) : parseFloat(raw);
+      let v = t.dataset.t === 'int' ? parseInt(raw, 10) : parseFloat(raw);
+      if (k === 'scalpLeverage' && Number.isFinite(v)) v = Math.min(5, Math.max(1, v));
       if (raw === '' || !Number.isFinite(v)) { t.classList.add('dirty'); return; }
       if (String(S.settings.trading[k]) === String(v)) { settingsDraft.dirty.delete(k); t.classList.remove('dirty'); }
       else { settingsDraft.values[k] = v; settingsDraft.dirty.add(k); t.classList.add('dirty'); }
