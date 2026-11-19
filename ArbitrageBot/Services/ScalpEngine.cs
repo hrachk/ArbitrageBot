@@ -45,6 +45,9 @@ public sealed class ScalpEngine
     private readonly ConcurrentDictionary<string, DateTime> _symbolPauseUntil = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _lastOpenUtc = DateTime.MinValue;
     private string _lastNote = "";
+    // What the scalper sees right now, for the UI: how many venue/symbol pairs it watches and the one
+    // closest to an entry, with what is still missing. Rebuilt every pick.
+    private object? _watch;
 
     private const long MarketMoveWindowMs = 3000;
     private const int OffsetMinSamples = 40;
@@ -138,6 +141,7 @@ public sealed class ScalpEngine
                         .Where(x => VenueTradable(x, ParseVenues(snap.ScalpVenues), true)).ToArray()
                     : Array.Empty<string>(),
                 lastNote = _lastNote,
+                watch = _watch,
                 settings = new
                 {
                     depositUsd = snap.ScalpDepositUsd, leverage = lev, maxOpen = snap.ScalpMaxOpen,
@@ -371,22 +375,32 @@ public sealed class ScalpEngine
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allowed = ParseVenues(snap.ScalpVenues);
         var liveMode = LiveScalping;
+        int watched = 0, warming = 0, noMove = 0, fewVenues = 0;
+        (string Sym, string Ex, decimal Dev, decimal Move, decimal Width, decimal Ratio)? near = null;
         foreach (var symbol in _markets.Symbols)
         {
             var move = MarketMove(symbol);
-            if (move is null) continue;
+            if (move is null) { noMove++; continue; }
             var q = Quotes(symbol);
             var live = q.Where(x => x.Fresh).ToList();
-            if (live.Count < 3) continue;
+            if (live.Count < 3) { fewVenues++; continue; }
             foreach (var v in live)
             {
                 // The lag is measured against every venue, but we only trade on allowed venues
                 // and, for real orders, only where trade keys exist.
                 if (!VenueTradable(v.Exchange, allowed, liveMode)) continue;
+                watched++;
                 var (fair, ready) = FairOffset(symbol, v.Exchange);
-                if (!ready) continue;
+                if (!ready) { warming++; continue; }
                 var r = LeadLag.ReferenceMid(live, v.Exchange);
                 if (r is not { } rm) continue;
+                {
+                    var dev0 = LeadLag.OffsetPercent(v.Mid, rm) - fair;
+                    var th0 = Math.Max(0.05m, snap.ScalpEntryPercent);
+                    var ratio = Math.Abs(dev0) / th0;
+                    if (near == null || ratio > near.Value.Ratio)
+                        near = (symbol, v.Exchange, dev0, move.Value, v.WidthPercent, ratio);
+                }
                 var fee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, v.Exchange);
                 var sig = LeadLag.Evaluate(v, rm, fair, move.Value, snap.ScalpEntryPercent, fee, snap.ScalpMinNetPercent);
                 var key = symbol + "|" + v.Exchange;
@@ -405,6 +419,31 @@ public sealed class ScalpEngine
             }
         }
         foreach (var k in _signalSince.Keys) if (!seen.Contains(k)) _signalSince.TryRemove(k, out _);
+        {
+            var th = Math.Max(0.05m, snap.ScalpEntryPercent);
+            string? why = null;
+            if (near is { } n)
+            {
+                var lagOk = Math.Abs(n.Dev) >= th;
+                var moveOk = n.Dev < 0 ? n.Move >= th / 2m : n.Move <= -th / 2m;
+                why = !lagOk ? $"отставание {Math.Abs(n.Dev):F3}% меньше порога {th:F2}%"
+                    : !moveOk ? $"рынок сдвинулся на {n.Move:F3}%, нужно {(n.Dev < 0 ? "+" : "−")}{th / 2m:F3}%"
+                    : n.Width > 0.12m ? $"стакан широкий {n.Width:F3}%"
+                    : "не покрывает комиссии, держится меньше 300 мс или мало объёма на лучшей цене";
+            }
+            _watch = new
+            {
+                symbols = _markets.Symbols.Count(),
+                watched, warming, noMove, fewVenues,
+                thresholdPercent = th,
+                nearest = near is { } m ? new
+                {
+                    symbol = m.Sym, exchange = m.Ex, lagPercent = m.Dev, marketMovePercent = m.Move,
+                    widthPercent = m.Width, ofThreshold = m.Ratio, why
+                } : null,
+                utc = DateTime.UtcNow
+            };
+        }
         if (best is { } b)
             _lastNote = $"{b.Item1} {b.Item2.Exchange} {(b.Item2.IsLong ? "long" : "short")}: отставание {b.Item2.DeviationPercent:F3}%, рынок {b.Item2.MarketMovePercent:F3}%";
         return best;
