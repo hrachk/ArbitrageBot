@@ -86,7 +86,9 @@ try
     builder.Services.AddSingleton<RuntimeRiskConfig>();
     builder.Services.AddSingleton<LiveTradingGuard>();
     builder.Services.AddSingleton<LiveOrderEngine>();
+    builder.Services.AddSingleton<ExposureRegistry>();
     builder.Services.AddSingleton<ScalpEngine>();
+    builder.Services.AddHostedService<ScalpWorker>();
     builder.Services.AddSingleton<LiveSafetyService>();
     builder.Services.AddHttpClient("live-alerts");
     builder.Services.AddSingleton<ILiveExecutionService, LiveExecutionService>();
@@ -453,6 +455,7 @@ try
     app.MapGet("/api/analytics/trades", (IPaperAnalyticsStore a, int take = 1000, int skip = 0) => Results.Json(a.GetTradeDetails(take, skip)));
     app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 90) => Results.Json(a.GetDaySummaries(maxDays)));
     app.MapGet("/api/scalp", (ScalpEngine scalp) => Results.Json(scalp.Snapshot()));
+    app.MapPost("/api/scalp/reset-paper", (ScalpEngine scalp) => Results.Ok(new { removed = scalp.ResetPaperHistory() }));
 
     // Telegram Mini App: one payload for mobile reports panel
     app.MapGet("/api/tg/report", (IPaperAnalyticsStore a, ArbitrageState state, IFuturesPaperService paper, int days = 7) =>

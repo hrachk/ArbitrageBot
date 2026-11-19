@@ -242,3 +242,96 @@ public static class DepthMath
         return quote / (baseQty - Math.Max(0m, remaining));
     }
 }
+
+/// <summary>One venue's quote as the scalper sees it.</summary>
+public readonly record struct VenueQuote(string Exchange, decimal Bid, decimal Ask, bool Fresh)
+{
+    public decimal Mid => (Bid + Ask) / 2m;
+    public decimal WidthPercent => Bid > 0 ? (Ask - Bid) / Bid * 100m : 99m;
+}
+
+public sealed record LagSignal(
+    string Exchange, bool IsLong, decimal DeviationPercent, decimal MarketMovePercent,
+    decimal WidthPercent, decimal ExpectedNetPercent, decimal EntryPrice, decimal ReferenceMid);
+
+/// <summary>
+/// Single-leg lead-lag scalp. Perpetual prices are discovered on a few venues and the rest
+/// follow within hundreds of milliseconds to seconds. When the market (median of the other
+/// venues) has moved and one venue has not followed beyond its usual offset, buy/sell that
+/// venue in the direction of the market and exit when it has caught up.
+///
+/// This targets the dislocations the hedge cannot use: a hedge pays four taker fees, one
+/// leg pays two. It replaces the touch-imbalance signal that lost on all 20 of its paper
+/// trades (each exited at entry price, losing exactly two fees).
+/// </summary>
+public static class LeadLag
+{
+    /// <summary>Median of the mids of every fresh venue except <paramref name="exclude"/>.</summary>
+    public static decimal? ReferenceMid(IReadOnlyList<VenueQuote> quotes, string exclude)
+    {
+        var mids = quotes.Where(q => q.Fresh && q.Bid > 0 && q.Ask > q.Bid
+                && !q.Exchange.Equals(exclude, StringComparison.OrdinalIgnoreCase))
+            .Select(q => q.Mid).OrderBy(m => m).ToList();
+        if (mids.Count < 2) return null;
+        var n = mids.Count;
+        return n % 2 == 1 ? mids[n / 2] : (mids[n / 2 - 1] + mids[n / 2]) / 2m;
+    }
+
+    /// <summary>Venue offset from the reference, percent (positive = venue rich).</summary>
+    public static decimal OffsetPercent(decimal venueMid, decimal referenceMid)
+        => referenceMid > 0 ? (venueMid - referenceMid) / referenceMid * 100m : 0m;
+
+    /// <summary>
+    /// Evaluate one venue. <paramref name="fairOffsetPercent"/> is the venue's learned normal
+    /// offset; <paramref name="marketMovePercent"/> is how far the all-venue median moved over the
+    /// last few seconds. Returns null when there is no trade.
+    /// </summary>
+    public static LagSignal? Evaluate(
+        VenueQuote venue, decimal referenceMid, decimal fairOffsetPercent, decimal marketMovePercent,
+        decimal entryThresholdPercent, decimal takerPercent, decimal minNetPercent, decimal maxWidthPercent = 0.12m)
+    {
+        if (!venue.Fresh || venue.Bid <= 0 || venue.Ask <= venue.Bid || referenceMid <= 0) return null;
+        var width = venue.WidthPercent;
+        if (width > maxWidthPercent) return null;
+        var dev = OffsetPercent(venue.Mid, referenceMid) - fairOffsetPercent;
+        var th = Math.Max(0.05m, entryThresholdPercent);
+        bool isLong;
+        if (dev <= -th && marketMovePercent >= th / 2m) isLong = true;        // market up, venue behind
+        else if (dev >= th && marketMovePercent <= -th / 2m) isLong = false;  // market down, venue behind
+        else return null;
+        // Catch-up to the fair offset is the gross; we cross the venue's book once in, once out.
+        var expected = Math.Abs(dev) - width - 2m * Math.Max(0m, takerPercent);
+        if (expected < Math.Max(0m, minNetPercent)) return null;
+        return new LagSignal(venue.Exchange, isLong, dev, marketMovePercent, width, expected,
+            isLong ? venue.Ask : venue.Bid, referenceMid);
+    }
+
+    /// <summary>Net PnL in USD of a single leg marked at <paramref name="exitPrice"/>, both fees paid.</summary>
+    public static decimal NetUsd(bool isLong, decimal entry, decimal exitPrice, decimal qty, decimal takerPercent)
+    {
+        var gross = isLong ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
+        return gross - (entry + exitPrice) * qty * Math.Max(0m, takerPercent) / 100m;
+    }
+
+    /// <summary>
+    /// Exit decision for an open scalp. <paramref name="currentDeviationPercent"/> is the venue's
+    /// current deviation from its fair offset (same sign convention as entry).
+    /// </summary>
+    public static string? ExitReason(
+        bool isLong, decimal entry, decimal mark, decimal netUsd, decimal notionalUsd,
+        decimal currentDeviationPercent, decimal marketMoveSinceEntryPercent, double ageSeconds,
+        decimal stopPercent, int maxHoldSeconds, decimal expectedNetPercent)
+    {
+        if (entry <= 0 || mark <= 0) return null;
+        var adverse = isLong ? (entry - mark) / entry * 100m : (mark - entry) / entry * 100m;
+        if (adverse >= Math.Max(0.05m, stopPercent)) return "stop";
+        var caughtUp = isLong ? currentDeviationPercent >= -0.02m : currentDeviationPercent <= 0.02m;
+        if (caughtUp && netUsd > 0) return "caught-up";
+        if (notionalUsd > 0 && netUsd >= notionalUsd * Math.Max(0.02m, expectedNetPercent) / 100m) return "target";
+        var reversed = isLong ? marketMoveSinceEntryPercent <= -Math.Max(0.05m, stopPercent / 2m)
+                              : marketMoveSinceEntryPercent >= Math.Max(0.05m, stopPercent / 2m);
+        if (reversed) return "market-reversed";
+        if (ageSeconds >= Math.Max(5, maxHoldSeconds)) return netUsd > 0 ? "time-profit" : "time";
+        return null;
+    }
+}

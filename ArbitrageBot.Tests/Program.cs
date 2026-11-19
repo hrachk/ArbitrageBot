@@ -26,6 +26,7 @@ internal static class Program
         Funding();
         Fills();
         Depth();
+        Scalp();
 
         Console.WriteLine($"passed {_pass}, failed {_fail}");
         foreach (var f in Failures) Console.WriteLine("  FAIL " + f);
@@ -196,5 +197,44 @@ internal static class Program
         Near("depth: vwap across two levels", DepthMath.VwapForBaseQty(lv, 1.5m)!.Value, 15.5m / 1.5m);
         Check("depth: insufficient book -> null", DepthMath.VwapForBaseQty(lv, 3m) is null);
         Near("depth: exact top level", DepthMath.VwapForBaseQty(lv, 1m)!.Value, 10m);
+    }
+
+    private static void Scalp()
+    {
+        var quotes = new List<VenueQuote>
+        {
+            new("Binance", 100.40m, 100.42m, true), new("Bybit", 100.39m, 100.41m, true),
+            new("OKX", 100.41m, 100.43m, true), new("GateIo", 99.98m, 100.00m, true),
+        };
+        var r = LeadLag.ReferenceMid(quotes, "GateIo")!.Value;
+        Near("scalp: reference excludes the venue itself", r, 100.41m);
+        Check("scalp: needs two other live venues", LeadLag.ReferenceMid([new("A", 1m, 1.01m, true), new("B", 1m, 1.01m, true)], "A") is null);
+
+        var gate = quotes[3];
+        // Market moved up 0.4%, Gate.io stayed behind by ~0.41% vs its normal offset of 0.
+        var sig = LeadLag.Evaluate(gate, r, 0m, 0.40m, 0.25m, 0.05m, 0.05m);
+        Check("scalp: lagging venue in a rising market -> long", sig is { IsLong: true });
+        Near("scalp: long enters at the ask", sig!.EntryPrice, 100.00m);
+        Check("scalp: expected net = lag - width - 2 fees", Math.Abs(sig.ExpectedNetPercent - (Math.Abs(sig.DeviationPercent) - gate.WidthPercent - 0.10m)) < 0.0001m);
+
+        Check("scalp: no trade when the market did not move (venue alone dumped)",
+            LeadLag.Evaluate(gate, r, 0m, 0.01m, 0.25m, 0.05m, 0.05m) is null);
+        Check("scalp: no trade when the lag is its normal offset",
+            LeadLag.Evaluate(gate, r, -0.41m, 0.40m, 0.25m, 0.05m, 0.05m) is null);
+        Check("scalp: no trade when fees eat the catch-up",
+            LeadLag.Evaluate(gate, r, -0.27m, 0.40m, 0.10m, 0.05m, 0.05m) is null); // lag 0.14 - width 0.02 - fees 0.10 = 0.02 < 0.05
+        Check("scalp: stale venue never traded",
+            LeadLag.Evaluate(gate with { Fresh = false }, r, 0m, 0.40m, 0.25m, 0.05m, 0.05m) is null);
+        var rich = new VenueQuote("Kucoin", 100.82m, 100.84m, true);
+        Check("scalp: rich venue in a falling market -> short",
+            LeadLag.Evaluate(rich, 100.41m, 0m, -0.40m, 0.25m, 0.06m, 0.05m) is { IsLong: false });
+
+        Near("scalp: net usd long", LeadLag.NetUsd(true, 100m, 100.5m, 1m, 0.05m), 0.5m - 200.5m * 0.0005m);
+        Check("scalp exit: stop", LeadLag.ExitReason(true, 100m, 99.6m, -0.5m, 100m, -0.4m, 0m, 3, 0.30m, 45, 0.2m) == "stop");
+        Check("scalp exit: caught up in profit", LeadLag.ExitReason(true, 100m, 100.3m, 0.2m, 100m, 0.0m, 0.1m, 3, 0.30m, 45, 0.5m) == "caught-up");
+        Check("scalp exit: target", LeadLag.ExitReason(true, 100m, 100.3m, 0.21m, 100m, -0.2m, 0.1m, 3, 0.30m, 45, 0.2m) == "target");
+        Check("scalp exit: market reversed", LeadLag.ExitReason(true, 100m, 99.95m, -0.15m, 100m, -0.3m, -0.2m, 3, 0.30m, 45, 0.2m) == "market-reversed");
+        Check("scalp exit: time stop", LeadLag.ExitReason(true, 100m, 99.99m, -0.11m, 100m, -0.3m, 0m, 50, 0.30m, 45, 0.2m) == "time");
+        Check("scalp exit: hold while lag persists", LeadLag.ExitReason(true, 100m, 100.05m, -0.05m, 100m, -0.3m, 0.05m, 5, 0.30m, 45, 0.2m) is null);
     }
 }

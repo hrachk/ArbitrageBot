@@ -17,7 +17,7 @@ const fmt = {
   usd(v, d = 2, sign = true) { const n = num(v); if (n == null) return '—'; const s = grp(Math.abs(n), d); return (n < 0 ? '−' : sign && n > 0 ? '+' : '') + '$' + s; },
   price(v) { const n = num(v); if (n == null || n === 0) return '—'; const d = n >= 1000 ? 2 : n >= 10 ? 3 : n >= 1 ? 4 : n >= 0.01 ? 5 : 7; return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); },
   int(v) { const n = num(v); return n == null ? '—' : grp(Math.round(n), 0); },
-  qty(v) { const n = num(v); if (n == null) return '—'; return n >= 100 ? n.toFixed(1) : n >= 1 ? n.toFixed(3) : n.toPrecision(4); },
+  qty(v) { const n = num(v); if (n == null) return '—'; const a = Math.abs(n); if (a >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (a >= 1e4) return (n / 1e3).toFixed(1) + 'K'; return a >= 100 ? n.toFixed(1) : a >= 1 ? n.toFixed(3) : n.toPrecision(4); },
   dur(sec) { const s = num(sec); if (s == null) return '—'; if (s < 1) return (s * 1000).toFixed(0) + ' мс'; if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' с'; if (s < 3600) return Math.floor(s / 60) + ' мин ' + Math.floor(s % 60) + ' с'; return Math.floor(s / 3600) + ' ч ' + Math.floor((s % 3600) / 60) + ' мин'; },
   ago(iso) { if (!iso) return '—'; const t = new Date(iso).getTime(); if (!Number.isFinite(t)) return '—'; const s = (Date.now() - t) / 1000; if (s < 2) return 'только что'; if (s < 60) return Math.floor(s) + ' с назад'; if (s < 3600) return Math.floor(s / 60) + ' мин назад'; if (s < 86400) return Math.floor(s / 3600) + ' ч назад'; return new Date(t).toLocaleDateString('ru-RU'); },
   time(iso) { if (!iso) return '—'; const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; },
@@ -39,6 +39,8 @@ const ICON = {
   scanner: I('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/><path d="M8.5 11h5M11 8.5v5"/>'),
   positions: I('<path d="M4 7h16M4 12h16M4 17h10"/>'),
   analytics: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  wallet: I('<path d="M3 7a2 2 0 012-2h13v4"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M16 13.5h2"/>'),
+  scalp: I('<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>'),
   funding: I('<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>'),
   live: I('<path d="M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7z"/><path d="M9 12l2 2 4-4"/>'),
   settings: I('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.6 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.6-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>'),
@@ -65,7 +67,8 @@ const S = {
   ledger: null,
   daysSummary: null,
   funding: null,
-  liveBalances: null,
+  liveBalances: null, liveBalancesAt: 0, liveBalancesLoading: false,
+  scalp: null,
   livePositions: null,
   transport: 'connecting',
   lastSnapAt: 0,
@@ -290,6 +293,8 @@ const PAGES = {
   signals: { title: 'Сигналы', icon: 'signals' },
   scanner: { title: 'Сканер рынка', icon: 'scanner' },
   positions: { title: 'Позиции и сделки', icon: 'positions' },
+  balances: { title: 'Балансы', icon: 'wallet' },
+  scalp: { title: 'Скальпер', icon: 'scalp' },
   analytics: { title: 'Аналитика', icon: 'analytics' },
   funding: { title: 'Funding', icon: 'funding' },
   live: { title: 'Live-торговля', icon: 'live' },
@@ -821,6 +826,119 @@ function renderFunding() {
   </tbody></table></div>` : '<div class="empty"><strong>Ставок пока нет</strong>Сервис funding опрашивает биржи раз в 5 минут.</div>'}</div></section>`;
 }
 
+
+// Balances ---------------------------------------------------------
+function usdtFree(e) {
+  const b = (e.balances || []).map(lc).filter(x => /^(USDT|USD)$/i.test(x.asset));
+  return b.length ? b.reduce((a, x) => a + (num(x.available) || 0), 0) : null;
+}
+function posList(e) { return Array.isArray(e.positions) ? e.positions.map(lc).filter(p => num(p.quantity)) : []; }
+function botOwner(ex, sym) {
+  const live = (snap().livePositions?.open || []).map(lc);
+  if (live.some(h => h.symbol === sym && (h.longExchange === ex || h.shortExchange === ex))) return '<span class="badge long">хедж бота</span>';
+  if ((S.scalp?.open || []).map(lc).some(p => p.live && p.symbol === sym && p.exchange === ex)) return '<span class="badge cost">скальп бота</span>';
+  return '<span class="badge">не от бота</span>';
+}
+
+function renderBalances() {
+  const p = fp();
+  const mb = p.marginBreakdown || {};
+  const venues = Object.entries(mb).map(([ex, v]) => ({ ex, ...lc(v) }));
+  const tot = venues.reduce((a, v) => ({ s: a.s + (num(v.starting) || 0), f: a.f + (num(v.free) || 0), l: a.l + (num(v.locked) || 0), e: a.e + (num(v.equity) || 0) }), { s: 0, f: 0, l: 0, e: 0 });
+  const sc = S.scalp ? lc(S.scalp) : null; const w = sc ? lc(sc.wallet || {}) : null;
+  const bal = S.liveBalances ? lc(S.liveBalances) : null;
+  const exs = (bal?.exchanges || []).map(lc);
+  const allPos = exs.flatMap(e => posList(e).map(x => ({ ...x, ex: e.exchange })));
+  const uPnl = allPos.reduce((a, x) => a + (num(x.unrealizedPnl) || 0), 0);
+  const freeTot = exs.reduce((a, e) => a + (e.ok ? usdtFree(e) || 0 : 0), 0);
+
+  return `
+  <section class="panel">
+    <div class="panel-head"><h2>Demo-кошелёк арбитража</h2><span class="sub">виртуальная маржа paper на каждой бирже</span></div>
+    <div class="kpis" style="border-top:1px solid var(--line-soft);margin-top:12px">
+      <div class="kpi"><div class="k">Капитал</div><div class="v">${fmt.usd(tot.e, 2, false)}</div><div class="d">старт ${fmt.usd(tot.s, 0, false)}</div></div>
+      <div class="kpi"><div class="k">Свободно</div><div class="v">${fmt.usd(tot.f, 2, false)}</div></div>
+      <div class="kpi"><div class="k">В открытых хеджах</div><div class="v">${fmt.usd(tot.l, 2, false)}</div><div class="d">${fmt.int(p.openCount)} хеджей</div></div>
+      <div class="kpi"><div class="k">Изменение</div><div class="v ${cls(tot.e - tot.s)}">${fmt.usd(tot.e - tot.s)}</div><div class="d">уPnL ${fmt.usd(p.unrealizedPnlUsd)}</div></div>
+    </div>
+    <div class="panel-body flush">${venues.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Биржа</th><th class="r">Старт</th><th class="r">Свободно</th><th class="r">В хеджах</th><th class="r">Капитал</th><th class="r">Изменение</th><th style="width:28%">Загрузка маржи</th></tr></thead><tbody>
+      ${venues.map(v => { const used = (num(v.equity) || 0) > 0 ? (num(v.locked) || 0) / num(v.equity) * 100 : 0; return `<tr><td>${esc(venue(v.ex))}</td><td class="r num mut">${fmt.usd(v.starting, 2, false)}</td><td class="r num">${fmt.usd(v.free, 2, false)}</td><td class="r num">${fmt.usd(v.locked, 2, false)}</td><td class="r num">${fmt.usd(v.equity, 2, false)}</td><td class="r">${signed(v.deltaFromStart)}</td><td><div class="row" style="gap:8px"><div class="track" style="flex:1;height:8px;background:var(--bg-deep);border-radius:99px;overflow:hidden"><div style="height:100%;width:${Math.min(100, used).toFixed(1)}%;background:${used > 70 ? 'var(--cost)' : 'var(--long)'}"></div></div><span class="num mut small" style="width:42px;text-align:right">${used.toFixed(0)}%</span></div></td></tr>`; }).join('')}
+    </tbody></table></div>` : '<div class="empty"><strong>Paper-кошелёк ещё не инициализирован</strong>Он появится после первого скана.</div>'}</div>
+  </section>
+
+  <section class="panel" style="margin-top:18px">
+    <div class="panel-head"><h2>Кошелёк скальпера</h2><span class="sub">отдельный депозит, не пересекается с арбитражем</span><div class="tools"><button class="btn sm ghost" data-go="scalp">Открыть скальпер</button></div></div>
+    ${w ? `<div class="kpis" style="border-top:1px solid var(--line-soft);margin-top:12px">
+      <div class="kpi"><div class="k">Депозит</div><div class="v">${fmt.usd(w.depositUsd, 2, false)}</div><div class="d">плечо ${esc(sc.settings?.leverage ?? '—')}x</div></div>
+      <div class="kpi"><div class="k">Paper-капитал</div><div class="v">${fmt.usd(w.paperEquityUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(w.paperRealizedUsd)}</div></div>
+      <div class="kpi"><div class="k">Маржа в позициях</div><div class="v">${fmt.usd(w.marginUsedUsd, 2, false)}</div><div class="d">${fmt.int(sc.openCount)} открыто</div></div>
+      <div class="kpi"><div class="k">Live реализовано</div><div class="v ${cls(w.liveRealizedUsd)}">${fmt.usd(w.liveRealizedUsd)}</div><div class="d">${sc.live ? 'реальные ордера' : 'live выключен'}</div></div>
+    </div>` : '<div class="panel-body"><div class="mut">Загружаем…</div></div>'}
+  </section>
+
+  <section class="panel" style="margin-top:18px">
+    <div class="panel-head"><h2>Реальные счета на биржах</h2><span class="sub">${bal ? 'обновлено ' + fmt.ago(bal.utc) : 'по API-ключам из настроек'}</span>
+      <div class="tools"><button class="btn sm ghost" data-act="live-balances" ${S.liveBalancesLoading ? 'disabled' : ''}>${ICON.refresh}${S.liveBalancesLoading ? 'Запрос…' : 'Обновить'}</button></div></div>
+    ${!bal ? `<div class="panel-body"><div class="empty">${S.liveBalancesLoading ? 'Запрашиваем биржи…' : 'Нажмите «Обновить»'}</div></div>` : `
+    <div class="kpis" style="border-top:1px solid var(--line-soft);margin-top:12px">
+      <div class="kpi"><div class="k">USDT всего</div><div class="v">${fmt.usd(bal.totalUsdtApprox, 2, false)}</div><div class="d">по биржам с ключами</div></div>
+      <div class="kpi"><div class="k">Свободно</div><div class="v">${fmt.usd(freeTot, 2, false)}</div></div>
+      <div class="kpi"><div class="k">Открытых позиций</div><div class="v">${fmt.int(allPos.length)}</div><div class="d">на всех биржах</div></div>
+      <div class="kpi"><div class="k">Нереализовано</div><div class="v ${cls(uPnl)}">${fmt.usd(uPnl)}</div></div>
+    </div>
+    <div class="panel-body"><div class="acct-grid">
+      ${exs.map(e => { const ps = posList(e); const posErr = e.positions && !Array.isArray(e.positions) ? lc(e.positions).error : null; return `<div class="acct ${e.ok ? '' : e.hasKey === false ? 'off' : 'bad'}">
+        <div class="acct-h"><span class="led ${e.ok ? 'ok' : e.hasKey === false ? '' : 'bad'}"></span><strong>${esc(venue(e.exchange))}</strong>
+          ${e.ok ? `<span class="badge ${e.tradePermission ? 'neg' : ''}">${e.tradePermission ? 'торговля' : 'чтение'}</span>${e.accountMode ? `<span class="badge">${esc(e.accountMode)}</span>` : ''}` : ''}</div>
+        ${e.ok ? `<div class="acct-n"><div><span class="mut small">USDT</span><div class="num big">${fmt.usd(e.usdtTotal, 2, false)}</div></div><div><span class="mut small">свободно</span><div class="num">${fmt.usd(usdtFree(e), 2, false)}</div></div></div>
+          ${ps.length ? `<div class="tbl-wrap"><table class="tbl mini"><thead><tr><th>Позиция</th><th>Сторона</th><th class="r">Кол-во</th><th class="r">Вход</th><th class="r">uPnL</th></tr></thead><tbody>${ps.map(x => `<tr><td><div class="sym">${esc(baseOf(x.symbol))}</div><div style="margin-top:3px">${botOwner(e.exchange, x.symbol)}</div></td><td>${/sell|short/i.test(x.side || '') ? '<span class="short">short</span>' : '<span class="long">long</span>'}${num(x.leverage) ? ` <span class="mut small">${esc(num(x.leverage))}x</span>` : ''}</td><td class="r num">${fmt.qty(Math.abs(num(x.quantity)))}</td><td class="r num">${fmt.price(x.entryPrice)}</td><td class="r">${signed(x.unrealizedPnl)}</td></tr>`).join('')}</tbody></table></div>`
+            : `<div class="mut small">${posErr ? 'Позиции: ' + esc(posErr) : 'Открытых позиций нет'}</div>`}`
+          : `<div class="mut small">${e.hasKey === false ? 'Ключ не подключён. Добавьте его в «Настройки → Ключи бирж».' : esc(e.error || 'Ошибка запроса')}${e.hint ? '<br>' + esc(e.hint) : ''}</div>`}
+      </div>`; }).join('')}
+    </div>
+    ${allPos.some(x => !/хедж|скальп/.test(botOwner(x.ex, x.symbol))) ? `<div class="callout" style="margin-top:14px">${ICON.warn}<div>На биржах есть позиции, которых нет в журнале бота. Если вы их не открывали вручную, сверьте их до включения live-ордеров.</div></div>` : ''}
+    </div>`}
+  </section>`;
+}
+
+// Scalper ----------------------------------------------------------
+function renderScalp() {
+  const sc = S.scalp ? lc(S.scalp) : null;
+  if (!sc) return '<section class="panel"><div class="empty">Загружаем скальпер…</div></section>';
+  const w = lc(sc.wallet || {}); const st = lc(sc.settings || {});
+  const open = (sc.open || []).map(lc); const closed = (sc.closed || []).map(lc); const pend = (sc.pending || []).map(lc);
+  const winRate = w.trades ? (w.wins / w.trades * 100) : null;
+  const mode = !sc.enabled ? ['выключен', ''] : sc.live ? ['реальные ордера', 'neg'] : ['paper', 'long'];
+  return `
+  <section class="panel">
+    <div class="panel-body row wrap" style="gap:18px;align-items:center">
+      <div style="flex:1;min-width:260px"><div class="row" style="gap:10px"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}</div>
+        <p class="prose" style="margin:8px 0 0">Ловит момент, когда рынок на большинстве бирж уже сдвинулся, а одна биржа отстала. Берёт одну ногу на отстающей бирже в сторону рынка и выходит, когда она догонит. Торгует на отдельном депозите и не трогает символы, которые держит арбитраж.</p></div>
+      <button class="btn ${sc.enabled ? '' : 'primary'}" data-act="scalp-toggle" style="height:40px">${sc.enabled ? ICON.pause + 'Выключить' : ICON.play + 'Включить скальпер'}</button>
+    </div>
+    <div class="kpis" style="border-top:1px solid var(--line-soft)">
+      <div class="kpi"><div class="k">Депозит × плечо</div><div class="v">${fmt.usd(w.depositUsd, 0, false)} × ${esc(st.leverage)}</div><div class="d">размер позиции ${fmt.usd((num(w.depositUsd) || 0) * (num(st.leverage) || 1) / Math.max(1, num(st.maxOpen) || 1), 0, false)}</div></div>
+      <div class="kpi"><div class="k">Paper-капитал</div><div class="v">${fmt.usd(w.paperEquityUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(w.paperRealizedUsd)}</div></div>
+      <div class="kpi"><div class="k">Сегодня</div><div class="v ${cls(w.realizedTodayUsd)}">${fmt.usd(w.realizedTodayUsd)}</div><div class="d">${fmt.int(w.tradesToday)} сделок · лимит −${fmt.usd(st.dailyLossUsd, 2, false)}</div></div>
+      <div class="kpi"><div class="k">Win rate</div><div class="v">${winRate != null ? winRate.toFixed(0) + '%' : '—'}</div><div class="d">${fmt.int(w.wins)} из ${fmt.int(w.trades)}</div></div>
+      <div class="kpi"><div class="k">Live реализовано</div><div class="v ${cls(w.liveRealizedUsd)}">${fmt.usd(w.liveRealizedUsd)}</div></div>
+    </div>
+  </section>
+  ${sc.lastNote ? `<div class="callout info" style="margin-top:14px">${ICON.info}<div>Последнее наблюдение: ${esc(sc.lastNote)}</div></div>` : ''}
+  <div class="callout" style="margin-top:14px">${ICON.warn}<div>Скальп — направленная сделка: в отличие от хеджа, она зарабатывает или теряет на движении цены. Гоняйте его в paper хотя бы несколько дней и включайте реальные ордера, только если результат держится в плюсе после комиссий.</div></div>
+
+  <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>Открытые позиции</h2><span class="sub">вход ${fmt.pct(st.entryPercent, 2, false)} отставания · стоп ${fmt.pct(st.stopPercent, 2, false)} · до ${esc(st.maxHoldSeconds)} с</span></div>
+    <div class="panel-body flush">${open.length || pend.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Символ</th><th>Биржа</th><th>Сторона</th><th class="r">Кол-во</th><th class="r">Вход</th><th class="r">Метка</th><th class="r">Держим</th><th class="r">P&amp;L</th><th>Режим</th></tr></thead><tbody>
+      ${pend.map(x => `<tr><td class="sym">${esc(baseOf(x.symbol))}</td><td>${esc(venue(x.exchange))}</td><td class="${x.side === 'Long' ? 'long' : 'short'}">${x.side === 'Long' ? 'long' : 'short'}</td><td colspan="5" class="mut">ордер в пути…</td><td><span class="badge">paper</span></td></tr>`).join('')}
+      ${open.map(x => `<tr title="${esc(x.note || '')}"><td class="sym">${esc(baseOf(x.symbol))}</td><td>${esc(venue(x.exchange))}</td><td class="${x.side === 'Long' ? 'long' : 'short'}">${x.side === 'Long' ? 'long' : 'short'}</td><td class="r num">${fmt.qty(x.qty)}</td><td class="r num">${fmt.price(x.entry)}</td><td class="r num mut">${fmt.price(x.lastMarkPrice)}</td><td class="r num">${fmt.dur((Date.now() - new Date(x.openedAt)) / 1000)}</td><td class="r">${signed(x.unrealizedUsd)}</td><td>${x.needsReconciliation ? '<span class="badge neg">нужна сверка</span>' : x.live ? '<span class="badge neg">live</span>' : '<span class="badge">paper</span>'}</td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="empty"><strong>${sc.enabled ? 'Ждём отставания одной из бирж' : 'Скальпер выключен'}</strong>${sc.enabled ? 'Вход появится, когда биржа отстанет от рынка сильнее порога и это перекроет комиссии.' : 'Включите его кнопкой выше. Он не мешает арбитражу.'}</div>`}</div></section>
+
+  <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>История</h2><div class="tools">${closed.some(x => !x.live) ? '<button class="btn sm ghost" data-act="scalp-reset">Очистить paper-историю</button>' : ''}<button class="btn sm ghost" data-go="settings" onclick="setTimeout(()=>document.getElementById('sec-scalp')?.scrollIntoView(),450)">Настройки скальпера</button></div></div>
+    <div class="panel-body flush">${closed.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Закрыта</th><th>Символ</th><th>Биржа</th><th>Сторона</th><th class="r">Вход → выход</th><th class="r">Держали</th><th class="r">P&amp;L</th><th>Причина</th></tr></thead><tbody>
+      ${closed.map(x => { const why = String(x.note || '').split('|').pop().trim(); const map = { 'caught-up': ['догнала', 'pos'], target: ['цель', 'pos'], stop: ['стоп', 'neg'], 'market-reversed': ['рынок развернулся', 'neg'], time: ['по времени', ''], 'time-profit': ['по времени', 'pos'], 'no-book': ['нет стакана', 'neg'], 'imbalance died': ['старый сигнал', ''] }; const [t, c] = map[why] || [why, '']; return `<tr title="${esc(x.note || '')}"><td class="mut">${fmt.dt(x.closedAt)}</td><td class="sym">${esc(baseOf(x.symbol))}</td><td>${esc(venue(x.exchange))}</td><td class="${x.side === 'Long' ? 'long' : 'short'}">${x.side === 'Long' ? 'long' : 'short'}${x.live ? ' <span class="badge neg">live</span>' : ''}</td><td class="r num">${fmt.price(x.entry)} → ${fmt.price(x.exit)}</td><td class="r num">${x.closedAt ? fmt.dur((new Date(x.closedAt) - new Date(x.openedAt)) / 1000) : '—'}</td><td class="r">${signed(x.realizedUsd)}</td><td><span class="badge ${c}">${esc(t)}</span></td></tr>`; }).join('')}
+    </tbody></table></div>` : '<div class="empty">Сделок пока нет</div>'}</div></section>`;
+}
+
 // Live -------------------------------------------------------------
 function renderLive() {
   const st = liveSt();
@@ -852,9 +970,9 @@ function renderLive() {
   </div>
 
   <div class="grid cols-3-2" style="margin-top:18px">
-    <section class="panel"><div class="panel-head"><h2>Балансы на биржах</h2><span class="sub">${bal ? 'обновлено ' + fmt.ago(bal.utc) : ''}</span><div class="tools"><button class="btn sm ghost" data-act="live-balances">${ICON.refresh}Обновить</button></div></div>
-      <div class="panel-body flush">${!bal ? '<div class="empty">Нажмите «Обновить», чтобы запросить балансы по ключам.</div>' : `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Биржа</th><th>Ключ</th><th class="r">USDT</th><th class="r">Позиций</th><th>Состояние</th></tr></thead><tbody>
-        ${exRows.map(e => `<tr><td>${esc(venue(e.exchange))}</td><td>${e.hasKey === false ? '<span class="mut">нет</span>' : `<span class="badge ${e.permission === 'trade' ? 'neg' : ''}">${esc(e.permission || 'есть')}</span>`}</td><td class="r num">${fmt.usd(pick(e, 'usdt', 'usdtBalance', 'total', 'equity'), 2, false)}</td><td class="r num">${Array.isArray(e.positions) ? e.positions.length : '—'}</td><td>${e.ok ? '<span class="badge pos">ok</span>' : `<span class="mut small">${esc(e.error || '—')}</span>`}</td></tr>`).join('')}
+    <section class="panel"><div class="panel-head"><h2>Балансы на биржах</h2><button class="btn sm ghost" data-go="balances">Подробно</button><span class="sub">${bal ? 'обновлено ' + fmt.ago(bal.utc) : ''}</span><div class="tools"><button class="btn sm ghost" data-act="live-balances">${ICON.refresh}Обновить</button></div></div>
+      <div class="panel-body flush">${!bal ? `<div class="empty">${S.liveBalancesLoading ? 'Запрашиваем биржи…' : 'Нажмите «Обновить», чтобы запросить балансы по ключам.'}</div>` : `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Биржа</th><th>Ключ</th><th class="r">USDT</th><th class="r">Позиций</th><th>Состояние</th></tr></thead><tbody>
+        ${exRows.map(e => `<tr><td>${esc(venue(e.exchange))}</td><td>${e.hasKey === false ? '<span class="mut">нет</span>' : `<span class="badge ${e.permission === 'trade' ? 'neg' : ''}">${esc(e.permission || 'есть')}</span>`}</td><td class="r num">${e.ok ? fmt.usd(e.usdtTotal, 2, false) : '—'}</td><td class="r num">${Array.isArray(e.positions) ? e.positions.length : '—'}</td><td>${e.ok ? '<span class="badge pos">ok</span>' : `<span class="mut small">${esc(e.error || '—')}</span>`}</td></tr>`).join('')}
         <tr><td colspan="2" class="mut">Всего, примерно</td><td class="r num">${fmt.usd(bal.totalUsdtApprox, 2, false)}</td><td colspan="2"></td></tr>
       </tbody></table></div>`}</div></section>
     <section class="panel"><div class="panel-head"><h2>Журнал guard</h2></div><div class="panel-body">${audit.length ? `<div class="audit">${audit.map(a => `<div>${esc(typeof a === 'string' ? a : JSON.stringify(a))}</div>`).join('')}</div>` : '<div class="mut">Событий нет</div>'}</div></section>
@@ -872,7 +990,6 @@ const SETTINGS = [
     ['paperTrading', 'Paper-торговля', 'bool', 'Виртуальная маржа на реальных стаканах'],
     ['paperAutoExecute', 'Автоисполнение', 'bool', 'Открывать хеджи автоматически при прохождении гейтов'],
     ['includeFunding', 'Учитывать funding', 'bool', 'Расчёты funding в горизонте удержания могут запретить вход'],
-    ['spatialScalpMode', 'Скальп-контур', 'bool', 'Отдельная стратегия, по умолчанию выключена. Не включайте без отдельной проверки'],
   ]},
   { id: 'size', title: 'Размер и риск', lead: 'Сколько денег участвует в одном хедже и где бот остановится.', fields: [
     ['quoteSize', 'Размер хеджа', 'num', 'Notional одной ноги', 'USDT'],
@@ -921,6 +1038,19 @@ const SETTINGS = [
     ['dynamicMinQuoteVolumeUsd', 'Мин. объём за сутки', 'num', '', 'USDT'],
     ['dynamicMaxQuoteVolumeUsd', 'Макс. объём за сутки', 'num', 'Отсекает самые эффективные рынки', 'USDT'],
     ['dynamicRefreshMinutes', 'Обновлять набор каждые', 'int', '', 'мин'],
+  ]},
+  { id: 'scalp', title: 'Скальпер', lead: 'Одна нога на отстающей бирже, отдельный депозит. Не занимает лимиты, маржу и дневной стоп арбитража и не торгует символы, которые держит арбитраж.', fields: [
+    ['spatialScalpMode', 'Скальпер включён', 'bool', 'Без этого он только наблюдает за рынком'],
+    ['scalpLive', 'Скальпить реальными ордерами', 'bool', 'Действует, только когда live-ордера включены. Иначе скальп идёт в paper'],
+    ['scalpDepositUsd', 'Депозит скальпера', 'num', 'Держите эти USDT на биржах сверх капитала арбитража', 'USDT'],
+    ['scalpLeverage', 'Плечо', 'num', 'От 1 до 5', 'x'],
+    ['scalpMaxOpen', 'Позиций одновременно', 'int', 'Депозит делится между ними'],
+    ['scalpDailyLossUsd', 'Дневной лимит убытка', 'num', 'После него скальпер не открывает сделки до конца дня UTC', 'USDT'],
+    ['scalpEntryPercent', 'Мин. отставание биржи', 'num', 'От её обычного смещения к остальным', '%'],
+    ['scalpMinNetPercent', 'Мин. ожидаемый результат', 'num', 'После ширины стакана и двух комиссий', '%'],
+    ['scalpStopPercent', 'Стоп по цене', 'num', '', '%'],
+    ['scalpMaxHoldSeconds', 'Макс. удержание', 'int', '', 'с'],
+    ['scalpCooldownSeconds', 'Пауза между входами', 'int', '', 'с'],
   ]},
   { id: 'live', title: 'Лимиты live', lead: 'Действуют только для реальных ордеров.', fields: [
     ['liveEquityPerExchangeUsd', 'Капитал на биржу', 'num', '', 'USDT'],
@@ -1008,7 +1138,7 @@ function renderNav() {
 }
 
 // ───────────────────────── render loop ─────────────────────────
-const RENDER = { overview: renderOverview, market: renderTerminal, signals: renderMarket, scanner: renderScanner, positions: renderPositions, analytics: renderAnalytics, funding: renderFunding, live: renderLive, settings: renderSettings, help: renderHelp };
+const RENDER = { balances: renderBalances, scalp: renderScalp, overview: renderOverview, market: renderTerminal, signals: renderMarket, scanner: renderScanner, positions: renderPositions, analytics: renderAnalytics, funding: renderFunding, live: renderLive, settings: renderSettings, help: renderHelp };
 let renderQueued = false, lastRender = 0;
 function schedule(force = false) {
   if (force) { lastRender = 0; }
@@ -1054,6 +1184,8 @@ function onEnter(page) {
   if (page === 'positions' && S.trades.src === 'all') loadLedger();
   if (page === 'funding' && !S.funding) loadFunding();
   if (page === 'settings') loadSettings(true);
+  if (page === 'balances') { loadScalp(); loadLiveBalances(); }
+  if (page === 'scalp') loadScalp();
 }
 
 // charts: hover tooltip on equity
@@ -1081,6 +1213,15 @@ async function loadSettings(redraw = false) {
 }
 async function loadPerf() { try { S.perf = await api.get('/api/analytics/performance?days=' + S.perfDays); schedule(true); } catch (e) { toast('Отчёт недоступен: ' + e.message, 'err'); } }
 async function loadLedger() { try { const rows = await api.get('/api/analytics/trades?take=3000&skip=0'); S.ledger = (rows || []).map(lc).map(r => { const o = {}; for (const k in r) o[k.charAt(0).toLowerCase() + k.slice(1)] = r[k]; return o; }); schedule(true); } catch (e) { toast('Журнал недоступен: ' + e.message, 'err'); } }
+async function loadScalp() { try { S.scalp = await api.get('/api/scalp'); if (['scalp', 'balances'].includes(S.page)) schedule(); } catch { } }
+async function loadLiveBalances(force = false) {
+  if (S.liveBalancesLoading) return;
+  if (!force && S.liveBalances && Date.now() - S.liveBalancesAt < 20_000) return;
+  S.liveBalancesLoading = true; schedule(true);
+  try { S.liveBalances = await api.get('/api/live/balances'); S.liveBalancesAt = Date.now(); }
+  catch (e) { toast('Балансы бирж недоступны: ' + e.message, 'err'); }
+  finally { S.liveBalancesLoading = false; schedule(true); }
+}
 async function loadFunding() { try { S.funding = await api.get('/api/funding'); schedule(true); } catch (e) { toast('Funding недоступен: ' + e.message, 'err'); } }
 
 // ───────────────────────── transport ─────────────────────────
@@ -1146,7 +1287,17 @@ const ACTIONS = {
     if (!r) return; await act(() => api.post('/api/live/enable', { confirmPhrase: r.value, readOnly: true }), (x) => x?.message || 'Режим чтения включён'); refreshSnap();
   },
   async 'live-disable'() { if (!await confirmModal({ title: 'Вернуться в paper?', body: 'Live будет выключен, бот продолжит работу на виртуальной марже.', confirm: 'Вернуться в paper' })) return; await act(() => api.post('/api/live/disable'), 'Live выключен, работает paper'); refreshSnap(); },
-  async 'live-balances'() { const r = await act(() => api.get('/api/live/balances')); if (r) { S.liveBalances = r; schedule(true); } },
+  'live-balances'() { loadLiveBalances(true); },
+  async 'scalp-toggle'() {
+    const t = S.settings?.trading; if (!t) return;
+    const on = !(S.scalp?.enabled ?? t.spatialScalpMode);
+    const r = await act(() => api.post('/api/settings/trading', { ...t, spatialScalpMode: on }), on ? 'Скальпер включён' : 'Скальпер выключен');
+    if (r) { await loadSettings(false); loadScalp(); }
+  },
+  async 'scalp-reset'() {
+    if (!await confirmModal({ title: 'Очистить paper-историю скальпера?', body: 'Удалятся закрытые paper-сделки скальпера, в том числе сделки прежнего сигнала. Live-история и открытые позиции не затрагиваются.', confirm: 'Очистить', danger: true })) return;
+    await act(() => api.post('/api/scalp/reset-paper'), (r) => `Удалено сделок: ${r?.removed ?? 0}`); loadScalp();
+  },
   async 'live-positions'() { const r = await act(() => api.get('/api/live/positions')); if (r) { S.livePositions = r; schedule(true); } },
   async 'paper-close'(el) { if (!await confirmModal({ title: `Закрыть хедж ${baseOf(el.dataset.sym)}?`, body: 'Обе ноги закроются по текущим стаканам с комиссией taker.', confirm: 'Закрыть хедж' })) return; await act(() => api.post('/api/paper/close/' + el.dataset.id), (r) => `Хедж закрыт: ${fmt.usd(r?.realizedPnlUsd ?? r?.trade?.realizedPnlUsd)}`); refreshSnap(); },
   async 'paper-close-all'() { if (!await confirmModal({ title: 'Закрыть все paper-хеджи?', body: 'Все открытые позиции закроются по текущим ценам.', confirm: 'Закрыть все', danger: true })) return; await act(() => api.post('/api/paper/close-all'), 'Все хеджи закрыты'); refreshSnap(); },
@@ -1251,7 +1402,8 @@ function openDrawer(route) { lastFocus = document.activeElement; S.drawer = { ro
 function closeDrawer() { S.drawer = null; $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true'); if (lastFocus) lastFocus.focus(); }
 
 // periodic background loads
-setInterval(() => { if (S.page === 'funding') loadFunding(); if (S.page === 'live' && S.liveBalances) ACTIONS['live-balances'](); }, 30_000);
+setInterval(() => { if (S.page === 'funding') loadFunding(); if ((S.page === 'live' || S.page === 'balances') && S.liveBalances) loadLiveBalances(true); }, 30_000);
+setInterval(() => { if (['scalp', 'balances', 'overview'].includes(S.page)) loadScalp(); }, 2000);
 setInterval(() => { if (S.page !== 'settings') schedule(); }, 1000); // keep "x s ago" labels honest
 
 // ───────────────────────── boot ─────────────────────────

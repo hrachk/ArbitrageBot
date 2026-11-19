@@ -452,3 +452,18 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .tk-rows { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; padding: 12px; border-radius: var(--r-md); background: var(--bg-deep); border: 1px solid var(--line-soft); }
 .btn.leg-on-l { background: var(--long-a); border-color: rgb(79 179 255 / .5); color: var(--long); }
 .btn.leg-on-s { background: var(--short-a); border-color: rgb(180 140 255 / .5); color: var(--short); }
+
+/* ---------- balances ---------- */
+.acct-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 14px; }
+.acct .tbl-wrap { margin: 0 -6px; }
+.tbl.mini .badge { height: 18px; font-size: 11px; padding: 0 6px; }
+.acct { background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.acct.bad { border-color: rgb(255 111 111 / .35); }
+.acct.off { opacity: .7; }
+.acct-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acct-h strong { font-size: 15px; margin-right: auto; }
+.acct-n { display: flex; gap: 28px; }
+.acct-n .big { font-size: 20px; letter-spacing: -.02em; }
+table.tbl.mini { font-size: 12.5px; }
+.tbl.mini th { background: var(--bg-deep); padding: 6px 5px; }
+.tbl.mini td { padding: 6px 5px; }

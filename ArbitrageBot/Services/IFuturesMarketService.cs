@@ -12,6 +12,8 @@ public interface IFuturesMarketService
     Dictionary<string, object> GetDepth(string symbol, int levels = 12);
     IReadOnlyDictionary<string, string> ConnectionStatus { get; }
     bool IsReady { get; }
+    /// <summary>True when the venue's quote comes from a live feed (not REST, not silent).</summary>
+    bool QuoteLive(string exchange, string symbol);
     /// <summary>Fresh IOC entry prices for a fixed base quantity on one route.</summary>
     (decimal? LongAskVwap, decimal? ShortBidVwap, bool Fresh) QuoteEntry(string symbol, string longEx, string shortEx, decimal baseQty);
     /// <summary>Depth-walked exit marks (long sold at bids, short bought at asks) for a base quantity.</summary>

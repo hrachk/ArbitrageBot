@@ -1490,8 +1490,8 @@ public sealed class LiveOrderEngine
         var posSide = isLong ? SharedPositionSide.Long : SharedPositionSide.Short;
         var snapped = SnapLimit(limitPrice, limitPrice, isLong);
         var notional = rounded * snapped;
-        var gate = _guard.CheckOpenAllowed(_open.Count + Math.Max(0, _guard.AdditionalOpenPositions - 1), notional);
-        if (!gate.ok) return new(false, gate.reason, null, false, false, 0m, 0m);
+        // The scalper enforces its own budget and position limits (ScalpEngine). It does not use
+        // the hedge's open-position slots or notional cap; kill/enable still apply above.
         var safety = _safety.TryReserveOrderAttempt(symbol, exchange, exchange, notional);
         if (!safety.ok) return new(false, "safety: " + safety.reason, null, false, false, 0m, 0m);
         var sent = await SendOrderAsync(
