@@ -380,7 +380,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 // and the 3-venue rule then skipped every symbol.
                 var wsLimit = Math.Max(maxAge, 1500);
                 var restLimit = 4000;
-                var limit = _restSourced.ContainsKey(key) ? restLimit : wsLimit;
+                // A synced socket book only sends on change; keep it visible while it is quiet.
+                var limit = _restSourced.ContainsKey(key) ? restLimit
+                    : IsSynced(ex, symbol) ? Math.Max(wsLimit, SyncedQuietLimitMs) : wsLimit;
                 if (ageMs > limit) continue;
             }
             result[ex] = t;
@@ -438,6 +440,29 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         return FillEstimate.Fail("no data");
     }
 
+    /// <summary>How long a synced but quiet socket book still counts as the live price.</summary>
+    private const int SyncedQuietLimitMs = 5000;
+
+    private bool IsSynced(string exchange, string symbol)
+        => _books.TryGetValue($"{exchange}:{symbol}", out var b)
+           && b.Status == CryptoExchange.Net.Objects.OrderBookStatus.Synced;
+
+    private bool IsRestLeg(string exchange, string symbol, BookTicker t)
+        => t.IsRest || _restSourced.ContainsKey($"{exchange}:{symbol}");
+
+    /// <summary>Traded-leg freshness for one route (see <see cref="QuoteGate.LegsFresh"/>).</summary>
+    private bool RouteFresh(string symbol, string longEx, BookTicker l, string shortEx, BookTicker s)
+    {
+        var snap = _runtime.Snapshot;
+        var now = DateTime.UtcNow;
+        return QuoteGate.LegsFresh(
+            (now - l.Timestamp).TotalMilliseconds, (now - s.Timestamp).TotalMilliseconds,
+            IsRestLeg(longEx, symbol, l), IsRestLeg(shortEx, symbol, s),
+            IsSynced(longEx, symbol), IsSynced(shortEx, symbol),
+            snap.TradeMaxQuoteAgeMs, snap.MaxLegSkewMs, SyncedQuietLimitMs,
+            out _);
+    }
+
     private IReadOnlyList<(decimal Price, decimal Quantity)>? Levels(string exchange, string symbol, bool asks)
     {
         var key = $"{exchange}:{symbol}";
@@ -468,13 +493,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
         var fresh = false;
         if (tk.TryGetValue(longEx, out var l) && tk.TryGetValue(shortEx, out var sh))
         {
-            var snap = _runtime.Snapshot;
-            var now = DateTime.UtcNow;
-            fresh = QuoteGate.LegsFresh(
-                (now - l.Timestamp).TotalMilliseconds, (now - sh.Timestamp).TotalMilliseconds,
-                l.IsRest || _restSourced.ContainsKey($"{longEx}:{symbol}"),
-                sh.IsRest || _restSourced.ContainsKey($"{shortEx}:{symbol}"),
-                snap.TradeMaxQuoteAgeMs, snap.MaxLegSkewMs, out _);
+            fresh = RouteFresh(symbol, longEx, l, shortEx, sh);
         }
         var la = Levels(longEx, symbol, asks: true);
         var sb = Levels(shortEx, symbol, asks: false);
@@ -618,14 +637,7 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                     if (!tickers.TryGetValue(longEx, out var longTk) || !tickers.TryGetValue(shortEx, out var shortTk))
                         continue;
                     var widthOk = ArbEconomics.BooksTradable(longTk.BestBid, longTk.BestAsk, shortTk.BestBid, shortTk.BestAsk);
-                    var nowUtc = DateTime.UtcNow;
-                    var snapF = _runtime.Snapshot;
-                    var freshOk = QuoteGate.LegsFresh(
-                        (nowUtc - longTk.Timestamp).TotalMilliseconds,
-                        (nowUtc - shortTk.Timestamp).TotalMilliseconds,
-                        longTk.IsRest || _restSourced.ContainsKey($"{longEx}:{symbol}"),
-                        shortTk.IsRest || _restSourced.ContainsKey($"{shortEx}:{symbol}"),
-                        snapF.TradeMaxQuoteAgeMs, snapF.MaxLegSkewMs, out _);
+                    var freshOk = RouteFresh(symbol, longEx, longTk, shortEx, shortTk);
                     if (!freshOk) LastScanStaleSkipped++;
                     // Learn this route's fair cross from tight books only, including flat and inverted.
                     // A wide print must not become the basis, or the next wide print looks like edge.
@@ -1006,6 +1018,10 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             || exchange.Equals("Bybit", StringComparison.OrdinalIgnoreCase))
             return false;
         var key = $"{exchange}:{symbol}";
+        // A synced socket book is live even when quiet. Overwriting it with a REST snapshot
+        // flagged the venue as REST, and REST legs are never traded — OKX/Bitget/Gate/KuCoin
+        // dropped out of trading entirely.
+        if (IsSynced(exchange, symbol)) return false;
         if (_tickers.TryGetValue(key, out var t)
             && t.Timestamp != default
             && !_restSourced.ContainsKey(key)

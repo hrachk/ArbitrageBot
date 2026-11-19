@@ -226,6 +226,18 @@ public class ArbitrageWorker : BackgroundService
 
     private static string RouteKey(FuturesOpportunity o) => $"{o.Symbol}|{o.LongExchange}|{o.ShortExchange}";
 
+    // After a missed or one-legged paper fill the same signal is usually still on screen.
+    // Without a pause the next scan queued it again: two leg-miss unwinds 0.3 s apart on
+    // MMTUSDT Binance->KuCoin (log 2026-11-18 22:04:55). Keyed by symbol.
+    private readonly Dictionary<string, DateTime> _symbolRetryAfterUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    private void PauseSymbol(string symbol, int ms)
+    {
+        var until = DateTime.UtcNow.AddMilliseconds(Math.Max(1000, ms));
+        if (!_symbolRetryAfterUtc.TryGetValue(symbol, out var cur) || cur < until)
+            _symbolRetryAfterUtc[symbol] = until;
+    }
+
     private void ResolvePaperInFlight(ArbitrageOptions snap)
     {
         if (_paperInFlight.Count == 0) return;
@@ -265,9 +277,11 @@ public class ArbitrageWorker : BackgroundService
                     if (width > 1m) width = 0.10m;
                     var cost = FillSimulator.OneLegUnwindCostUsd(o.NotionalUsd, fee, width);
                     _futPaper.RecordLegMiss(o, ex, cost);
+                    PauseSymbol(o.Symbol, Math.Max(snap.PaperCooldownMs, 30_000));
                     break;
                 }
                 default:
+                    PauseSymbol(o.Symbol, 3000);
                     _analytics.RecordSkip(o, "ioc-miss", $"{o.LongExchange}->{o.ShortExchange} spread gone after {snap.PaperFillLatencyMs}ms");
                     break;
             }
@@ -460,6 +474,7 @@ public class ArbitrageWorker : BackgroundService
                 {
                     var rk = RouteKey(o);
                     if (_paperInFlight.ContainsKey(rk)) continue;
+                    if (_symbolRetryAfterUtc.TryGetValue(o.Symbol, out var retryAt) && DateTime.UtcNow < retryAt) continue;
                     if (_paperInFlight.Keys.Any(k => k.StartsWith(o.Symbol + "|", StringComparison.OrdinalIgnoreCase))) continue;
                     if (_futPaper.GetOpenPositions().Any(p => p.Symbol.Equals(o.Symbol, StringComparison.OrdinalIgnoreCase))) continue;
                     _paperInFlight[rk] = (o, DateTime.UtcNow.AddMilliseconds(snap.PaperFillLatencyMs));

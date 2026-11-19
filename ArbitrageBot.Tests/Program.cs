@@ -131,6 +131,12 @@ internal static class Program
         for (var i = 0; i < 12; i++) { t2 += 1000; old.Observe(0.10m, t2); }
         Check("basis: 12 s of data is NOT enough (old rule said ready)", !old.Read(60, 90_000).Ready);
 
+        // Regression: a route whose spread moved to a new level never finished warmup.
+        var shift = new BasisEstimator(); long ts = 0;
+        for (var i = 0; i < 15; i++) { shift.Observe(0.10m, ts); ts += 1000; }   // warm enough to reject outliers
+        for (var i = 0; i < 120; i++) { shift.Observe(0.70m, ts); ts += 1000; }  // spread jumps and stays
+        Check("basis: warmup completes after a level shift", shift.Read(60, 90_000).Ready, $"seen {shift.Seen} accepted {shift.Samples}");
+
         // A persistent regime change is still learned eventually.
         var r = new BasisEstimator(); long t3 = 0;
         for (var i = 0; i < 120; i++) { r.Observe(0.10m, t3); t3 += 1000; }
@@ -140,10 +146,15 @@ internal static class Program
 
     private static void Freshness()
     {
-        Check("fresh: both socket legs young", QuoteGate.LegsFresh(120, 300, false, false, 1000, 600, out _));
-        Check("fresh: REST leg never traded", !QuoteGate.LegsFresh(10, 10, true, false, 1000, 600, out var r1) && r1 == "rest-leg");
-        Check("fresh: stale leg rejected", !QuoteGate.LegsFresh(1200, 10, false, false, 1000, 600, out var r2) && r2 == "stale");
-        Check("fresh: skew rejected", !QuoteGate.LegsFresh(900, 50, false, false, 1000, 600, out var r3) && r3 == "skew");
+        // (longAge, shortAge, longRest, shortRest, longSynced, shortSynced, maxAge, maxSkew, syncedMaxAge)
+        Check("fresh: both socket legs young", QuoteGate.LegsFresh(120, 300, false, false, false, false, 1000, 600, 5000, out _));
+        Check("fresh: REST leg never traded", !QuoteGate.LegsFresh(10, 10, true, false, true, true, 1000, 600, 5000, out var r1) && r1 == "rest-leg");
+        Check("fresh: stale ticker leg rejected", !QuoteGate.LegsFresh(1200, 10, false, false, false, false, 1000, 600, 5000, out var r2) && r2 == "stale");
+        Check("fresh: skew between ticker legs rejected", !QuoteGate.LegsFresh(900, 50, false, false, false, false, 1000, 600, 5000, out var r3) && r3 == "skew");
+        // Regression: a quiet but synced book was treated as stale, flickering the gate.
+        Check("fresh: quiet synced books are live", QuoteGate.LegsFresh(2500, 40, false, false, true, true, 1000, 600, 5000, out _));
+        Check("fresh: synced book silent too long is stale", !QuoteGate.LegsFresh(6000, 40, false, false, true, true, 1000, 600, 5000, out _));
+        Check("fresh: no skew rule when a leg is synced", QuoteGate.LegsFresh(900, 50, false, false, true, false, 1000, 600, 5000, out _));
     }
 
     private static void Funding()
