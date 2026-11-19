@@ -105,6 +105,25 @@ public sealed class ScalpEngine
             var paperClosed = _closed.Where(p => !p.Live).ToList();
             var liveClosed = _closed.Where(p => p.Live).ToList();
             var paperRealized = paperClosed.Sum(p => p.RealizedUsd ?? 0m);
+            var liveNow = LiveScalping;
+            object Book(bool isLive)
+            {
+                var c = _closed.Where(p => p.Live == isLive).ToList();
+                var o = _open.Where(p => p.Live == isLive).ToList();
+                var realized = c.Sum(p => p.RealizedUsd ?? 0m);
+                var unreal = o.Sum(p => p.UnrealizedUsd);
+                return new
+                {
+                    equityUsd = snap.ScalpDepositUsd + realized + unreal,
+                    realizedUsd = realized,
+                    unrealizedUsd = unreal,
+                    realizedTodayUsd = c.Where(p => p.ClosedAt?.Date == today).Sum(p => p.RealizedUsd ?? 0m),
+                    trades = c.Count,
+                    wins = c.Count(p => (p.RealizedUsd ?? 0m) > 0),
+                    tradesToday = c.Count(p => p.ClosedAt?.Date == today),
+                    open = o.Count
+                };
+            }
             var lev = Math.Clamp(snap.ScalpLeverage, 1m, 5m);
             var marginUsed = _open.Sum(p => p.NotionalUsd > 0 ? p.NotionalUsd / Math.Max(1m, p.Leverage) : p.Entry * p.Qty / lev);
             return new
@@ -113,8 +132,9 @@ public sealed class ScalpEngine
                 live = LiveScalping,
                 liveRequested = snap.ScalpLive,
                 venues = string.IsNullOrWhiteSpace(snap.ScalpVenues) ? "все" : snap.ScalpVenues,
+                venuesUnknown = UnknownVenues(snap.ScalpVenues),
                 liveVenues = LiveScalping
-                    ? new[] { "Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin" }
+                    ? Venues.All
                         .Where(x => VenueTradable(x, ParseVenues(snap.ScalpVenues), true)).ToArray()
                     : Array.Empty<string>(),
                 lastNote = _lastNote,
@@ -130,11 +150,15 @@ public sealed class ScalpEngine
                     paperEquityUsd = snap.ScalpDepositUsd + paperRealized + _open.Where(p => !p.Live).Sum(p => p.UnrealizedUsd),
                     paperRealizedUsd = paperRealized,
                     liveRealizedUsd = liveClosed.Sum(p => p.RealizedUsd ?? 0m),
-                    realizedTodayUsd = _closed.Where(p => p.ClosedAt?.Date == today).Sum(p => p.RealizedUsd ?? 0m),
+                    // Today / trades / wins below are for the mode we trade in now.
+                    mode = liveNow ? "live" : "paper",
+                    realizedTodayUsd = _closed.Where(p => p.Live == liveNow && p.ClosedAt?.Date == today).Sum(p => p.RealizedUsd ?? 0m),
                     marginUsedUsd = marginUsed,
-                    trades = _closed.Count,
-                    wins = _closed.Count(p => (p.RealizedUsd ?? 0m) > 0),
-                    tradesToday = _closed.Count(p => p.ClosedAt?.Date == today)
+                    trades = _closed.Count(p => p.Live == liveNow),
+                    wins = _closed.Count(p => p.Live == liveNow && (p.RealizedUsd ?? 0m) > 0),
+                    tradesToday = _closed.Count(p => p.Live == liveNow && p.ClosedAt?.Date == today),
+                    live = Book(true),
+                    paper = Book(false)
                 },
                 open = _open.Select(p => new
                 {
@@ -166,7 +190,9 @@ public sealed class ScalpEngine
         int openNow;
         lock (_lock)
         {
-            realizedToday = _closed.Where(p => p.ClosedAt?.Date == DateTime.UtcNow.Date).Sum(p => p.RealizedUsd ?? 0m);
+            // The daily stop counts only the mode we trade in now: paper results never offset real losses.
+            var liveNow = LiveScalping;
+            realizedToday = _closed.Where(p => p.Live == liveNow && p.ClosedAt?.Date == DateTime.UtcNow.Date).Sum(p => p.RealizedUsd ?? 0m);
             openNow = _open.Count + _pending.Count;
         }
         var lossCap = Math.Abs(snap.ScalpDailyLossUsd) > 0 ? Math.Abs(snap.ScalpDailyLossUsd) : Math.Max(1m, snap.ScalpDepositUsd * 0.1m);
@@ -328,13 +354,9 @@ public sealed class ScalpEngine
     private void PauseSymbol(string symbol, int ms)
         => _symbolPauseUntil[symbol] = DateTime.UtcNow.AddMilliseconds(ms);
 
-    private static HashSet<string>? ParseVenues(string? csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv)) return null;
-        var set = new HashSet<string>(csv.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(x => x.Trim()), StringComparer.OrdinalIgnoreCase);
-        return set.Count == 0 ? null : set;
-    }
+    private static HashSet<string>? ParseVenues(string? csv) => Venues.AllowSet(csv);
+
+    private static string[] UnknownVenues(string? csv) { Venues.NormalizeCsv(csv, out var u); return u; }
 
     private bool VenueTradable(string exchange, HashSet<string>? allowed, bool liveMode)
         => (allowed == null || allowed.Contains(exchange))

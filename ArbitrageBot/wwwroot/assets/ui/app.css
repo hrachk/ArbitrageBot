@@ -363,6 +363,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .form-sec { scroll-margin-top: calc(var(--strip) + 16px); }
 .form-sec .panel-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px 20px; }
 .form-sec p.lead { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 13px; max-width: 72ch; }
+.form-sec .field-wide { grid-column: 1 / -1; }
+.chip .small.pos { color: var(--long); }
 .savebar { position: sticky; bottom: 16px; z-index: 15; display: flex; align-items: center; gap: 12px; padding: 12px 14px 12px 18px; border-radius: var(--r-lg); background: var(--raised); border: 1px solid var(--line); box-shadow: 0 12px 30px rgb(0 0 0 / .35); transform: translateY(140%); opacity: 0; transition: transform .2s, opacity .2s; pointer-events: none; }
 .savebar.on { transform: none; opacity: 1; pointer-events: auto; }
 .savebar .grow { flex: 1; color: var(--text-2); font-size: 13.5px; }

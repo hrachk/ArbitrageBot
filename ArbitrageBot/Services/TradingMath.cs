@@ -335,3 +335,54 @@ public static class LeadLag
         return null;
     }
 }
+
+/// <summary>Exchange names as the market feed uses them, and user-typed aliases mapped onto them.</summary>
+public static class Venues
+{
+    public static readonly string[] All = ["Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin"];
+
+    /// <summary>Canonical name for a typed alias ("gate.io" -> "GateIo"), or null when unknown.</summary>
+    public static string? Canonical(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var k = new string(name.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        return k switch
+        {
+            "binance" or "binancefutures" => "Binance",
+            "bybit" => "Bybit",
+            "okx" or "okex" => "OKX",
+            "bitget" => "Bitget",
+            "gate" or "gateio" => "GateIo",
+            "kucoin" or "kucoinfutures" => "Kucoin",
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Normalize a comma list. Known names become canonical, duplicates drop, order follows <see cref="All"/>.
+    /// Unknown names are kept in <paramref name="unknown"/> and in the result, so a typo
+    /// never silently turns into "all venues".
+    /// </summary>
+    public static string NormalizeCsv(string? csv, out string[] unknown)
+    {
+        var parts = (csv ?? "").Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries);
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var bad = new List<string>();
+        foreach (var p in parts)
+        {
+            var c = Canonical(p);
+            if (c != null) known.Add(c);
+            else if (!bad.Contains(p.Trim(), StringComparer.OrdinalIgnoreCase)) bad.Add(p.Trim());
+        }
+        unknown = bad.ToArray();
+        return string.Join(",", All.Where(known.Contains).Concat(bad));
+    }
+
+    /// <summary>Allowed set for the scalper; null means every venue.</summary>
+    public static HashSet<string>? AllowSet(string? csv)
+    {
+        var norm = NormalizeCsv(csv, out _);
+        if (norm.Length == 0) return null;
+        return new HashSet<string>(norm.Split(','), StringComparer.OrdinalIgnoreCase);
+    }
+}

@@ -145,9 +145,9 @@ public class ArbitrageOptions
 
     // ---- Single-leg scalper (isolated from the hedge) ----
     /// <summary>Isolated scalp budget (USDT). Never shared with the hedge.</summary>
-    public decimal ScalpDepositUsd { get; set; } = 30m;
+    public decimal ScalpDepositUsd { get; set; } = 50m;
     /// <summary>Scalp leverage, 1-5.</summary>
-    public decimal ScalpLeverage { get; set; } = 3m;
+    public decimal ScalpLeverage { get; set; } = 5m;
     /// <summary>Open scalp positions at a time.</summary>
     public int ScalpMaxOpen { get; set; } = 1;
     /// <summary>Scalp stops opening for the UTC day after this loss (positive number).</summary>
