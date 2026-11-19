@@ -842,6 +842,15 @@ public sealed class LiveOrderEngine
         decimal? limitPrice = null,
         decimal? expectedBaseQty = null)
     {
+        // Binance takes leverage and margin mode per symbol, not on the order. Sending them only logs
+        // "not supported" today and, per the library, will be an error in its next major release.
+        // So set the symbol leverage once (cached) and keep both off the order request.
+        var perSymbolSettings = exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase);
+        if (perSymbolSettings && !isClose && leverage is > 0)
+            await EnsureLeverageAsync(client, exchange, symbol, symbol.BaseAsset + "USDT", leverage.Value, ct).ConfigureAwait(false);
+        var orderLeverage = perSymbolSettings ? null : leverage;
+        SharedMarginMode? orderMargin = perSymbolSettings ? null : SharedMarginMode.Cross;
+
         async Task<OrderExecution> Once(bool hedge)
         {
             var limit = limitPrice is > 0;
@@ -852,10 +861,10 @@ public sealed class LiveOrderEngine
                 qty,
                 price: limit ? limitPrice : null,
                 reduceOnly: null,
-                leverage: leverage,
+                leverage: orderLeverage,
                 timeInForce: limit ? SharedTimeInForce.ImmediateOrCancel : null,
                 positionSide: hedge ? hedgeSide : null,
-                marginMode: SharedMarginMode.Cross,
+                marginMode: orderMargin,
                 clientOrderId: hedge ? clientOrderId : clientOrderId + "n",
                 exchangeParameters: ExParams(exchange, isClose, hedge));
             CryptoExchange.Net.Objects.HttpResult<SharedId> result;
@@ -1609,9 +1618,7 @@ public sealed class LiveOrderEngine
         if (!safety.ok) return new(false, "safety: " + safety.reason, null, false, false, 0m, 0m);
         await EnsureLeverageAsync(client, exchange, shared, symbol, leverage, ct).ConfigureAwait(false);
         var sent = await SendOrderAsync(
-            client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded),
-            // Binance takes leverage per symbol (set above), not on the order; sending it only adds a warning.
-            exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase) ? null : leverage, posSide, isClose: false,
+            client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded), leverage, posSide, isClose: false,
             "ab-s-" + Guid.NewGuid().ToString("N")[..12], ct, snapped, rounded).ConfigureAwait(false);
         if (!sent.Ok)
         {
