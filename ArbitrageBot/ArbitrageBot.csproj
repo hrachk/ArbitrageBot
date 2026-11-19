@@ -8,6 +8,13 @@
     <RootNamespace>ArbitrageBot</RootNamespace>
   </PropertyGroup>
 
+  <!-- data/ holds runtime state (keys, settings, ledgers). Never publish the project's copy over
+       the one next to the running exe: that reset keys and settings after every publish. -->
+  <ItemGroup>
+    <Content Remove="data\**" />
+    <None Remove="data\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="CryptoClients.Net" Version="5.10.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />

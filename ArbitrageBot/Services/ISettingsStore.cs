@@ -22,6 +22,9 @@ public class SettingsStore : ISettingsStore
 {
     private readonly object _lock = new();
     private readonly string _path;
+    // Copy outside the publish folder: a publish that wipes or overwrites data/ must not lose keys and settings.
+    private readonly string _backupPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ArbitrageBot", "local-settings.backup.json");
     private readonly ILogger<SettingsStore> _logger;
     private readonly IOptionsMonitor<ArbitrageOptions> _arb;
     private Dictionary<string, ExchangeCredential> _creds = new(StringComparer.OrdinalIgnoreCase);
@@ -53,7 +56,16 @@ public class SettingsStore : ISettingsStore
     {
         try
         {
-            if (!File.Exists(_path)) return;
+            if (!File.Exists(_path))
+            {
+                if (!File.Exists(_backupPath))
+                {
+                    _logger.LogWarning("No local-settings.json at {Path}: starting with appsettings defaults", _path);
+                    return;
+                }
+                File.Copy(_backupPath, _path, overwrite: false);
+                _logger.LogWarning("local-settings.json was missing (publish wiped data/?) — restored from backup {Backup}", _backupPath);
+            }
             var json = File.ReadAllText(_path);
             var doc = System.Text.Json.JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("trading", out var tr))
@@ -86,6 +98,12 @@ public class SettingsStore : ISettingsStore
         await File.WriteAllTextAsync(tmp, json, ct);
         File.Copy(tmp, _path, true);
         try { File.Delete(tmp); } catch { /* ignore */ }
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_backupPath)!);
+            File.Copy(_path, _backupPath, true);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Could not write settings backup {Backup}", _backupPath); }
     }
 
     public TradingUiSettings GetTrading()
