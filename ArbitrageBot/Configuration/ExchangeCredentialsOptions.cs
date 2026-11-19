@@ -95,6 +95,7 @@ public class TradingUiSettings
     public int? ScalpMaxHoldSeconds { get; set; }
     public int? ScalpCooldownSeconds { get; set; }
     public bool? ScalpLive { get; set; }
+    public string? ScalpVenues { get; set; }
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 16;
     public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;

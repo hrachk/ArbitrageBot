@@ -164,6 +164,7 @@ public class SettingsStore : ISettingsStore
                 scalpMaxHoldSeconds = t.ScalpMaxHoldSeconds ?? arb.ScalpMaxHoldSeconds,
                 scalpCooldownSeconds = t.ScalpCooldownSeconds ?? arb.ScalpCooldownSeconds,
                 scalpLive = t.ScalpLive ?? arb.ScalpLive,
+                scalpVenues = t.ScalpVenues ?? arb.ScalpVenues,
                 dynamicSymbols = t.DynamicSymbols,
                 dynamicTopN = t.DynamicTopN > 0 ? t.DynamicTopN : arb.DynamicTopN,
                 dynamicMinQuoteVolumeUsd = t.DynamicMinQuoteVolumeUsd > 0 ? t.DynamicMinQuoteVolumeUsd : arb.DynamicMinQuoteVolumeUsd,
