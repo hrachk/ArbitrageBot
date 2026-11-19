@@ -871,9 +871,9 @@ function renderBalances() {
     <div class="panel-head"><h2>Кошелёк скальпера</h2><span class="sub">отдельный депозит, не пересекается с арбитражем</span><div class="tools"><button class="btn sm ghost" data-go="scalp">Открыть скальпер</button></div></div>
     ${w ? `<div class="kpis" style="border-top:1px solid var(--line-soft);margin-top:12px">
       <div class="kpi"><div class="k">Депозит</div><div class="v">${fmt.usd(w.depositUsd, 2, false)}</div><div class="d">плечо ${esc(sc.settings?.leverage ?? '—')}x</div></div>
-      <div class="kpi"><div class="k">Paper-капитал</div><div class="v">${fmt.usd(w.paperEquityUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(w.paperRealizedUsd)}</div></div>
+      <div class="kpi"><div class="k">Paper-капитал</div><div class="v">${fmt.usd(w.paper?.equityUsd ?? w.paperEquityUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(w.paper?.realizedUsd ?? w.paperRealizedUsd)}</div></div>
       <div class="kpi"><div class="k">Маржа в позициях</div><div class="v">${fmt.usd(w.marginUsedUsd, 2, false)}</div><div class="d">${fmt.int(sc.openCount)} открыто</div></div>
-      <div class="kpi"><div class="k">Live реализовано</div><div class="v ${cls(w.liveRealizedUsd)}">${fmt.usd(w.liveRealizedUsd)}</div><div class="d">${sc.live ? 'реальные ордера' : 'live выключен'}</div></div>
+      <div class="kpi"><div class="k">Live-капитал</div><div class="v ${cls(w.live?.realizedUsd ?? w.liveRealizedUsd)}">${fmt.usd(w.live?.equityUsd ?? w.depositUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(w.live?.realizedUsd ?? w.liveRealizedUsd)} · ${sc.live ? 'реальные ордера' : 'live выключен'}</div></div>
     </div>` : '<div class="panel-body"><div class="mut">Загружаем…</div></div>'}
   </section>
 
@@ -908,21 +908,29 @@ function renderScalp() {
   if (!sc) return '<section class="panel"><div class="empty">Загружаем скальпер…</div></section>';
   const w = lc(sc.wallet || {}); const st = lc(sc.settings || {});
   const open = (sc.open || []).map(lc); const closed = (sc.closed || []).map(lc); const pend = (sc.pending || []).map(lc);
-  const winRate = w.trades ? (w.wins / w.trades * 100) : null;
+  const isLive = w.mode === 'live';
+  const cur = lc((isLive ? w.live : w.paper) || {}); const other = lc((isLive ? w.paper : w.live) || {});
+  const winRate = cur.trades ? (cur.wins / cur.trades * 100) : null;
+  const scVen = (sc.liveVenues && sc.liveVenues.length ? sc.liveVenues : []);
+  const realBal = (S.liveBalances?.exchanges || []).map(lc).filter(e => e.ok && scVen.includes(e.exchange));
+  const realUsdt = realBal.reduce((a, e) => a + (num(e.usdtTotal) || 0), 0);
+  const realFree = realBal.reduce((a, e) => a + (num(usdtFree(e)) || 0), 0);
   const mode = !sc.enabled ? ['выключен', ''] : sc.live ? ['реальные ордера', 'neg'] : ['paper', 'long'];
   return `
   <section class="panel">
     <div class="panel-body row wrap" style="gap:18px;align-items:center">
-      <div style="flex:1;min-width:260px"><div class="row" style="gap:10px"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}<span class="badge">биржи: ${esc(sc.venues === 'все' || !sc.venues ? 'все' : sc.venues.split(',').map(venue).join(', '))}</span>${sc.venuesUnknown?.length ? `<span class="badge neg">неизвестные биржи: ${esc(sc.venuesUnknown.join(', '))}</span>` : ''}${sc.live ? `<span class="badge ${sc.liveVenues?.length ? 'pos' : 'neg'}">${sc.liveVenues?.length ? 'реально на: ' + esc(sc.liveVenues.join(', ')) : 'нет бирж с trade-ключами'}</span>` : ''}</div>
+      <div style="flex:1;min-width:min(260px,100%)"><div class="row" style="gap:8px 10px;flex-wrap:wrap"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}<span class="badge">биржи: ${esc(sc.venues === 'все' || !sc.venues ? 'все' : sc.venues.split(',').map(venue).join(', '))}</span>${sc.venuesUnknown?.length ? `<span class="badge neg">неизвестные биржи: ${esc(sc.venuesUnknown.join(', '))}</span>` : ''}${sc.live ? `<span class="badge ${sc.liveVenues?.length ? 'pos' : 'neg'}">${sc.liveVenues?.length ? 'реально на: ' + esc(sc.liveVenues.join(', ')) : 'нет бирж с trade-ключами'}</span>` : ''}</div>
         <p class="prose" style="margin:8px 0 0">Ловит момент, когда рынок на большинстве бирж уже сдвинулся, а одна биржа отстала. Берёт одну ногу на отстающей бирже в сторону рынка и выходит, когда она догонит. Торгует на отдельном депозите и не трогает символы, которые держит арбитраж.</p></div>
       <button class="btn ${sc.enabled ? '' : 'primary'}" data-act="scalp-toggle" style="height:40px">${sc.enabled ? ICON.pause + 'Выключить' : ICON.play + 'Включить скальпер'}</button>
     </div>
     <div class="kpis" style="border-top:1px solid var(--line-soft)">
       <div class="kpi"><div class="k">Депозит × плечо</div><div class="v">${fmt.usd(w.depositUsd, 0, false)} × ${esc(st.leverage)}</div><div class="d">размер позиции ${fmt.usd((num(w.depositUsd) || 0) * (num(st.leverage) || 1) / Math.max(1, num(st.maxOpen) || 1), 0, false)}</div></div>
-      <div class="kpi"><div class="k">Paper-капитал</div><div class="v">${fmt.usd(w.paperEquityUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(w.paperRealizedUsd)}</div></div>
-      <div class="kpi"><div class="k">Сегодня</div><div class="v ${cls(w.realizedTodayUsd)}">${fmt.usd(w.realizedTodayUsd)}</div><div class="d">${fmt.int(w.tradesToday)} сделок · лимит −${fmt.usd(st.dailyLossUsd, 2, false)}</div></div>
-      <div class="kpi"><div class="k">Win rate</div><div class="v">${winRate != null ? winRate.toFixed(0) + '%' : '—'}</div><div class="d">${fmt.int(w.wins)} из ${fmt.int(w.trades)}</div></div>
-      <div class="kpi"><div class="k">Live реализовано</div><div class="v ${cls(w.liveRealizedUsd)}">${fmt.usd(w.liveRealizedUsd)}</div></div>
+      <div class="kpi"><div class="k">${isLive ? 'Live-капитал скальпера' : 'Paper-капитал'}</div><div class="v">${fmt.usd(cur.equityUsd, 2, false)}</div><div class="d">реализовано ${fmt.usd(cur.realizedUsd)}${num(cur.unrealizedUsd) ? ' · открыто ' + fmt.usd(cur.unrealizedUsd) : ''}</div></div>
+      <div class="kpi"><div class="k">Сегодня${isLive ? ', live' : ', paper'}</div><div class="v ${cls(cur.realizedTodayUsd)}">${fmt.usd(cur.realizedTodayUsd)}</div><div class="d">${fmt.int(cur.tradesToday)} сделок · лимит −${fmt.usd(st.dailyLossUsd, 2, false)}</div></div>
+      <div class="kpi"><div class="k">Win rate${isLive ? ', live' : ', paper'}</div><div class="v">${winRate != null ? winRate.toFixed(0) + '%' : '—'}</div><div class="d">${fmt.int(cur.wins)} из ${fmt.int(cur.trades)}</div></div>
+      ${isLive
+        ? `<div class="kpi"><div class="k">USDT на ${esc(scVen.map(venue).join(', ') || 'биржах')}</div><div class="v">${realBal.length ? fmt.usd(realUsdt, 2, false) : '—'}</div><div class="d">${realBal.length ? 'свободно ' + fmt.usd(realFree, 2, false) + ' · ' + fmt.ago(S.liveBalances.utc) : '<button class="btn sm ghost" data-act="live-balances">Запросить баланс</button>'}</div></div>`
+        : `<div class="kpi"><div class="k">Live реализовано</div><div class="v ${cls(other.realizedUsd)}">${fmt.usd(other.realizedUsd)}</div><div class="d">${fmt.int(other.trades)} сделок</div></div>`}
     </div>
   </section>
   ${sc.lastNote ? `<div class="callout info" style="margin-top:14px">${ICON.info}<div>Последнее наблюдение: ${esc(sc.lastNote)}</div></div>` : ''}
@@ -934,6 +942,7 @@ function renderScalp() {
       ${open.map(x => `<tr title="${esc(x.note || '')}"><td class="sym">${esc(baseOf(x.symbol))}</td><td>${esc(venue(x.exchange))}</td><td class="${x.side === 'Long' ? 'long' : 'short'}">${x.side === 'Long' ? 'long' : 'short'}</td><td class="r num">${fmt.qty(x.qty)}</td><td class="r num">${fmt.price(x.entry)}</td><td class="r num mut">${fmt.price(x.lastMarkPrice)}</td><td class="r num">${fmt.dur((Date.now() - new Date(x.openedAt)) / 1000)}</td><td class="r">${signed(x.unrealizedUsd)}</td><td>${x.needsReconciliation ? '<span class="badge neg">нужна сверка</span>' : x.live ? '<span class="badge neg">live</span>' : '<span class="badge">paper</span>'}</td></tr>`).join('')}
     </tbody></table></div>` : `<div class="empty"><strong>${sc.enabled ? 'Ждём отставания одной из бирж' : 'Скальпер выключен'}</strong>${sc.enabled ? 'Вход появится, когда биржа отстанет от рынка сильнее порога и это перекроет комиссии.' : 'Включите его кнопкой выше. Он не мешает арбитражу.'}</div>`}</div></section>
 
+  ${isLive && other.trades ? `<div class="mut small" style="margin-top:10px">Paper-результат отдельно: ${fmt.usd(other.realizedUsd)} за ${fmt.int(other.trades)} сделок. В live-цифры и дневной лимит он не входит.</div>` : ''}
   <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>История</h2><div class="tools">${closed.some(x => !x.live) ? '<button class="btn sm ghost" data-act="scalp-reset">Очистить paper-историю</button>' : ''}<button class="btn sm ghost" data-go="settings" onclick="setTimeout(()=>document.getElementById('sec-scalp')?.scrollIntoView(),450)">Настройки скальпера</button></div></div>
     <div class="panel-body flush">${closed.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Закрыта</th><th>Символ</th><th>Биржа</th><th>Сторона</th><th class="r">Вход → выход</th><th class="r">Держали</th><th class="r">P&amp;L</th><th>Причина</th></tr></thead><tbody>
       ${closed.map(x => { const why = String(x.note || '').split('|').pop().trim(); const map = { 'caught-up': ['догнала', 'pos'], target: ['цель', 'pos'], stop: ['стоп', 'neg'], 'market-reversed': ['рынок развернулся', 'neg'], time: ['по времени', ''], 'time-profit': ['по времени', 'pos'], 'no-book': ['нет стакана', 'neg'], 'imbalance died': ['старый сигнал', ''] }; const [t, c] = map[why] || [why, '']; return `<tr title="${esc(x.note || '')}"><td class="mut">${fmt.dt(x.closedAt)}</td><td class="sym">${esc(baseOf(x.symbol))}</td><td>${esc(venue(x.exchange))}</td><td class="${x.side === 'Long' ? 'long' : 'short'}">${x.side === 'Long' ? 'long' : 'short'}${x.live ? ' <span class="badge neg">live</span>' : ''}</td><td class="r num">${fmt.price(x.entry)} → ${fmt.price(x.exit)}</td><td class="r num">${x.closedAt ? fmt.dur((new Date(x.closedAt) - new Date(x.openedAt)) / 1000) : '—'}</td><td class="r">${signed(x.realizedUsd)}</td><td><span class="badge ${c}">${esc(t)}</span></td></tr>`; }).join('')}
@@ -1223,7 +1232,7 @@ async function loadSettings(redraw = false) {
 }
 async function loadPerf() { try { S.perf = await api.get('/api/analytics/performance?days=' + S.perfDays); schedule(true); } catch (e) { toast('Отчёт недоступен: ' + e.message, 'err'); } }
 async function loadLedger() { try { const rows = await api.get('/api/analytics/trades?take=3000&skip=0'); S.ledger = (rows || []).map(lc).map(r => { const o = {}; for (const k in r) o[k.charAt(0).toLowerCase() + k.slice(1)] = r[k]; return o; }); schedule(true); } catch (e) { toast('Журнал недоступен: ' + e.message, 'err'); } }
-async function loadScalp() { try { S.scalp = await api.get('/api/scalp'); if (['scalp', 'balances'].includes(S.page)) schedule(); } catch { } }
+async function loadScalp() { try { S.scalp = await api.get('/api/scalp'); if (['scalp', 'balances'].includes(S.page)) schedule(); if (S.page === 'scalp' && (S.scalp?.live ?? S.scalp?.Live)) loadLiveBalances(); } catch { } }
 async function loadLiveBalances(force = false) {
   if (S.liveBalancesLoading) return;
   if (!force && S.liveBalances && Date.now() - S.liveBalancesAt < 20_000) return;
