@@ -52,8 +52,23 @@ public sealed class LiveExecutionService : ILiveExecutionService
     public Task<object> VerifyCredentialsAsync(CancellationToken ct = default)
         => FetchAllAsync(includePositions: false, ct);
 
+    // Six venues over REST take several seconds; several open pages asked at once and each paid it.
+    // Share one fetch for a few seconds so the UI never queues duplicate balance calls.
+    private Task<object>? _balancesTask;
+    private DateTime _balancesAtUtc;
+    private readonly object _balancesLock = new();
+
     public Task<object> GetLiveBalancesAsync(CancellationToken ct = default)
-        => FetchAllAsync(includePositions: true, ct);
+    {
+        lock (_balancesLock)
+        {
+            if (_balancesTask != null && (!_balancesTask.IsCompleted || DateTime.UtcNow - _balancesAtUtc < TimeSpan.FromSeconds(10)))
+                return _balancesTask;
+            _balancesAtUtc = DateTime.UtcNow;
+            // Not tied to one caller's request token: a closed tab must not cancel the shared fetch.
+            return _balancesTask = FetchAllAsync(includePositions: true, CancellationToken.None);
+        }
+    }
 
     public Task<object> TryOpenHedgeAsync(LiveHedgeRequest request, CancellationToken ct = default)
         => _orders.TryOpenAsync(request, ct);

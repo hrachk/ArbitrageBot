@@ -933,7 +933,18 @@ function renderScalp() {
         : `<div class="kpi"><div class="k">Live реализовано</div><div class="v ${cls(other.realizedUsd)}">${fmt.usd(other.realizedUsd)}</div><div class="d">${fmt.int(other.trades)} сделок</div></div>`}
     </div>
   </section>
-  ${sc.lastNote ? `<div class="callout info" style="margin-top:14px">${ICON.info}<div>Последнее наблюдение: ${esc(sc.lastNote)}</div></div>` : ''}
+  ${(() => { const wv = sc.watch ? lc(sc.watch) : null; if (!sc.enabled || !wv) return sc.lastNote ? `<div class="callout info" style="margin-top:14px">${ICON.info}<div>Последнее наблюдение: ${esc(sc.lastNote)}</div></div>` : '';
+    const nr = wv.nearest ? lc(wv.nearest) : null;
+    const pct = nr ? Math.min(100, (num(nr.ofThreshold) || 0) * 100) : 0;
+    const state = !num(wv.watched) ? 'Нет ни одной пары для входа: проверьте биржи скальпера и ключи с правом trade.'
+      : num(wv.warming) >= num(wv.watched) ? `Скальпер учит обычное смещение бирж (${fmt.int(wv.warming)} из ${fmt.int(wv.watched)} пар). Это занимает около минуты после старта.`
+      : nr ? `Ближе всего ко входу: <b>${esc(baseOf(nr.symbol))}</b> на ${esc(venue(nr.exchange))}, отставание ${fmt.pct(Math.abs(num(nr.lagPercent)), 3, false)} из нужных ${fmt.pct(wv.thresholdPercent, 2, false)}. Не хватает: ${esc(nr.why || '—')}.`
+      : 'Рынок стоит: за последние секунды цены почти не двигались.';
+    return `<section class="panel" style="margin-top:14px"><div class="panel-head"><h2>Что видит скальпер</h2><span class="sub">обновлено ${fmt.ago(wv.utc)}</span></div><div class="panel-body" style="display:grid;gap:10px">
+      <div>${state}</div>
+      ${nr ? `<div class="row" style="gap:10px"><div class="track" style="flex:1;height:8px;background:var(--bg-deep);border-radius:99px;overflow:hidden"><div style="height:100%;width:${pct.toFixed(0)}%;background:${pct >= 100 ? 'var(--long)' : 'var(--cost)'}"></div></div><span class="num small mut">${pct.toFixed(0)}% порога</span></div>` : ''}
+      <div class="mut small">Пар биржа × символ под наблюдением: ${fmt.int(wv.watched)} · ещё учатся: ${fmt.int(wv.warming)} · символов: ${fmt.int(wv.symbols)}${sc.lastNote ? ' · последний сигнал: ' + esc(sc.lastNote) : ''}</div>
+    </div></section>`; })()}
   <div class="callout" style="margin-top:14px">${ICON.warn}<div>Скальп — направленная сделка: в отличие от хеджа, она зарабатывает или теряет на движении цены. Гоняйте его в paper хотя бы несколько дней и включайте реальные ордера, только если результат держится в плюсе после комиссий.</div></div>
 
   <section class="panel" style="margin-top:18px"><div class="panel-head"><h2>Открытые позиции</h2><span class="sub">вход ${fmt.pct(st.entryPercent, 2, false)} отставания · стоп ${fmt.pct(st.stopPercent, 2, false)} · до ${esc(st.maxHoldSeconds)} с</span></div>
@@ -1232,7 +1243,7 @@ async function loadSettings(redraw = false) {
 }
 async function loadPerf() { try { S.perf = await api.get('/api/analytics/performance?days=' + S.perfDays); schedule(true); } catch (e) { toast('Отчёт недоступен: ' + e.message, 'err'); } }
 async function loadLedger() { try { const rows = await api.get('/api/analytics/trades?take=3000&skip=0'); S.ledger = (rows || []).map(lc).map(r => { const o = {}; for (const k in r) o[k.charAt(0).toLowerCase() + k.slice(1)] = r[k]; return o; }); schedule(true); } catch (e) { toast('Журнал недоступен: ' + e.message, 'err'); } }
-async function loadScalp() { try { S.scalp = await api.get('/api/scalp'); if (['scalp', 'balances'].includes(S.page)) schedule(); if (S.page === 'scalp' && (S.scalp?.live ?? S.scalp?.Live)) loadLiveBalances(); } catch { } }
+async function loadScalp() { try { S.scalp = await api.get('/api/scalp'); if (['scalp', 'balances'].includes(S.page)) schedule(); if (S.page === 'scalp' && (S.scalp?.live ?? S.scalp?.Live) && (!S.liveBalancesAt || Date.now() - S.liveBalancesAt > 60_000)) loadLiveBalances(); } catch { } }
 async function loadLiveBalances(force = false) {
   if (S.liveBalancesLoading) return;
   if (!force && S.liveBalances && Date.now() - S.liveBalancesAt < 20_000) return;
