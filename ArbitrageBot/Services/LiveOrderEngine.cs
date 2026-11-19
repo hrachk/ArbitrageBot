@@ -1221,6 +1221,25 @@ public sealed class LiveOrderEngine
         }
     }
 
+    /// <summary>
+    /// Load the venue's symbol filters and set the scalp leverage on every watched symbol ahead of
+    /// time, so the first live order does not pay for these REST calls (they cost ~1 s and the fill).
+    /// </summary>
+    public async Task PrepareScalpVenueAsync(string exchange, IReadOnlyList<string> symbols, decimal leverage, CancellationToken ct)
+    {
+        if (IsOkx(exchange)) await EnsureOkxLotsAsync(ct).ConfigureAwait(false);
+        else if (symbols.Count > 0) await GetRulesAsync(exchange, symbols[0], ct).ConfigureAwait(false);
+        var client = CreateClient(exchange);
+        if (client == null) return;
+        foreach (var sym in symbols)
+        {
+            if (ct.IsCancellationRequested) return;
+            var baseAsset = sym.EndsWith("USDT", StringComparison.OrdinalIgnoreCase) ? sym[..^4] : sym;
+            await EnsureLeverageAsync(client, exchange, new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT"),
+                sym, leverage, ct).ConfigureAwait(false);
+        }
+    }
+
     private static SharedQuantity QtyForExchange(string exchange, string symbol, decimal baseQty)
     {
         if (IsOkx(exchange) && OkxLots.TryGetValue(NormSym(symbol), out var lot) && lot.CtVal > 0)
@@ -1590,10 +1609,20 @@ public sealed class LiveOrderEngine
         if (!safety.ok) return new(false, "safety: " + safety.reason, null, false, false, 0m, 0m);
         await EnsureLeverageAsync(client, exchange, shared, symbol, leverage, ct).ConfigureAwait(false);
         var sent = await SendOrderAsync(
-            client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded), leverage, posSide, isClose: false,
+            client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded),
+            // Binance takes leverage per symbol (set above), not on the order; sending it only adds a warning.
+            exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase) ? null : leverage, posSide, isClose: false,
             "ab-s-" + Guid.NewGuid().ToString("N")[..12], ct, snapped, rounded).ConfigureAwait(false);
         if (!sent.Ok)
         {
+            if (sent.Verified && sent.FilledBaseQty <= 0)
+            {
+                // IOC expired with nothing filled: the price moved before the order landed. That is a
+                // normal outcome, not a reject; the scalper pauses the symbol briefly on its own.
+                _logger.LogInformation("SCALP IOC not filled {Ex} {Sym} {Side} @ {P}: price moved before the order landed",
+                    exchange, symbol, isLong ? "L" : "S", snapped);
+                return new(false, "IOC not filled: price moved", sent.Id, sent.Accepted, true, 0m, 0m);
+            }
             if (IsBalanceError(sent.Error))
                 NoteVenueUsdt(exchange, 0);
             else
