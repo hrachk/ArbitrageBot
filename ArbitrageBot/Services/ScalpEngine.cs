@@ -232,7 +232,7 @@ public sealed class ScalpEngine
         try
         {
             sent = await _orders.PlaceScalpLegAsync(sig.Exchange, symbol, sig.IsLong, qty,
-                LiveOrderEngine.SnapLimit(limit, limit, sig.IsLong), lev, ct).ConfigureAwait(false);
+                LiveOrderEngine.SnapLimit(sig.EntryPrice, limit, sig.IsLong), lev, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

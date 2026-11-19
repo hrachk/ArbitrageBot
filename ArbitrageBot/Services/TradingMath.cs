@@ -386,3 +386,38 @@ public static class Venues
         return new HashSet<string>(norm.Split(','), StringComparer.OrdinalIgnoreCase);
     }
 }
+
+/// <summary>Exchange order filters: quantity step and price tick. Pure, unit-tested.</summary>
+public static class OrderRules
+{
+    private static decimal Pow10(int n) { var f = 1m; for (var i = 0; i < n; i++) f *= 10m; return f; }
+
+    /// <summary>Largest quantity on the exchange's step not above <paramref name="qty"/>.</summary>
+    public static decimal FloorQty(decimal qty, decimal? step, int? decimals)
+    {
+        if (qty <= 0) return 0;
+        if (step is > 0 and var s) return Math.Floor(qty / s) * s / 1.000000000000000000000000000000000m;
+        if (decimals is >= 0 and var d) { var f = Pow10(d); return Math.Floor(qty * f) / f; }
+        return qty;
+    }
+
+    /// <summary>Price on the exchange tick: up for a buy limit (never worse than asked is not
+    /// possible, so we round toward the fill side), down for a sell limit.</summary>
+    public static decimal SnapPrice(decimal price, decimal? step, int? decimals, bool up)
+    {
+        if (price <= 0) return 0;
+        if (step is > 0 and var s)
+        {
+            var ticks = price / s;
+            var n = up ? Math.Ceiling(ticks - 0.000000001m) : Math.Floor(ticks + 0.000000001m);
+            return Math.Max(1, n) * s / 1.000000000000000000000000000000000m;
+        }
+        if (decimals is >= 0 and var d)
+        {
+            var f = Pow10(d);
+            var n = up ? Math.Ceiling(price * f - 0.000000001m) : Math.Floor(price * f + 0.000000001m);
+            return Math.Max(1, n) / f;
+        }
+        return price;
+    }
+}

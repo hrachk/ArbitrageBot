@@ -241,6 +241,14 @@ internal static class Program
             && Venues.AllowSet("Bnance") is { } a1 && !a1.Contains("Binance"));
         Check("venues: empty means every venue", Venues.AllowSet("  ") is null);
         Check("venues: one venue allow set", Venues.AllowSet("binance") is { Count: 1 } a2 && a2.Contains("Binance") && !a2.Contains("Bybit"));
+        Near("rules: qty floored to step 1 (MMT)", OrderRules.FloorQty(832.7m, 1m, null), 832m);
+        Near("rules: qty floored to step 0.001", OrderRules.FloorQty(0.12349m, 0.001m, null), 0.123m);
+        Near("rules: qty by decimals", OrderRules.FloorQty(12.3456m, null, 2), 12.34m);
+        Near("rules: buy limit rounds up to tick", OrderRules.SnapPrice(0.30032008m, 0.0001m, null, true), 0.3004m);
+        Near("rules: sell limit rounds down to tick", OrderRules.SnapPrice(0.30027991m, 0.0001m, null, false), 0.3002m);
+        Near("rules: on-tick price unchanged", OrderRules.SnapPrice(0.3002m, 0.0001m, null, true), 0.3002m);
+        Near("rules: price by decimals", OrderRules.SnapPrice(1.23456m, null, 3, false), 1.234m);
+        Check("rules: no info leaves values", OrderRules.FloorQty(5.55m, null, null) == 5.55m && OrderRules.SnapPrice(5.55m, null, null, true) == 5.55m);
         Check("scalp exit: hold while lag persists", LeadLag.ExitReason(true, 100m, 100.05m, -0.05m, 100m, -0.3m, 0.05m, 5, 0.30m, 45, 0.2m) is null);
     }
 }
