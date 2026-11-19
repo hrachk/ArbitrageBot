@@ -44,7 +44,32 @@ public sealed class LiveSafetyService
             // open count checked inside engine; here 0 placeholder — engine rechecks
             0, notional);
         if (!ok) return (false, reason);
+        return VenueChecks(symbol, longEx, shortEx);
+    }
 
+    /// <summary>
+    /// Scalp leg: the hedge's notional cap, slots and daily stop do not apply (the scalper has its own
+    /// deposit, position and daily limits). Kill/enable, its own size ceiling, venue allowlist,
+    /// rate limit and book health still do.
+    /// </summary>
+    public (bool ok, string reason) TryReserveScalpOrderAttempt(string symbol, string exchange, decimal notional, decimal maxNotional)
+    {
+        if (!_guard.CanPlaceOrders) return (false, "live orders are disabled or killed");
+        if (maxNotional > 0 && notional > maxNotional)
+            return (false, $"scalp notional {notional:F0} > scalp max {maxNotional:F0}");
+        lock (_rateLock)
+        {
+            var check = VenueChecks(symbol, exchange, exchange);
+            if (!check.ok) return check;
+            var now = DateTime.UtcNow;
+            _lastGlobalOrderUtc = now;
+            _lastOrderUtc[exchange] = now;
+            return (true, "ok");
+        }
+    }
+
+    private (bool ok, string reason) VenueChecks(string symbol, string longEx, string shortEx)
+    {
         var allowed = _options.LiveAllowedExchanges;
         if (allowed is { Count: > 0 })
         {

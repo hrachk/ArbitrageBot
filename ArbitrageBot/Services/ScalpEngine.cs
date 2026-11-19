@@ -246,7 +246,7 @@ public sealed class ScalpEngine
         {
             lock (_lock) { _open.Remove(pending); SaveLedgerUnlocked(); }
             PauseSymbol(symbol, 5000);
-            _logger.LogInformation("SCALP live entry not filled {Sym} {Ex}: {Err}", symbol, sig.Exchange, sent.Error);
+            _logger.LogInformation(sent.Accepted ? "SCALP live entry not filled {Sym} {Ex}: {Err}" : "SCALP live entry rejected before sending {Sym} {Ex}: {Err}", symbol, sig.Exchange, sent.Error);
             return;
         }
         if (!sent.Verified || (sent.FilledBaseQty > 0 && sent.AveragePrice <= 0))

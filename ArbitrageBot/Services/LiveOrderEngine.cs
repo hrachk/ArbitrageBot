@@ -1501,7 +1501,10 @@ public sealed class LiveOrderEngine
         var notional = rounded * snapped;
         // The scalper enforces its own budget and position limits (ScalpEngine). It does not use
         // the hedge's open-position slots or notional cap; kill/enable still apply above.
-        var safety = _safety.TryReserveOrderAttempt(symbol, exchange, exchange, notional);
+        // Scalp ceiling: its own deposit x leverage (+5% for lot rounding), not the hedge cap.
+        var rt = _runtime.Snapshot;
+        var scalpMax = Math.Max(0m, rt.ScalpDepositUsd) * Math.Clamp(rt.ScalpLeverage, 1m, 5m) * 1.05m;
+        var safety = _safety.TryReserveScalpOrderAttempt(symbol, exchange, notional, scalpMax);
         if (!safety.ok) return new(false, "safety: " + safety.reason, null, false, false, 0m, 0m);
         var sent = await SendOrderAsync(
             client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded), leverage, posSide, isClose: false,
