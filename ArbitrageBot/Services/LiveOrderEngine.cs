@@ -1150,6 +1150,77 @@ public sealed class LiveOrderEngine
     /// QNT-USDT-SWAP is ctVal=1, lotSz=0.1 — 0.378 is rejected with an empty client error.
     /// Binance/Bybit/Bitget shared path accepts base asset quantity.
     /// </summary>
+    // ---- Exchange symbol filters (qty step, price tick, minimums) and per-symbol leverage ----
+    private sealed record SymbolRules(decimal? QtyStep, int? QtyDecimals, decimal? PriceStep, int? PriceDecimals,
+        decimal MinQty, decimal MinNotional);
+    private static readonly ConcurrentDictionary<string, SymbolRules> Rules = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, DateTime> RulesLoadedAt = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly SemaphoreSlim RulesLock = new(1, 1);
+    private static readonly ConcurrentDictionary<string, decimal> LeverageSet = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The exchange's own step/tick for a USDT perp, refreshed every 6 h. Null when unknown.</summary>
+    private async Task<SymbolRules?> GetRulesAsync(string exchange, string symbol, CancellationToken ct)
+    {
+        var key = exchange + "|" + NormSym(symbol);
+        bool Fresh() => RulesLoadedAt.TryGetValue(exchange, out var at) && DateTime.UtcNow - at < TimeSpan.FromHours(6);
+        if (Fresh() && Rules.TryGetValue(key, out var cached)) return cached;
+        await RulesLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (Fresh()) return Rules.GetValueOrDefault(key);
+            var pub = new ExchangeRestClient();
+            var sc = pub.GetFuturesSymbolClient(TradingMode.PerpetualLinear, exchange);
+            if (sc == null) return Rules.GetValueOrDefault(key);
+            var res = await sc.GetFuturesSymbolsAsync(new GetSymbolsRequest(TradingMode.PerpetualLinear), ct).ConfigureAwait(false);
+            if (!res.Success || res.Data == null)
+            {
+                _logger.LogWarning("Symbol filters for {Ex} unavailable: {Err}", exchange, res.Error?.Message);
+                return Rules.GetValueOrDefault(key);
+            }
+            var n = 0;
+            foreach (var s in res.Data)
+            {
+                if (!string.Equals(s.QuoteAsset, "USDT", StringComparison.OrdinalIgnoreCase)) continue;
+                Rules[exchange + "|" + NormSym(s.BaseAsset + "USDT")] = new SymbolRules(
+                    s.QuantityStep, s.QuantityDecimals, s.PriceStep, s.PriceDecimals,
+                    s.MinTradeQuantity ?? 0m, s.MinNotionalValue ?? 0m);
+                n++;
+            }
+            RulesLoadedAt[exchange] = DateTime.UtcNow;
+            _logger.LogInformation("Symbol filters loaded for {Ex}: {N} USDT perps", exchange, n);
+            return Rules.GetValueOrDefault(key);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Symbol filters for {Ex} failed", exchange);
+            return Rules.GetValueOrDefault(key);
+        }
+        finally { RulesLock.Release(); }
+    }
+
+    /// <summary>
+    /// Binance ignores the leverage on an order request, so set it on the symbol once.
+    /// A failure is logged and not fatal: the notional is the same, only the margin differs.
+    /// </summary>
+    private async Task EnsureLeverageAsync(ExchangeRestClient client, string exchange, SharedSymbol symbol, string sym, decimal leverage, CancellationToken ct)
+    {
+        if (leverage <= 0) return;
+        var key = exchange + "|" + NormSym(sym);
+        if (LeverageSet.TryGetValue(key, out var have) && have == leverage) return;
+        try
+        {
+            var lc = client.GetLeverageClient(TradingMode.PerpetualLinear, exchange);
+            if (lc == null) return;
+            var r = await lc.SetLeverageAsync(new SetLeverageRequest(symbol, leverage, null, SharedMarginMode.Cross), ct).ConfigureAwait(false);
+            if (r.Success) { LeverageSet[key] = leverage; _logger.LogInformation("Leverage {Ex} {Sym} set to {L}x", exchange, sym, leverage); }
+            else _logger.LogWarning("Leverage {Ex} {Sym} {L}x not set: {Err}", exchange, sym, leverage, r.Error?.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Leverage {Ex} {Sym} {L}x not set", exchange, sym, leverage);
+        }
+    }
+
     private static SharedQuantity QtyForExchange(string exchange, string symbol, decimal baseQty)
     {
         if (IsOkx(exchange) && OkxLots.TryGetValue(NormSym(symbol), out var lot) && lot.CtVal > 0)
@@ -1498,6 +1569,17 @@ public sealed class LiveOrderEngine
         var side = isLong ? SharedOrderSide.Buy : SharedOrderSide.Sell;
         var posSide = isLong ? SharedPositionSide.Long : SharedPositionSide.Short;
         var snapped = SnapLimit(limitPrice, limitPrice, isLong);
+        // The exchange's own filters beat the generic rounding above (Binance -1111 on MMT: step 1, not 0.1).
+        var rules = IsOkx(exchange) ? null : await GetRulesAsync(exchange, symbol, ct).ConfigureAwait(false);
+        if (rules != null)
+        {
+            rounded = OrderRules.FloorQty(qty, rules.QtyStep, rules.QtyDecimals);
+            snapped = OrderRules.SnapPrice(limitPrice, rules.PriceStep, rules.PriceDecimals, up: isLong);
+            if (rounded <= 0 || rounded < rules.MinQty)
+                return new(false, $"qty {rounded} below {exchange} minimum {rules.MinQty}", null, false, false, 0m, 0m);
+            if (rules.MinNotional > 0 && rounded * snapped < rules.MinNotional)
+                return new(false, $"notional {rounded * snapped:F2} below {exchange} minimum {rules.MinNotional}", null, false, false, 0m, 0m);
+        }
         var notional = rounded * snapped;
         // The scalper enforces its own budget and position limits (ScalpEngine). It does not use
         // the hedge's open-position slots or notional cap; kill/enable still apply above.
@@ -1506,6 +1588,7 @@ public sealed class LiveOrderEngine
         var scalpMax = Math.Max(0m, rt.ScalpDepositUsd) * Math.Clamp(rt.ScalpLeverage, 1m, 5m) * 1.05m;
         var safety = _safety.TryReserveScalpOrderAttempt(symbol, exchange, notional, scalpMax);
         if (!safety.ok) return new(false, "safety: " + safety.reason, null, false, false, 0m, 0m);
+        await EnsureLeverageAsync(client, exchange, shared, symbol, leverage, ct).ConfigureAwait(false);
         var sent = await SendOrderAsync(
             client, exchange, shared, side, QtyForExchange(exchange, symbol, rounded), leverage, posSide, isClose: false,
             "ab-s-" + Guid.NewGuid().ToString("N")[..12], ct, snapped, rounded).ConfigureAwait(false);
@@ -1540,7 +1623,8 @@ public sealed class LiveOrderEngine
         var baseAsset = symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
             ? symbol[..^4] : symbol;
         var shared = new SharedSymbol(TradingMode.PerpetualLinear, baseAsset, "USDT");
-        var rounded = RoundBaseQty(qty, 0);
+        var rules = IsOkx(exchange) ? null : await GetRulesAsync(exchange, symbol, ct).ConfigureAwait(false);
+        var rounded = rules != null ? OrderRules.FloorQty(qty, rules.QtyStep, rules.QtyDecimals) : RoundBaseQty(qty, 0);
         if (rounded <= 0) rounded = qty;
         var side = wasLong ? SharedOrderSide.Sell : SharedOrderSide.Buy;
         var posSide = wasLong ? SharedPositionSide.Long : SharedPositionSide.Short;
