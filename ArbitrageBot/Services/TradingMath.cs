@@ -24,7 +24,11 @@ public sealed class BasisEstimator
     private readonly object _lock = new();
     public decimal Ema { get; private set; }
     public decimal Dev { get; private set; }
+    /// <summary>Accepted (non-outlier) observations.</summary>
     public int Samples { get; private set; }
+    /// <summary>All throttled observations, outliers included. Warmup counts these.</summary>
+    public int Seen { get; private set; }
+    /// <summary>Consecutive outliers.</summary>
     public int Rejected { get; private set; }
     public long FirstMs { get; private set; }
     public long LastMs { get; private set; }
@@ -36,25 +40,29 @@ public sealed class BasisEstimator
         if (grossPercent > 25m || grossPercent < -25m) return false;
         lock (_lock)
         {
-            if (Samples > 0 && nowMs - LastMs < MinSampleGapMs) return false;
-            if (Samples == 0)
+            if (Seen > 0 && nowMs - LastMs < MinSampleGapMs) return false;
+            if (Seen == 0)
             {
                 Ema = grossPercent;
                 Dev = 0m;
                 Samples = 1;
+                Seen = 1;
                 FirstMs = LastMs = nowMs;
                 return true;
             }
 
+            Seen++;
+            LastMs = nowMs;
             var err = grossPercent - Ema;
             var abs = err < 0 ? -err : err;
             // Once warmed, a print far outside the band is the event, not the baseline.
-            // Rejected prints still advance the clock so a real regime shift is learned
-            // slowly (they are folded in at a quarter weight after 3 consecutive rejects).
+            // It still counts towards warmup (Seen). The first version counted only accepted
+            // samples, so a route whose spread moved to a new level could never finish warmup
+            // and was stuck in "basis-warmup" for good (ZKP Binance->Bybit, 35+ minutes at
+            // 0.55-0.78% excess). A move that persists is learned at a quarter weight.
             if (Samples >= 10 && abs > OutlierBand(Dev))
             {
                 Rejected++;
-                LastMs = nowMs;
                 if (Rejected < 3) return false;
                 var slow = Alpha / 4m;
                 Ema += slow * err;
@@ -64,7 +72,6 @@ public sealed class BasisEstimator
 
             Rejected = 0;
             Samples++;
-            LastMs = nowMs;
             Ema += Alpha * err;
             Dev += Alpha * (abs - Dev);
             return true;
@@ -77,7 +84,7 @@ public sealed class BasisEstimator
     {
         lock (_lock)
         {
-            var ready = Samples >= Math.Max(4, minSamples) && LastMs - FirstMs >= Math.Max(1000, minSpanMs);
+            var ready = Seen >= Math.Max(4, minSamples) && Samples >= 4 && LastMs - FirstMs >= Math.Max(1000, minSpanMs);
             return (Ema, Dev, ready);
         }
     }
@@ -92,18 +99,32 @@ public sealed class BasisEstimator
 /// </summary>
 public static class QuoteGate
 {
+    /// <summary>
+    /// A leg is tradable when its feed is alive, not when its price changed recently.
+    /// A synchronised websocket order book only sends when the book changes: a quiet but
+    /// synced book is the current price. Measuring "age since last change" (the first
+    /// version of this gate) flickered on every quiet book, reset the persistence timer
+    /// and blocked almost every entry.
+    ///  - REST snapshot leg: never traded (it is seconds old by construction).
+    ///  - Synced book: tradable while its quote is younger than <paramref name="syncedMaxAgeMs"/>.
+    ///  - Book-ticker stream (no synced book): must be younger than <paramref name="maxAgeMs"/>,
+    ///    and two such legs must not be further apart in time than <paramref name="maxSkewMs"/>.
+    /// </summary>
     public static bool LegsFresh(
         double longAgeMs, double shortAgeMs,
         bool longIsRest, bool shortIsRest,
-        int maxAgeMs, int maxSkewMs,
+        bool longSynced, bool shortSynced,
+        int maxAgeMs, int maxSkewMs, int syncedMaxAgeMs,
         out string? reason)
     {
         reason = null;
         if (longIsRest || shortIsRest) { reason = "rest-leg"; return false; }
         var age = maxAgeMs > 0 ? maxAgeMs : 1000;
-        if (longAgeMs > age || shortAgeMs > age) { reason = "stale"; return false; }
-        var skew = Math.Abs(longAgeMs - shortAgeMs);
-        if (maxSkewMs > 0 && skew > maxSkewMs) { reason = "skew"; return false; }
+        var syncedAge = syncedMaxAgeMs > 0 ? Math.Max(syncedMaxAgeMs, age) : Math.Max(5000, age);
+        if (longAgeMs > (longSynced ? syncedAge : age) || shortAgeMs > (shortSynced ? syncedAge : age))
+        { reason = "stale"; return false; }
+        if (!longSynced && !shortSynced && maxSkewMs > 0 && Math.Abs(longAgeMs - shortAgeMs) > maxSkewMs)
+        { reason = "skew"; return false; }
         return true;
     }
 }
