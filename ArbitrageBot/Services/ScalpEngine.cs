@@ -205,6 +205,7 @@ public sealed class ScalpEngine
         if ((DateTime.UtcNow - _lastOpenUtc).TotalSeconds < Math.Max(0, snap.ScalpCooldownSeconds)) return;
 
         var lev = Math.Clamp(snap.ScalpLeverage, 1m, 5m);
+        if (LiveScalping) WarmUpLive(snap, lev);
         var deposit = Math.Max(0m, snap.ScalpDepositUsd);
         var notional = deposit * lev / Math.Max(1, snap.ScalpMaxOpen);
         if (notional < 6m) { _lastNote = "депозит скальпа слишком мал"; return; }
@@ -215,7 +216,12 @@ public sealed class ScalpEngine
         var fee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, sig.Exchange);
         var qty = LiveOrderEngine.RoundBaseQty(notional / sig.EntryPrice, sig.EntryPrice);
         if (qty <= 0) return;
-        var slip = Math.Max(0.5m, snap.IocSlipBps) / 10_000m;
+        // The signal IS a venue about to move toward the market, so by the time the order lands
+        // (~0.3–0.8 s from a home connection) its touch has usually moved. A 4 bp IOC limit then
+        // expires unfilled. Allow up to half of the expected edge (max 0.10%), never less than
+        // IocSlipBps, so a fill still keeps at least half the expected result.
+        var slipPct = Math.Max(Math.Max(0.5m, snap.IocSlipBps) / 100m, Math.Min(0.10m, sig.ExpectedNetPercent / 2m));
+        var slip = slipPct / 100m;
         var limit = sig.IsLong ? sig.EntryPrice * (1m + slip) : sig.EntryPrice * (1m - slip);
         _lastOpenUtc = DateTime.UtcNow;
 
@@ -359,6 +365,32 @@ public sealed class ScalpEngine
         => _symbolPauseUntil[symbol] = DateTime.UtcNow.AddMilliseconds(ms);
 
     private static HashSet<string>? ParseVenues(string? csv) => Venues.AllowSet(csv);
+
+    private string _warmKey = "";
+    private DateTime _warmAtUtc = DateTime.MinValue;
+    private int _warming;
+
+    /// <summary>Background: filters + leverage for every live venue and symbol, redone when they change or every 30 min.</summary>
+    private void WarmUpLive(ArbitrageOptions snap, decimal lev)
+    {
+        var allowed = ParseVenues(snap.ScalpVenues);
+        var venues = Venues.All.Where(v => VenueTradable(v, allowed, true)).ToList();
+        var symbols = _markets.Symbols.ToList();
+        var key = string.Join(",", venues) + "|" + lev + "|" + string.Join(",", symbols);
+        if (key == _warmKey && DateTime.UtcNow - _warmAtUtc < TimeSpan.FromMinutes(30)) return;
+        if (Interlocked.Exchange(ref _warming, 1) == 1) return;
+        _warmKey = key; _warmAtUtc = DateTime.UtcNow;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                foreach (var v in venues)
+                    await _orders.PrepareScalpVenueAsync(v, symbols, lev, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Scalp live warm-up failed"); }
+            finally { Interlocked.Exchange(ref _warming, 0); }
+        });
+    }
 
     private static string[] UnknownVenues(string? csv) { Venues.NormalizeCsv(csv, out var u); return u; }
 
