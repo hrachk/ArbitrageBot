@@ -83,6 +83,18 @@ public class TradingUiSettings
     public decimal IocSlipBps { get; set; }
     public int FundingHorizonMinutes { get; set; }
     public bool? LiveConcurrentLegs { get; set; }
+
+    // Scalper (null = keep current)
+    public decimal? ScalpDepositUsd { get; set; }
+    public decimal? ScalpLeverage { get; set; }
+    public int? ScalpMaxOpen { get; set; }
+    public decimal? ScalpDailyLossUsd { get; set; }
+    public decimal? ScalpEntryPercent { get; set; }
+    public decimal? ScalpMinNetPercent { get; set; }
+    public decimal? ScalpStopPercent { get; set; }
+    public int? ScalpMaxHoldSeconds { get; set; }
+    public int? ScalpCooldownSeconds { get; set; }
+    public bool? ScalpLive { get; set; }
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 16;
     public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;

@@ -450,6 +450,20 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
     private bool IsRestLeg(string exchange, string symbol, BookTicker t)
         => t.IsRest || _restSourced.ContainsKey($"{exchange}:{symbol}");
 
+    /// <summary>
+    /// True when this venue's quote is from a live feed: a synced socket book (quiet up to
+    /// <see cref="SyncedQuietLimitMs"/>) or a ticker stream younger than TradeMaxQuoteAgeMs.
+    /// REST snapshots are never live.
+    /// </summary>
+    public bool QuoteLive(string exchange, string symbol)
+    {
+        if (!_tickers.TryGetValue($"{exchange}:{symbol}", out var t) || t.Timestamp == default) return false;
+        if (IsRestLeg(exchange, symbol, t)) return false;
+        var age = (DateTime.UtcNow - t.Timestamp).TotalMilliseconds;
+        var maxAge = _runtime.Snapshot.TradeMaxQuoteAgeMs > 0 ? _runtime.Snapshot.TradeMaxQuoteAgeMs : 1000;
+        return IsSynced(exchange, symbol) ? age <= SyncedQuietLimitMs : age <= maxAge;
+    }
+
     /// <summary>Traded-leg freshness for one route (see <see cref="QuoteGate.LegsFresh"/>).</summary>
     private bool RouteFresh(string symbol, string longEx, BookTicker l, string shortEx, BookTicker s)
     {

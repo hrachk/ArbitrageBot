@@ -27,6 +27,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly FundingRateService _fundingRates;
     private readonly HoldDecisionEngine _holdEngine;
     private readonly ScalpEngine _scalp;
+    private readonly ExposureRegistry _exposure;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
     private DateTime _lastFuturesScanLogUtc = DateTime.MinValue;
@@ -73,7 +74,8 @@ public class ArbitrageWorker : BackgroundService
         ILiveExecutionService liveExec,
         FundingRateService fundingRates,
         HoldDecisionEngine holdEngine,
-        ScalpEngine scalp)
+        ScalpEngine scalp,
+        ExposureRegistry exposure)
     {
         _spotMarket = spotMarket;
         _spotBooks = spotBooks;
@@ -93,6 +95,7 @@ public class ArbitrageWorker : BackgroundService
         _fundingRates = fundingRates;
         _holdEngine = holdEngine;
         _scalp = scalp;
+        _exposure = exposure;
 
         _state.StrategyMode = _options.StrategyMode;
         _state.Mode = _liveGuard.CanPlaceOrders ? "LIVE" : (_liveGuard.IsEnabled ? "LIVE-RO" : "PAPER");
@@ -434,6 +437,9 @@ public class ArbitrageWorker : BackgroundService
             foreach (var o in opps.Where(x => x.IsExecutable).OrderByDescending(x => x.EstNetPnlUsd))
             {
                 if (openedThisCycle >= maxPerCycle) break;
+                // The scalper holds this symbol: two strategies on one symbol and venue would net legs.
+                if (_scalp.HasExposure(o.Symbol)) continue;
+                _exposure.MarkArb(o.Symbol, TimeSpan.FromSeconds(3));
 
                 // Real exchange orders only when Live fully enabled (not RO)
                 if (_liveGuard.CanPlaceOrders)
@@ -502,8 +508,7 @@ public class ArbitrageWorker : BackgroundService
         _state.PaperRecentSkips = _analytics.GetRecentSkips(25);
 
         PushFuturesPaper();
-        if (_runtime.Snapshot.SpatialScalpMode)
-            await _scalp.TickAsync(ct);
+        // The scalper runs on its own loop (ScalpWorker) and never delays this scan.
     }
 
     private async Task RunSpotCycleAsync(CancellationToken ct)

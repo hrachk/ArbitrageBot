@@ -6,11 +6,19 @@ using ArbitrageBot.Models;
 namespace ArbitrageBot.Services;
 
 /// <summary>
-/// Directional scalp alongside the hedge. One leg, one venue.
-/// Side and venue come from the live books: touch imbalance that holds,
-/// a mid move in the same direction, and agreement from the other venues.
-/// Entry is a limit one tick through the touch. Exit when the plus covers
-/// the fee bill, or when the imbalance that justified the trade dies.
+/// Single-leg scalper that runs beside the hedge without touching it.
+///
+/// Signal: lead-lag. When the median of the other venues has moved and one venue has not
+/// followed beyond its learned normal offset, take one leg on the lagging venue in the
+/// market's direction and exit when it catches up (see <see cref="LeadLag"/>).
+///
+/// Isolation from the hedge:
+///  - own budget (ScalpDepositUsd x ScalpLeverage), own daily loss cap, own position limit;
+///    scalp positions are not counted in the hedge's open-position or daily-loss limits;
+///  - runs on its own loop (ScalpWorker), so an order round trip never delays the hedge scan;
+///  - never trades a symbol the hedge holds or is entering, and the hedge skips symbols the
+///    scalper holds (ExposureRegistry) — two strategies on one symbol would net legs;
+///  - real orders only when live orders are on AND ScalpLive is on.
 /// </summary>
 public sealed class ScalpEngine
 {
@@ -20,6 +28,7 @@ public sealed class ScalpEngine
     private readonly LiveOrderEngine _orders;
     private readonly IFuturesPaperService _paper;
     private readonly LiveTradingGuard _guard;
+    private readonly ExposureRegistry _exposure;
     private readonly ILogger<ScalpEngine> _logger;
     private readonly string _ledgerPath;
     private static readonly JsonSerializerOptions LedgerJson = new() { WriteIndented = true };
@@ -27,9 +36,19 @@ public sealed class ScalpEngine
     private readonly object _lock = new();
     private readonly List<ScalpPosition> _open = [];
     private readonly List<ScalpPosition> _closed = [];
-    private readonly ConcurrentDictionary<string, MidSample> _mids = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, DateTime> _imbalanceSince = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<PendingEntry> _pending = [];
+    // symbol|venue -> learned normal offset of that venue against the others
+    private readonly ConcurrentDictionary<string, BasisEstimator> _offsets = new(StringComparer.OrdinalIgnoreCase);
+    // symbol -> recent all-venue medians
+    private readonly ConcurrentDictionary<string, List<(long Ms, decimal Mid)>> _medians = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (bool IsLong, long SinceMs)> _signalSince = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _symbolPauseUntil = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _lastOpenUtc = DateTime.MinValue;
+    private string _lastNote = "";
+
+    private const long MarketMoveWindowMs = 3000;
+    private const int OffsetMinSamples = 40;
+    private const long OffsetMinSpanMs = 45_000;
 
     public ScalpEngine(
         IFuturesMarketService market,
@@ -38,6 +57,7 @@ public sealed class ScalpEngine
         LiveOrderEngine orders,
         IFuturesPaperService paper,
         LiveTradingGuard guard,
+        ExposureRegistry exposure,
         IWebHostEnvironment env,
         ILogger<ScalpEngine> logger)
     {
@@ -47,27 +67,80 @@ public sealed class ScalpEngine
         _orders = orders;
         _paper = paper;
         _guard = guard;
+        _exposure = exposure;
         _ledgerPath = Path.Combine(env.ContentRootPath, "data", "live", "scalp-ledger.json");
         _logger = logger;
         LoadLedger();
+        // The scalper no longer borrows the hedge's position slots.
+        _guard.SetAdditionalOpenPositions(0);
     }
 
-    public object Snapshot()
+    /// <summary>Drop closed PAPER scalps from history (live history is never touched).</summary>
+    public int ResetPaperHistory()
     {
         lock (_lock)
         {
+            var n = _closed.RemoveAll(p => !p.Live);
+            SaveLedgerUnlocked();
+            return n;
+        }
+    }
+
+    /// <summary>True when the scalper holds or is entering this symbol. The hedge skips it.</summary>
+    public bool HasExposure(string symbol)
+    {
+        lock (_lock)
+            return _open.Any(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+                || _pending.Any(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool LiveScalping => _guard.CanPlaceOrders && _runtime.Snapshot.ScalpLive;
+
+    public object Snapshot()
+    {
+        var snap = _runtime.Snapshot;
+        lock (_lock)
+        {
+            var today = DateTime.UtcNow.Date;
+            var paperClosed = _closed.Where(p => !p.Live).ToList();
+            var liveClosed = _closed.Where(p => p.Live).ToList();
+            var paperRealized = paperClosed.Sum(p => p.RealizedUsd ?? 0m);
+            var lev = Math.Clamp(snap.ScalpLeverage, 1m, 5m);
+            var marginUsed = _open.Sum(p => p.NotionalUsd > 0 ? p.NotionalUsd / Math.Max(1m, p.Leverage) : p.Entry * p.Qty / lev);
             return new
             {
-                enabled = _runtime.Snapshot.SpatialScalpMode,
+                enabled = snap.SpatialScalpMode,
+                live = LiveScalping,
+                liveRequested = snap.ScalpLive,
+                lastNote = _lastNote,
+                settings = new
+                {
+                    depositUsd = snap.ScalpDepositUsd, leverage = lev, maxOpen = snap.ScalpMaxOpen,
+                    dailyLossUsd = snap.ScalpDailyLossUsd, entryPercent = snap.ScalpEntryPercent,
+                    stopPercent = snap.ScalpStopPercent, maxHoldSeconds = snap.ScalpMaxHoldSeconds
+                },
+                wallet = new
+                {
+                    depositUsd = snap.ScalpDepositUsd,
+                    paperEquityUsd = snap.ScalpDepositUsd + paperRealized + _open.Where(p => !p.Live).Sum(p => p.UnrealizedUsd),
+                    paperRealizedUsd = paperRealized,
+                    liveRealizedUsd = liveClosed.Sum(p => p.RealizedUsd ?? 0m),
+                    realizedTodayUsd = _closed.Where(p => p.ClosedAt?.Date == today).Sum(p => p.RealizedUsd ?? 0m),
+                    marginUsedUsd = marginUsed,
+                    trades = _closed.Count,
+                    wins = _closed.Count(p => (p.RealizedUsd ?? 0m) > 0),
+                    tradesToday = _closed.Count(p => p.ClosedAt?.Date == today)
+                },
                 open = _open.Select(p => new
                 {
-                    p.Id, p.Symbol, p.Exchange, p.Side, p.Qty, p.Entry, p.OpenedAt,
-                    p.UnrealizedUsd, p.Note, p.Status, p.NeedsReconciliation
+                    p.Id, p.Symbol, p.Exchange, p.Side, p.Qty, p.Entry, p.OpenedAt, p.LastMarkPrice,
+                    p.UnrealizedUsd, p.Note, p.Status, p.NeedsReconciliation, p.Live, p.NotionalUsd, p.Leverage
                 }),
-                closed = _closed.Take(40).Select(p => new
+                pending = _pending.Select(p => new { p.Symbol, p.Exchange, Side = p.IsLong ? "Long" : "Short", p.DueUtc }),
+                closed = _closed.Take(60).Select(p => new
                 {
                     p.Id, p.Symbol, p.Exchange, p.Side, p.Qty, p.Entry, p.Exit,
-                    p.OpenedAt, p.ClosedAt, p.RealizedUsd, p.Note
+                    p.OpenedAt, p.ClosedAt, p.RealizedUsd, p.Note, p.Live, p.NotionalUsd
                 }),
                 openCount = _open.Count,
                 realizedUsd = _closed.Where(p => p.RealizedUsd.HasValue).Sum(p => p.RealizedUsd!.Value)
@@ -77,234 +150,318 @@ public sealed class ScalpEngine
 
     public async Task TickAsync(CancellationToken ct)
     {
+        UpdateMarketModel();
         // Always manage existing positions, even after the entry toggle is disabled.
         MarkAndMaybeClose();
+        ResolvePending();
         if (ct.IsCancellationRequested || !_runtime.Snapshot.SpatialScalpMode) return;
 
         var snap = _runtime.Snapshot;
-        var scalpDailyLossCap = Math.Max(1m,
-            (snap.LiveEquityPerExchangeUsd > 0 ? snap.LiveEquityPerExchangeUsd : snap.PaperStartingQuote) * 0.01m);
         decimal realizedToday;
-        lock (_lock)
-            realizedToday = _closed.Where(p => p.ClosedAt?.Date == DateTime.UtcNow.Date)
-                .Sum(p => p.RealizedUsd ?? 0m);
-        if (realizedToday <= -scalpDailyLossCap)
-        {
-            _logger.LogWarning("SCALP entry circuit open: today's realized={Pnl:F2} limit=-{Limit:F2}",
-                realizedToday, scalpDailyLossCap);
-            return;
-        }
-
-        var candidate = Pick();
-        if (candidate == null) return;
-
+        int openNow;
         lock (_lock)
         {
-            if (_open.Count >= 1) return;
-            if (_open.Any(p => p.Symbol.Equals(candidate.Symbol, StringComparison.OrdinalIgnoreCase))) return;
-            if (!_guard.CanPlaceOrders
-                && _paper.OpenCount + _open.Count(p => !p.Live) >= Math.Max(1, _runtime.Snapshot.FuturesMaxOpenPositions))
-                return;
+            realizedToday = _closed.Where(p => p.ClosedAt?.Date == DateTime.UtcNow.Date).Sum(p => p.RealizedUsd ?? 0m);
+            openNow = _open.Count + _pending.Count;
         }
-        if ((DateTime.UtcNow - _lastOpenUtc).TotalSeconds < 60) return;
+        var lossCap = Math.Abs(snap.ScalpDailyLossUsd) > 0 ? Math.Abs(snap.ScalpDailyLossUsd) : Math.Max(1m, snap.ScalpDepositUsd * 0.1m);
+        if (realizedToday <= -lossCap) { _lastNote = $"дневной лимит убытка {lossCap:F2} достигнут"; return; }
+        if (openNow >= Math.Max(1, snap.ScalpMaxOpen)) return;
+        if ((DateTime.UtcNow - _lastOpenUtc).TotalSeconds < Math.Max(0, snap.ScalpCooldownSeconds)) return;
 
-        var notional = snap.QuoteSize > 0 ? snap.QuoteSize : 100m;
-        if (snap.FuturesMaxNotionalUsd > 0) notional = Math.Min(notional, snap.FuturesMaxNotionalUsd);
-        if (_guard.CanPlaceOrders)
-        {
-            if (snap.LiveMaxNotionalUsd > 0) notional = Math.Min(notional, snap.LiveMaxNotionalUsd);
-            var leverage = Math.Clamp(snap.LivePaperLeverage > 0 ? snap.LivePaperLeverage : 2m, 1m, 10m);
-            var usage = Math.Clamp(snap.LiveMarginUsageFraction > 0 ? snap.LiveMarginUsageFraction : 0.5m, 0.15m, 0.5m);
-            var equity = snap.LiveEquityPerExchangeUsd > 0 ? snap.LiveEquityPerExchangeUsd : 100m;
-            notional = Math.Min(notional, equity * leverage * usage);
-        }
-        if (notional < 20m || candidate.TouchDepthUsd < notional * 1.25m) return;
-        var qty = LiveOrderEngine.RoundBaseQty(notional / candidate.Touch, candidate.Touch);
+        var lev = Math.Clamp(snap.ScalpLeverage, 1m, 5m);
+        var deposit = Math.Max(0m, snap.ScalpDepositUsd);
+        var notional = deposit * lev / Math.Max(1, snap.ScalpMaxOpen);
+        if (notional < 6m) { _lastNote = "депозит скальпа слишком мал"; return; }
+
+        var c = Pick(notional, snap);
+        if (c == null) return;
+        var (symbol, sig) = c.Value;
+        var fee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, sig.Exchange);
+        var qty = LiveOrderEngine.RoundBaseQty(notional / sig.EntryPrice, sig.EntryPrice);
         if (qty <= 0) return;
+        var slip = Math.Max(0.5m, snap.IocSlipBps) / 10_000m;
+        var limit = sig.IsLong ? sig.EntryPrice * (1m + slip) : sig.EntryPrice * (1m - slip);
+        _lastOpenUtc = DateTime.UtcNow;
 
-        var fee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, candidate.Exchange);
-        var live = _guard.CanPlaceOrders;
-
-        if (live)
+        if (!LiveScalping)
         {
-            int scalpOpen;
-            lock (_lock) scalpOpen = _open.Count(p => p.Live);
-            var risk = _guard.CheckOpenAllowed(_orders.GetOpen().Count + scalpOpen, notional);
-            if (!risk.ok) return;
-        }
-
-        if (live)
-        {
-            var pending = NewPosition(candidate, qty, candidate.Touch, live: true, null, fee);
-            pending.Status = "Opening";
-            pending.NeedsReconciliation = true;
             lock (_lock)
-            {
-                _open.Add(pending);
-                SaveLedgerUnlocked();
-            }
-            UpdateAdditionalOpenPositions();
-            var limit = LiveOrderEngine.SnapLimit(candidate.Touch, candidate.Touch, candidate.IsLong);
-            var lev = snap.LivePaperLeverage > 0 ? snap.LivePaperLeverage : 3m;
-            LiveLegOrderResult sent;
-            try
-            {
-                sent = await _orders.PlaceScalpLegAsync(
-                    candidate.Exchange, candidate.Symbol, candidate.IsLong, qty, limit, lev, ct)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                pending.Status = "ReconciliationRequired";
-                pending.Note = $"{pending.Note} | order path interrupted: {ex.Message}";
-                _guard.Kill($"Scalp entry interrupted for {candidate.Symbol} {candidate.Exchange}");
-                lock (_lock) SaveLedgerUnlocked();
-                return;
-            }
-            if (sent.Verified && sent.FilledBaseQty <= 0)
-            {
-                lock (_lock)
-                {
-                    _open.Remove(pending);
-                    SaveLedgerUnlocked();
-                }
-                UpdateAdditionalOpenPositions();
-                return;
-            }
-            if (!sent.Verified && !sent.Accepted)
-            {
-                lock (_lock)
-                {
-                    _open.Remove(pending);
-                    SaveLedgerUnlocked();
-                }
-                UpdateAdditionalOpenPositions();
-                _logger.LogDebug("SCALP skip {Sym} {Ex}: {Err}", candidate.Symbol, candidate.Exchange, sent.Error);
-                return;
-            }
-            if (!sent.Verified)
-            {
-                pending.Status = "ReconciliationRequired";
-                pending.NeedsReconciliation = true;
-                pending.OrderId = sent.Id;
-                pending.Note = $"{pending.Note} | order state unknown: {sent.Error}";
-                lock (_lock) SaveLedgerUnlocked();
-                return;
-            }
-
-            if (sent.FilledBaseQty > 0 && sent.AveragePrice <= 0)
-            {
-                pending.Status = "ReconciliationRequired";
-                pending.Note = $"{pending.Note} | fill price missing";
-                _guard.Kill($"Scalp fill price missing for {candidate.Symbol} {candidate.Exchange}");
-                lock (_lock) SaveLedgerUnlocked();
-                return;
-            }
-
-            pending.Qty = sent.FilledBaseQty;
-            pending.Entry = sent.AveragePrice;
-            pending.OrderId = sent.Id;
-            pending.NeedsReconciliation = false;
-            pending.Status = sent.Ok ? "Open" : "OpenPartialFill";
-            lock (_lock) SaveLedgerUnlocked();
-            _lastOpenUtc = DateTime.UtcNow;
+                _pending.Add(new PendingEntry(symbol, sig.Exchange, sig.IsLong, qty, limit, fee, notional, lev,
+                    sig, MedianNow(symbol) ?? sig.ReferenceMid,
+                    DateTime.UtcNow.AddMilliseconds(Math.Max(0, snap.PaperFillLatencyMs))));
             return;
         }
 
-        Remember(candidate, qty, candidate.Touch, live: false, null, fee);
+        var pending = NewPosition(symbol, sig, qty, sig.EntryPrice, live: true, fee, notional, lev, MedianNow(symbol) ?? sig.ReferenceMid);
+        pending.Status = "Opening";
+        pending.NeedsReconciliation = true;
+        lock (_lock) { _open.Add(pending); SaveLedgerUnlocked(); }
+        LiveLegOrderResult sent;
+        try
+        {
+            sent = await _orders.PlaceScalpLegAsync(sig.Exchange, symbol, sig.IsLong, qty,
+                LiveOrderEngine.SnapLimit(limit, limit, sig.IsLong), lev, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            pending.Status = "ReconciliationRequired";
+            pending.Note = $"{pending.Note} | order path interrupted: {ex.Message}";
+            _guard.Kill($"Scalp entry interrupted for {symbol} {sig.Exchange}");
+            lock (_lock) SaveLedgerUnlocked();
+            return;
+        }
+        if ((sent.Verified && sent.FilledBaseQty <= 0) || (!sent.Verified && !sent.Accepted))
+        {
+            lock (_lock) { _open.Remove(pending); SaveLedgerUnlocked(); }
+            PauseSymbol(symbol, 5000);
+            _logger.LogInformation("SCALP live entry not filled {Sym} {Ex}: {Err}", symbol, sig.Exchange, sent.Error);
+            return;
+        }
+        if (!sent.Verified || (sent.FilledBaseQty > 0 && sent.AveragePrice <= 0))
+        {
+            pending.Status = "ReconciliationRequired";
+            pending.OrderId = sent.Id;
+            pending.Note = $"{pending.Note} | order state unknown: {sent.Error}";
+            if (sent.AveragePrice <= 0) _guard.Kill($"Scalp fill price missing for {symbol} {sig.Exchange}");
+            lock (_lock) SaveLedgerUnlocked();
+            return;
+        }
+        pending.Qty = sent.FilledBaseQty;
+        pending.Entry = sent.AveragePrice;
+        pending.OrderId = sent.Id;
+        pending.NeedsReconciliation = false;
+        pending.Status = sent.Ok ? "Open" : "OpenPartialFill";
+        lock (_lock) SaveLedgerUnlocked();
+        _logger.LogInformation("SCALP LIVE {Side} {Sym} on {Ex} qty={Q} @ {P} | {Note}",
+            pending.Side, symbol, sig.Exchange, pending.Qty, pending.Entry, pending.Note);
     }
 
-    private void Remember(ScalpCandidate c, decimal qty, decimal entry, bool live, string? orderId, decimal feePct)
+    // ---------------- market model ----------------
+
+    private List<VenueQuote> Quotes(string symbol)
     {
-        var pos = NewPosition(c, qty, entry, live, orderId, feePct);
+        var list = new List<VenueQuote>();
+        foreach (var (ex, tk) in _market.GetBookTickers(symbol))
+            if (tk.BestBid > 0 && tk.BestAsk > tk.BestBid)
+                list.Add(new VenueQuote(ex, tk.BestBid, tk.BestAsk, _market.QuoteLive(ex, symbol)));
+        return list;
+    }
+
+    private static decimal? Median(IEnumerable<decimal> values)
+    {
+        var v = values.OrderBy(x => x).ToList();
+        if (v.Count == 0) return null;
+        return v.Count % 2 == 1 ? v[v.Count / 2] : (v[v.Count / 2 - 1] + v[v.Count / 2]) / 2m;
+    }
+
+    private void UpdateMarketModel()
+    {
+        var now = Environment.TickCount64;
+        foreach (var symbol in _markets.Symbols)
+        {
+            var q = Quotes(symbol);
+            var live = q.Where(x => x.Fresh).ToList();
+            if (live.Count < 3) continue;
+            var med = Median(live.Select(x => x.Mid));
+            if (med is not { } m || m <= 0) continue;
+            var hist = _medians.GetOrAdd(symbol, _ => []);
+            lock (hist)
+            {
+                if (hist.Count == 0 || now - hist[^1].Ms >= 200) hist.Add((now, m));
+                while (hist.Count > 0 && now - hist[0].Ms > 15_000) hist.RemoveAt(0);
+            }
+            foreach (var v in live)
+            {
+                if (v.WidthPercent > 0.12m) continue;
+                var r = LeadLag.ReferenceMid(live, v.Exchange);
+                if (r is not { } rm) continue;
+                _offsets.GetOrAdd(symbol + "|" + v.Exchange, _ => new BasisEstimator())
+                    .Observe(LeadLag.OffsetPercent(v.Mid, rm), now);
+            }
+        }
+    }
+
+    private decimal? MedianNow(string symbol)
+    {
+        if (!_medians.TryGetValue(symbol, out var h)) return null;
+        lock (h) return h.Count > 0 ? h[^1].Mid : null;
+    }
+
+    /// <summary>All-venue median move over the last few seconds, percent.</summary>
+    private decimal? MarketMove(string symbol)
+    {
+        if (!_medians.TryGetValue(symbol, out var h)) return null;
+        lock (h)
+        {
+            if (h.Count < 2) return null;
+            var now = h[^1];
+            (long Ms, decimal Mid)? past = null;
+            foreach (var x in h)
+                if (now.Ms - x.Ms <= MarketMoveWindowMs) { past = x; break; }
+            if (past is not { } p || now.Ms - p.Ms < MarketMoveWindowMs / 2 || p.Mid <= 0) return null;
+            return (now.Mid - p.Mid) / p.Mid * 100m;
+        }
+    }
+
+    private (decimal Fair, bool Ready) FairOffset(string symbol, string exchange)
+    {
+        if (!_offsets.TryGetValue(symbol + "|" + exchange, out var e)) return (0m, false);
+        var (fair, _, ready) = e.Read(OffsetMinSamples, OffsetMinSpanMs);
+        return (fair, ready);
+    }
+
+    private bool SymbolBusyForScalp(string symbol)
+    {
+        if (_exposure.IsArbReserved(symbol)) return true;
+        if (_paper.GetOpenPositions().Any(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))) return true;
+        if (_orders.GetOpen().Any(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))) return true;
+        if (_symbolPauseUntil.TryGetValue(symbol, out var until) && until > DateTime.UtcNow) return true;
+        return HasExposure(symbol);
+    }
+
+    private void PauseSymbol(string symbol, int ms)
+        => _symbolPauseUntil[symbol] = DateTime.UtcNow.AddMilliseconds(ms);
+
+    private (string Symbol, LagSignal Signal)? Pick(decimal notional, ArbitrageOptions snap)
+    {
+        (string, LagSignal)? best = null;
+        var now = Environment.TickCount64;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var symbol in _markets.Symbols)
+        {
+            var move = MarketMove(symbol);
+            if (move is null) continue;
+            var q = Quotes(symbol);
+            var live = q.Where(x => x.Fresh).ToList();
+            if (live.Count < 3) continue;
+            foreach (var v in live)
+            {
+                var (fair, ready) = FairOffset(symbol, v.Exchange);
+                if (!ready) continue;
+                var r = LeadLag.ReferenceMid(live, v.Exchange);
+                if (r is not { } rm) continue;
+                var fee = ArbEconomics.TakerPercent(snap.EstimatedTakerFees, v.Exchange);
+                var sig = LeadLag.Evaluate(v, rm, fair, move.Value, snap.ScalpEntryPercent, fee, snap.ScalpMinNetPercent);
+                var key = symbol + "|" + v.Exchange;
+                if (sig == null) { _signalSince.TryRemove(key, out _); continue; }
+                seen.Add(key);
+                // The lag must hold for two looks at least 300 ms apart: a one-tick print is noise.
+                if (!_signalSince.TryGetValue(key, out var s0) || s0.IsLong != sig.IsLong)
+                { _signalSince[key] = (sig.IsLong, now); continue; }
+                if (now - s0.SinceMs < 300) continue;
+                var touchQty = sig.IsLong
+                    ? _market.GetBookTickers(symbol).GetValueOrDefault(v.Exchange)?.AskQuantity ?? 0m
+                    : _market.GetBookTickers(symbol).GetValueOrDefault(v.Exchange)?.BidQuantity ?? 0m;
+                if (touchQty * sig.EntryPrice < notional) continue;
+                if (SymbolBusyForScalp(symbol)) { _lastNote = $"{symbol}: занят арбитражем"; continue; }
+                if (best == null || sig.ExpectedNetPercent > best.Value.Item2.ExpectedNetPercent) best = (symbol, sig);
+            }
+        }
+        foreach (var k in _signalSince.Keys) if (!seen.Contains(k)) _signalSince.TryRemove(k, out _);
+        if (best is { } b)
+            _lastNote = $"{b.Item1} {b.Item2.Exchange} {(b.Item2.IsLong ? "long" : "short")}: отставание {b.Item2.DeviationPercent:F3}%, рынок {b.Item2.MarketMovePercent:F3}%";
+        return best;
+    }
+
+    // ---------------- paper entry with latency ----------------
+
+    private void ResolvePending()
+    {
+        List<PendingEntry> due;
         lock (_lock)
         {
-            _open.Add(pos);
-            SaveLedgerUnlocked();
+            due = _pending.Where(p => DateTime.UtcNow >= p.DueUtc).ToList();
+            foreach (var d in due) _pending.Remove(d);
         }
-        UpdateAdditionalOpenPositions();
-        _lastOpenUtc = DateTime.UtcNow;
-        _logger.LogInformation("SCALP {Mode} {Side} {Sym} on {Ex} qty={Q} @ {P} | {Note}",
-            live ? "LIVE" : "PAPER", pos.Side, pos.Symbol, pos.Exchange, qty, entry, pos.Note);
+        foreach (var p in due)
+        {
+            var tk = _market.GetBookTickers(p.Symbol).GetValueOrDefault(p.Exchange);
+            var px = tk == null ? 0m : p.IsLong ? tk.BestAsk : tk.BestBid;
+            var live = _market.QuoteLive(p.Exchange, p.Symbol);
+            var ok = live && px > 0 && (p.IsLong ? px <= p.Limit : px >= p.Limit) && !SymbolBusyForScalpExceptSelf(p.Symbol);
+            if (!ok)
+            {
+                PauseSymbol(p.Symbol, 3000);
+                _logger.LogInformation("SCALP paper miss {Sym} {Ex}: price moved past limit before the order landed", p.Symbol, p.Exchange);
+                continue;
+            }
+            var qty = LiveOrderEngine.RoundBaseQty(p.NotionalUsd / px, px);
+            var pos = NewPosition(p.Symbol, p.Signal, qty > 0 ? qty : p.Qty, px, live: false, p.FeePercent, p.NotionalUsd, p.Leverage, p.MarketMid);
+            lock (_lock) { _open.Add(pos); SaveLedgerUnlocked(); }
+            _logger.LogInformation("SCALP PAPER {Side} {Sym} on {Ex} qty={Q} @ {P} | {Note}",
+                pos.Side, pos.Symbol, pos.Exchange, pos.Qty, pos.Entry, pos.Note);
+        }
     }
 
-    private static ScalpPosition NewPosition(ScalpCandidate c, decimal qty, decimal entry, bool live, string? orderId, decimal feePct)
+    private bool SymbolBusyForScalpExceptSelf(string symbol)
+        => _exposure.IsArbReserved(symbol)
+           || _paper.GetOpenPositions().Any(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+           || _orders.GetOpen().Any(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
+
+    private static ScalpPosition NewPosition(string symbol, LagSignal s, decimal qty, decimal entry, bool live,
+        decimal feePct, decimal notional, decimal lev, decimal marketMid)
         => new()
         {
             Id = Guid.NewGuid(),
-            Symbol = c.Symbol,
-            Exchange = c.Exchange,
-            Side = c.IsLong ? "Long" : "Short",
-            IsLong = c.IsLong,
+            Symbol = symbol,
+            Exchange = s.Exchange,
+            Side = s.IsLong ? "Long" : "Short",
+            IsLong = s.IsLong,
             Qty = qty,
             Entry = entry,
             OpenedAt = DateTime.UtcNow,
             Live = live,
-            OrderId = orderId,
             FeePercent = feePct,
-            Note = $"OBI {c.Imbalance:F2} agree {c.Agreement} mid {c.MidMovePct:F3}%"
+            NotionalUsd = notional,
+            Leverage = lev,
+            EntryMarketMid = marketMid,
+            ExpectedNetPercent = s.ExpectedNetPercent,
+            Note = $"lag {s.DeviationPercent:F3}% market {s.MarketMovePercent:F3}% exp {s.ExpectedNetPercent:F3}%"
         };
+
+    // ---------------- marks and exits ----------------
 
     private void MarkAndMaybeClose()
     {
         List<ScalpPosition> open;
         lock (_lock) open = _open.ToList();
+        var snap = _runtime.Snapshot;
         foreach (var pos in open)
         {
-            if (pos.NeedsReconciliation || pos.Qty <= 0) continue;
-            var books = _market.GetBookTickers(pos.Symbol);
-            if (!books.TryGetValue(pos.Exchange, out var tk) || tk.BestBid <= 0 || tk.BestAsk <= 0)
+            if (pos.NeedsReconciliation || pos.Qty <= 0 || pos.Closing) continue;
+            var tk = _market.GetBookTickers(pos.Symbol).GetValueOrDefault(pos.Exchange);
+            if (tk == null || tk.BestBid <= 0 || tk.BestAsk <= 0)
             {
-                var noBookAge = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds;
-                if (noBookAge >= 90 && pos.Live)
+                pos.NoBookSinceUtc ??= DateTime.UtcNow;
+                if ((DateTime.UtcNow - pos.NoBookSinceUtc.Value).TotalSeconds < 20) continue;
+                lock (_lock)
                 {
-                    lock (_lock)
-                    {
-                        if (!_open.Contains(pos) || pos.Closing) continue;
-                        pos.Closing = true;
-                        pos.Status = "ClosingStaleBook";
-                        SaveLedgerUnlocked();
-                    }
-                    _ = CloseAsync(pos, pos.LastMarkPrice > 0 ? pos.LastMarkPrice : pos.Entry,
-                        pos.UnrealizedUsd, "hard-timeout-no-book");
+                    if (!_open.Contains(pos) || pos.Closing) continue;
+                    pos.Closing = true;
+                    pos.Status = "ClosingNoBook";
+                    SaveLedgerUnlocked();
                 }
-                else if (noBookAge >= 90 && pos.LastMarkPrice > 0)
-                {
-                    lock (_lock)
-                    {
-                        if (!_open.Contains(pos) || pos.Closing) continue;
-                        pos.Closing = true;
-                        pos.Status = "ClosingStaleBookPaper";
-                        SaveLedgerUnlocked();
-                    }
-                    _ = CloseAsync(pos, pos.LastMarkPrice, pos.UnrealizedUsd, "hard-timeout-stale-mark");
-                }
+                var last = pos.LastMarkPrice > 0 ? pos.LastMarkPrice : pos.Entry;
+                _ = CloseAsync(pos, last, LeadLag.NetUsd(pos.IsLong, pos.Entry, last, pos.Qty, pos.FeePercent), "no-book");
                 continue;
             }
-
+            pos.NoBookSinceUtc = null;
             var mark = pos.IsLong ? tk.BestBid : tk.BestAsk;
             pos.LastMarkPrice = mark;
-            var gross = pos.IsLong
-                ? (mark - pos.Entry) * pos.Qty
-                : (pos.Entry - mark) * pos.Qty;
-            var fees = pos.Entry * pos.Qty * pos.FeePercent / 100m * 2m;
-            var net = (pos.RealizedUsd ?? 0m) + gross - fees;
+            var net = (pos.RealizedUsd ?? 0m) + LeadLag.NetUsd(pos.IsLong, pos.Entry, mark, pos.Qty, pos.FeePercent);
             pos.UnrealizedUsd = net;
 
-            var obi = TouchImbalance(tk);
-            var flipped = pos.IsLong ? obi < -0.15m : obi > 0.15m;
-            var age = (DateTime.UtcNow - pos.OpenedAt).TotalSeconds;
-            // Target is net of round-trip fees above; leave enough room for fee and exit cross.
-            var target = Math.Max(0.10m, pos.Entry * pos.Qty * 0.0015m);
-            var stop = -Math.Max(0.25m, target * 1.4m);
-
-            string? why = null;
-            if (net >= target) why = "target";
-            else if (flipped && age >= 2) why = "imbalance died";
-            else if (net <= stop) why = "stop";
-            else if (age >= 45 && net > 0) why = "time lock";
-            else if (age >= 90) why = "time flat";
-
+            var live = Quotes(pos.Symbol).Where(x => x.Fresh).ToList();
+            var r = LeadLag.ReferenceMid(live, pos.Exchange);
+            var (fair, _) = FairOffset(pos.Symbol, pos.Exchange);
+            var dev = r is { } rm ? LeadLag.OffsetPercent((tk.BestBid + tk.BestAsk) / 2m, rm) - fair : (pos.IsLong ? -1m : 1m);
+            var medNow = MedianNow(pos.Symbol);
+            var moveSince = medNow is { } mn && pos.EntryMarketMid > 0 ? (mn - pos.EntryMarketMid) / pos.EntryMarketMid * 100m : 0m;
+            var why = LeadLag.ExitReason(pos.IsLong, pos.Entry, mark, net,
+                pos.NotionalUsd > 0 ? pos.NotionalUsd : pos.Entry * pos.Qty, dev, moveSince,
+                (DateTime.UtcNow - pos.OpenedAt).TotalSeconds,
+                snap.ScalpStopPercent, snap.ScalpMaxHoldSeconds, pos.ExpectedNetPercent > 0 ? pos.ExpectedNetPercent : 0.1m);
             if (why == null) continue;
             lock (_lock)
             {
@@ -382,7 +539,7 @@ public sealed class ScalpEngine
             ? (exitPrice - pos.Entry) * fillQty
             : (pos.Entry - exitPrice) * fillQty;
         var closeNet = grossClosed - (pos.Entry + exitPrice) * fillQty * pos.FeePercent / 100m;
-        if (pos.Live) _guard.RecordRealized(closeNet);
+        // Scalp PnL stays in the scalp wallet; it does not consume the hedge's daily loss limit.
         pos.RealizedUsd = (pos.RealizedUsd ?? 0m) + closeNet;
         pos.Qty = Math.Max(0m, pos.Qty - fillQty);
         pos.Note = (pos.Note ?? "") + " | " + why;
@@ -408,146 +565,8 @@ public sealed class ScalpEngine
             }
             SaveLedgerUnlocked();
         }
-        if (flat) UpdateAdditionalOpenPositions();
         _logger.LogInformation("SCALP close {Side} {Sym} {Ex} {Why} pnl={Pnl:F2}",
             pos.Side, pos.Symbol, pos.Exchange, why, closeNet);
-    }
-
-    private ScalpCandidate? Pick()
-    {
-        ScalpCandidate? best = null;
-        foreach (var symbol in _markets.Symbols)
-        {
-            var books = _market.GetBookTickers(symbol);
-            if (books.Count == 0) continue;
-
-            var signs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (ex, tk) in books)
-            {
-                if (tk.BestBid <= 0 || tk.BestAsk <= 0) continue;
-                var obi = TouchImbalance(tk);
-                if (Math.Abs(obi) < 0.35m) continue;
-                signs[ex] = obi > 0 ? 1 : -1;
-                NoteMid(symbol, ex, (tk.BestBid + tk.BestAsk) / 2m);
-            }
-            if (signs.Count == 0) continue;
-
-            foreach (var (ex, sign) in signs)
-            {
-                var tk = books[ex];
-                var obi = TouchImbalance(tk);
-                var key = symbol + "|" + ex;
-                if (!_imbalanceSince.TryGetValue(key, out var since) || Math.Sign(obi) != sign)
-                {
-                    _imbalanceSince[key] = DateTime.UtcNow;
-                    continue;
-                }
-                if ((DateTime.UtcNow - since).TotalMilliseconds < 800) continue;
-
-                var midMove = MidMovePct(symbol, ex);
-                if (Math.Sign(midMove) != sign || Math.Abs(midMove) < 0.01m) continue;
-
-                var agree = signs.Values.Count(s => s == sign);
-                if (agree < 2) continue;
-                var width = ArbEconomics.BookSpreadPercent(tk.BestBid, tk.BestAsk);
-                if (width > 0.12m) continue;
-
-                var depthBias = DepthBias(symbol, ex);
-                if (Math.Sign(depthBias) == -sign && Math.Abs(depthBias) > 0.2m) continue;
-
-                var score = Math.Abs(obi) * agree * (1m / (1m + width * 10m));
-                var touch = sign > 0 ? tk.BestAsk : tk.BestBid;
-                if (best == null || score > best.Score)
-                {
-                    best = new ScalpCandidate
-                    {
-                        Symbol = symbol,
-                        Exchange = ex,
-                        IsLong = sign > 0,
-                        Imbalance = obi,
-                        Agreement = agree,
-                        MidMovePct = midMove,
-                        Touch = touch,
-                        TouchDepthUsd = (sign > 0 ? tk.AskQuantity : tk.BidQuantity) * touch,
-                        Score = score
-                    };
-                }
-            }
-        }
-        return best;
-    }
-
-    private decimal DepthBias(string symbol, string exchange)
-    {
-        var depth = _market.GetDepth(symbol, 8);
-        if (!depth.TryGetValue(exchange, out var raw)) return 0;
-        try
-        {
-            var json = System.Text.Json.JsonSerializer.Serialize(raw);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            decimal bid = 0, ask = 0;
-            if (doc.RootElement.TryGetProperty("bids", out var bids))
-                foreach (var b in bids.EnumerateArray())
-                    if (b.TryGetProperty("qty", out var q) && q.TryGetDecimal(out var qv)) bid += qv;
-            if (doc.RootElement.TryGetProperty("asks", out var asks))
-                foreach (var a in asks.EnumerateArray())
-                    if (a.TryGetProperty("qty", out var q) && q.TryGetDecimal(out var qv)) ask += qv;
-            var sum = bid + ask;
-            return sum <= 0 ? 0 : (bid - ask) / sum;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    private static decimal TouchImbalance(BookTicker tk)
-    {
-        var bid = tk.BidQuantity;
-        var ask = tk.AskQuantity;
-        var sum = bid + ask;
-        return sum <= 0 ? 0 : (bid - ask) / sum;
-    }
-
-    private void NoteMid(string symbol, string exchange, decimal mid)
-    {
-        var key = symbol + "|" + exchange;
-        var now = Environment.TickCount64;
-        var s = _mids.GetOrAdd(key, _ => new MidSample());
-        if (s.LastMs > 0 && now - s.LastMs < 200) return;
-        s.Prev = s.Last > 0 ? s.Last : mid;
-        s.PrevMs = s.LastMs;
-        s.Last = mid;
-        s.LastMs = now;
-    }
-
-    private decimal MidMovePct(string symbol, string exchange)
-    {
-        var key = symbol + "|" + exchange;
-        if (!_mids.TryGetValue(key, out var s) || s.Prev <= 0 || s.Last <= 0) return 0;
-        if (Environment.TickCount64 - s.PrevMs > 4000) return 0;
-        return (s.Last - s.Prev) / s.Prev * 100m;
-    }
-
-    private sealed class MidSample
-    {
-        public decimal Prev;
-        public decimal Last;
-        public long PrevMs;
-        public long LastMs;
-    }
-
-    private sealed class ScalpCandidate
-    {
-        public string Symbol { get; set; } = "";
-        public string Exchange { get; set; } = "";
-        public bool IsLong { get; set; }
-        public decimal Imbalance { get; set; }
-        public int Agreement { get; set; }
-        public decimal MidMovePct { get; set; }
-        public decimal Touch { get; set; }
-        public decimal TouchDepthUsd { get; set; }
-        public decimal Score { get; set; }
     }
 
     public sealed class ScalpPosition
@@ -573,7 +592,16 @@ public sealed class ScalpEngine
         public decimal UnrealizedUsd { get; set; }
         public decimal? RealizedUsd { get; set; }
         public string? Note { get; set; }
+        public decimal NotionalUsd { get; set; }
+        public decimal Leverage { get; set; } = 1m;
+        public decimal EntryMarketMid { get; set; }
+        public decimal ExpectedNetPercent { get; set; }
+        public DateTime? NoBookSinceUtc { get; set; }
     }
+
+    private sealed record PendingEntry(
+        string Symbol, string Exchange, bool IsLong, decimal Qty, decimal Limit, decimal FeePercent,
+        decimal NotionalUsd, decimal Leverage, LagSignal Signal, decimal MarketMid, DateTime DueUtc);
 
     private void LoadLedger()
     {
@@ -601,7 +629,6 @@ public sealed class ScalpEngine
                 _guard.Kill("Scalp orders require reconciliation after restart");
                 SaveLedgerUnlocked();
             }
-            UpdateAdditionalOpenPositions();
             _logger.LogWarning("Loaded scalp ledger: open={Open}, closed={Closed}, reconciliation={Review}",
                 _open.Count, _closed.Count, needsReview);
         }
@@ -633,12 +660,6 @@ public sealed class ScalpEngine
         }
     }
 
-    private void UpdateAdditionalOpenPositions()
-    {
-        int n;
-        lock (_lock) n = _open.Count(p => p.Live && p.IsOpen);
-        _guard.SetAdditionalOpenPositions(n);
-    }
 
     private sealed record ScalpLedgerFile(List<ScalpPosition>? Open, List<ScalpPosition>? Closed);
 }

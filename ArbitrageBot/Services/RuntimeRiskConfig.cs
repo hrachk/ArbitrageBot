@@ -75,6 +75,16 @@ public sealed class RuntimeRiskConfig
             if (t.IocSlipBps > 0) _opts.IocSlipBps = Math.Clamp(t.IocSlipBps, 0.5m, 50m);
             if (t.FundingHorizonMinutes > 0) _opts.FundingHorizonMinutes = Math.Clamp(t.FundingHorizonMinutes, 1, 1440);
             if (t.LiveConcurrentLegs is { } lcl) _opts.LiveConcurrentLegs = lcl;
+            if (t.ScalpDepositUsd is { } sd && sd > 0) _opts.ScalpDepositUsd = Math.Clamp(sd, 5m, 100_000m);
+            if (t.ScalpLeverage is { } sl && sl > 0) _opts.ScalpLeverage = Math.Clamp(sl, 1m, 5m);
+            if (t.ScalpMaxOpen is { } smo && smo > 0) _opts.ScalpMaxOpen = Math.Clamp(smo, 1, 5);
+            if (t.ScalpDailyLossUsd is { } sdl && sdl != 0) _opts.ScalpDailyLossUsd = Math.Abs(sdl);
+            if (t.ScalpEntryPercent is { } se && se > 0) _opts.ScalpEntryPercent = Math.Clamp(se, 0.05m, 3m);
+            if (t.ScalpMinNetPercent is { } smn && smn >= 0) _opts.ScalpMinNetPercent = Math.Clamp(smn, 0m, 2m);
+            if (t.ScalpStopPercent is { } ss && ss > 0) _opts.ScalpStopPercent = Math.Clamp(ss, 0.05m, 5m);
+            if (t.ScalpMaxHoldSeconds is { } sh && sh > 0) _opts.ScalpMaxHoldSeconds = Math.Clamp(sh, 5, 3600);
+            if (t.ScalpCooldownSeconds is { } sc && sc >= 0) _opts.ScalpCooldownSeconds = Math.Clamp(sc, 0, 3600);
+            if (t.ScalpLive is { } slv) _opts.ScalpLive = slv;
             _opts.DynamicSymbols = t.DynamicSymbols;
             if (t.DynamicTopN > 0) _opts.DynamicTopN = t.DynamicTopN;
             if (t.DynamicMinQuoteVolumeUsd > 0) _opts.DynamicMinQuoteVolumeUsd = t.DynamicMinQuoteVolumeUsd;
@@ -198,6 +208,16 @@ public sealed class RuntimeRiskConfig
         IocSlipBps = o.IocSlipBps,
         FundingHorizonMinutes = o.FundingHorizonMinutes,
         LiveConcurrentLegs = o.LiveConcurrentLegs,
+        ScalpDepositUsd = o.ScalpDepositUsd,
+        ScalpLeverage = o.ScalpLeverage,
+        ScalpMaxOpen = o.ScalpMaxOpen,
+        ScalpDailyLossUsd = o.ScalpDailyLossUsd,
+        ScalpEntryPercent = o.ScalpEntryPercent,
+        ScalpMinNetPercent = o.ScalpMinNetPercent,
+        ScalpStopPercent = o.ScalpStopPercent,
+        ScalpMaxHoldSeconds = o.ScalpMaxHoldSeconds,
+        ScalpCooldownSeconds = o.ScalpCooldownSeconds,
+        ScalpLive = o.ScalpLive,
         LivePaperLeverage = o.LivePaperLeverage,
         FuturesMaxOpenPositions = o.FuturesMaxOpenPositions,
         FuturesMaxHoldMinutes = o.FuturesMaxHoldMinutes,

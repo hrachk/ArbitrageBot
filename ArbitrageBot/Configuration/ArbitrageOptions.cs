@@ -143,6 +143,28 @@ public class ArbitrageOptions
     /// <summary>Require FullyFilled on both legs (also mirrored by PaperRequireFullFill).</summary>
     public bool RequireDepthFullFill { get; set; } = true;
 
+    // ---- Single-leg scalper (isolated from the hedge) ----
+    /// <summary>Isolated scalp budget (USDT). Never shared with the hedge.</summary>
+    public decimal ScalpDepositUsd { get; set; } = 30m;
+    /// <summary>Scalp leverage, 1-5.</summary>
+    public decimal ScalpLeverage { get; set; } = 3m;
+    /// <summary>Open scalp positions at a time.</summary>
+    public int ScalpMaxOpen { get; set; } = 1;
+    /// <summary>Scalp stops opening for the UTC day after this loss (positive number).</summary>
+    public decimal ScalpDailyLossUsd { get; set; } = 3m;
+    /// <summary>Venue must lag its fair offset by at least this much (percent).</summary>
+    public decimal ScalpEntryPercent { get; set; } = 0.25m;
+    /// <summary>Expected catch-up after width and two taker fees (percent).</summary>
+    public decimal ScalpMinNetPercent { get; set; } = 0.05m;
+    /// <summary>Adverse price move that closes the scalp (percent).</summary>
+    public decimal ScalpStopPercent { get; set; } = 0.30m;
+    /// <summary>Time stop.</summary>
+    public int ScalpMaxHoldSeconds { get; set; } = 45;
+    /// <summary>Pause between scalp entries.</summary>
+    public int ScalpCooldownSeconds { get; set; } = 20;
+    /// <summary>Scalp with real orders. Needs live orders enabled as well; off by default.</summary>
+    public bool ScalpLive { get; set; } = false;
+
     // ---- Execution realism (audit 2026-11) ----
     /// <summary>A traded leg's quote must be younger than this (ms). REST snapshots are never a traded leg.</summary>
     public int TradeMaxQuoteAgeMs { get; set; } = 1000;
