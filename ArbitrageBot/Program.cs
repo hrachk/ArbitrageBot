@@ -10,6 +10,10 @@ using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
 using Serilog;
 
+// Windows console "QuickEdit": one click in the window pauses all console output, and Serilog's
+// console sink then blocks every thread that logs — the bot looks frozen until Enter/Esc.
+ConsoleQuickEdit.Disable();
+
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .WriteTo.Console()
@@ -480,50 +484,31 @@ try
 // ─── Live trading control (Phase 1: gate + verify, no orders) ───
     app.MapGet("/api/live/status", (LiveTradingGuard guard) => Results.Ok(guard.Status()));
 
-    app.MapPost("/api/live/enable", async (HttpRequest req, LiveTradingGuard guard, IOptions<ArbitrageOptions> opt) =>
+    app.MapPost("/api/live/enable", async (HttpRequest req, LiveTradingGuard guard, RuntimeRiskConfig risk) =>
     {
         using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body);
         var root = doc.RootElement;
         var phrase = root.TryGetProperty("confirmPhrase", out var p) ? p.GetString() ?? "" : "";
         var readOnly = !root.TryGetProperty("readOnly", out var r) || r.ValueKind != System.Text.Json.JsonValueKind.False;
-        var (ok, message) = guard.TryEnable(phrase, readOnly, opt.Value);
+        // Limits come from the saved UI settings, not the appsettings.json defaults.
+        var (ok, message) = guard.TryEnable(phrase, readOnly, risk.Snapshot);
         return ok ? Results.Ok(new { ok, message, status = guard.Status() })
                   : Results.BadRequest(new { ok, message, status = guard.Status() });
     });
 
-    app.MapPost("/api/live/disable", (LiveTradingGuard guard, IOptions<ArbitrageOptions> opt, RuntimeRiskConfig risk) =>
+    app.MapPost("/api/live/disable", (LiveTradingGuard guard, IOptions<ArbitrageOptions> opt, RuntimeRiskConfig risk, ISettingsStore store) =>
     {
         guard.Disable("api");
-        // DEMO: same professional gates, paper wallet, real WS books
+        // Back to paper with the user's saved settings. Re-applying appsettings.json defaults here
+        // silently replaced size, limits and equity with values the user never chose.
         var o = opt.Value;
         o.PaperTrading = true;
         o.PaperAutoExecute = true;
         o.LiveTradingEnabled = false;
-        risk.ApplyTrading(new TradingUiSettings
-        {
-            PaperTrading = true,
-            PaperAutoExecute = true,
-            MinProfitPercent = o.MinProfitPercent > 0 ? o.MinProfitPercent : 0.10m,
-            QuoteSize = o.QuoteSize > 0 ? o.QuoteSize : 100m,
-            FuturesPaperLeverage = o.FuturesPaperLeverage > 0 ? o.FuturesPaperLeverage : 5m,
-            FuturesMaxOpenPositions = o.FuturesMaxOpenPositions > 0 ? o.FuturesMaxOpenPositions : 2,
-            FuturesStopLossUsd = o.FuturesStopLossUsd,
-            FuturesDailyLossLimitUsd = o.FuturesDailyLossLimitUsd,
-            MaxNotionalUsd = o.FuturesMaxNotionalUsd > 0 ? o.FuturesMaxNotionalUsd : 100m,
-            MaxMarginUsagePercent = o.FuturesMaxMarginUsagePercent > 0 ? o.FuturesMaxMarginUsagePercent : 0.35m,
-            MaxHoldMinutes = 0,
-            CloseBelowNetPercent = o.FuturesCloseBelowNetPercent,
-            PaperCooldownMs = o.PaperCooldownMs > 0 ? o.PaperCooldownMs : 15000,
-            PaperRequireFullFill = true,
-            RequireRoundTripEdge = true,
-            IncludeFunding = o.FuturesIncludeFunding,
-            LiveEquityPerExchangeUsd = o.LiveEquityPerExchangeUsd > 0 ? o.LiveEquityPerExchangeUsd : 2500m,
-            LiveMarginUsageFraction = 0.35m,
-            LiveMaxNotionalUsd = o.LiveMaxNotionalUsd > 0 ? o.LiveMaxNotionalUsd : 100m,
-            LiveMaxOpenPositions = o.LiveMaxOpenPositions > 0 ? o.LiveMaxOpenPositions : 2,
-            LiveStopLossUsd = o.LiveStopLossUsd,
-            LiveDailyLossLimitUsd = o.LiveDailyLossLimitUsd
-        });
+        var saved = store.GetTrading();
+        saved.PaperTrading = true;
+        saved.PaperAutoExecute = true;
+        risk.ApplyTrading(saved);
         return Results.Ok(new
         {
             ok = true,
