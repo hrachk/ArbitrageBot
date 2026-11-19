@@ -113,8 +113,9 @@ public sealed class ScalpEngine
                 live = LiveScalping,
                 liveRequested = snap.ScalpLive,
                 venues = string.IsNullOrWhiteSpace(snap.ScalpVenues) ? "все" : snap.ScalpVenues,
+                venuesUnknown = UnknownVenues(snap.ScalpVenues),
                 liveVenues = LiveScalping
-                    ? new[] { "Binance", "Bybit", "OKX", "Bitget", "GateIo", "Kucoin" }
+                    ? Venues.All
                         .Where(x => VenueTradable(x, ParseVenues(snap.ScalpVenues), true)).ToArray()
                     : Array.Empty<string>(),
                 lastNote = _lastNote,
@@ -328,13 +329,9 @@ public sealed class ScalpEngine
     private void PauseSymbol(string symbol, int ms)
         => _symbolPauseUntil[symbol] = DateTime.UtcNow.AddMilliseconds(ms);
 
-    private static HashSet<string>? ParseVenues(string? csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv)) return null;
-        var set = new HashSet<string>(csv.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(x => x.Trim()), StringComparer.OrdinalIgnoreCase);
-        return set.Count == 0 ? null : set;
-    }
+    private static HashSet<string>? ParseVenues(string? csv) => Venues.AllowSet(csv);
+
+    private static string[] UnknownVenues(string? csv) { Venues.NormalizeCsv(csv, out var u); return u; }
 
     private bool VenueTradable(string exchange, HashSet<string>? allowed, bool liveMode)
         => (allowed == null || allowed.Contains(exchange))

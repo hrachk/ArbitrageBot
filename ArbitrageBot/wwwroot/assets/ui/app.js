@@ -28,6 +28,7 @@ const signed = (v, f = fmt.usd) => `<span class="num ${cls(v)}">${f(v)}</span>`;
 
 const VENUE = { Binance: 'Binance', Bybit: 'Bybit', OKX: 'OKX', Bitget: 'Bitget', GateIo: 'Gate.io', Kucoin: 'KuCoin', KuCoin: 'KuCoin', Coinbase: 'Coinbase' };
 const venue = (v) => VENUE[v] || v || '—';
+const VENUES_ALL = ['Binance', 'Bybit', 'OKX', 'Bitget', 'GateIo', 'Kucoin'];
 const baseOf = (s) => String(s || '').replace(/USDT$/i, '');
 
 // ───────────────────────── icons ─────────────────────────
@@ -912,7 +913,7 @@ function renderScalp() {
   return `
   <section class="panel">
     <div class="panel-body row wrap" style="gap:18px;align-items:center">
-      <div style="flex:1;min-width:260px"><div class="row" style="gap:10px"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}<span class="badge">биржи: ${esc(sc.venues || 'все')}</span>${sc.live ? `<span class="badge ${sc.liveVenues?.length ? 'pos' : 'neg'}">${sc.liveVenues?.length ? 'реально на: ' + esc(sc.liveVenues.join(', ')) : 'нет бирж с trade-ключами'}</span>` : ''}</div>
+      <div style="flex:1;min-width:260px"><div class="row" style="gap:10px"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${mode[1]}">${mode[0]}</span>${sc.liveRequested && !sc.live ? '<span class="badge cost">live запрошен, но live-ордера выключены</span>' : ''}<span class="badge">биржи: ${esc(sc.venues === 'все' || !sc.venues ? 'все' : sc.venues.split(',').map(venue).join(', '))}</span>${sc.venuesUnknown?.length ? `<span class="badge neg">неизвестные биржи: ${esc(sc.venuesUnknown.join(', '))}</span>` : ''}${sc.live ? `<span class="badge ${sc.liveVenues?.length ? 'pos' : 'neg'}">${sc.liveVenues?.length ? 'реально на: ' + esc(sc.liveVenues.join(', ')) : 'нет бирж с trade-ключами'}</span>` : ''}</div>
         <p class="prose" style="margin:8px 0 0">Ловит момент, когда рынок на большинстве бирж уже сдвинулся, а одна биржа отстала. Берёт одну ногу на отстающей бирже в сторону рынка и выходит, когда она догонит. Торгует на отдельном депозите и не трогает символы, которые держит арбитраж.</p></div>
       <button class="btn ${sc.enabled ? '' : 'primary'}" data-act="scalp-toggle" style="height:40px">${sc.enabled ? ICON.pause + 'Выключить' : ICON.play + 'Включить скальпер'}</button>
     </div>
@@ -1042,7 +1043,7 @@ const SETTINGS = [
   { id: 'scalp', title: 'Скальпер', lead: 'Одна нога на отстающей бирже, отдельный депозит. Не занимает лимиты, маржу и дневной стоп арбитража и не торгует символы, которые держит арбитраж.', fields: [
     ['spatialScalpMode', 'Скальпер включён', 'bool', 'Без этого он только наблюдает за рынком'],
     ['scalpLive', 'Скальпить реальными ордерами', 'bool', 'Действует, только когда live-ордера включены. Иначе скальп идёт в paper'],
-    ['scalpVenues', 'Биржи скальпера', 'text', 'Через запятую, например Binance. Пусто — все. Реальные ордера идут только туда, где есть ключи с правом trade'],
+    ['scalpVenues', 'Биржи скальпера', 'venues', 'Отметьте, где скальпер может входить. Ничего не отмечено — все биржи. Отставание всегда считается по всем биржам. Реальные ордера идут только туда, где ключ с правом trade'],
     ['scalpDepositUsd', 'Депозит скальпера', 'num', 'Держите эти USDT на биржах сверх капитала арбитража', 'USDT'],
     ['scalpLeverage', 'Плечо', 'num', 'От 1 до 5. Большее значение будет снижено до 5', 'x'],
     ['scalpMaxOpen', 'Позиций одновременно', 'int', 'Депозит делится между ними'],
@@ -1072,6 +1073,13 @@ function renderSettings() {
   const field = ([k, label, type, hint, unit]) => {
     const id = 'f_' + k;
     if (type === 'bool') return `<div class="field"><span class="lbl">${esc(label)}</span><label class="switch"><input type="checkbox" id="${id}" data-k="${k}" ${val(k) ? 'checked' : ''}><span class="track"></span><span class="small mut">${val(k) ? 'включено' : 'выключено'}</span></label>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
+    if (type === 'venues') {
+      const sel = new Set(String(val(k) ?? '').split(',').map(x => x.trim()).filter(Boolean));
+      const keyState = (ex) => { const c = conns[ex]; if (!c?.hasApiKey) return ['нет ключа', 'mut']; return String(c.permission).toLowerCase() === 'trade' && c.enabled ? ['trade', 'pos'] : ['только чтение', 'mut']; };
+      const chips = VENUES_ALL.map(ex => { const on = sel.has(ex); const [ks, kc] = keyState(ex); return `<button type="button" class="chip ${on ? 'on' : ''}" data-venue-k="${k}" data-venue="${ex}" aria-pressed="${on}">${esc(venue(ex))}<span class="small ${kc}">${ks}</span></button>`; }).join('');
+      const unknown = [...sel].filter(x => !VENUES_ALL.includes(x));
+      return `<div class="field field-wide"><span class="lbl">${esc(label)}</span><div class="chips" style="flex-wrap:wrap" role="group" aria-label="${esc(label)}">${chips}</div><span class="hint">${sel.size === 0 ? '<b>Сейчас: все биржи.</b> ' : `<b>Сейчас: ${esc([...sel].filter(x => VENUES_ALL.includes(x)).map(venue).join(', ') || 'ни одной известной')}.</b> `}${unknown.length ? `<span class="neg">Неизвестные имена: ${esc(unknown.join(', '))} — снимите их, иначе по ним не будет сделок.</span> ` : ''}${esc(hint)}</span></div>`;
+    }
     if (type === 'text') return `<div class="field"><label for="${id}">${esc(label)}</label><div class="input-wrap"><input class="input ${settingsDraft.dirty.has(k) ? 'dirty' : ''}" id="${id}" data-k="${k}" data-t="text" autocomplete="off" spellcheck="false" value="${esc(val(k) ?? '')}"></div>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
     return `<div class="field"><label for="${id}">${esc(label)}</label><div class="input-wrap"><input class="input num ${settingsDraft.dirty.has(k) ? 'dirty' : ''}" id="${id}" data-k="${k}" data-t="${type}" inputmode="decimal" value="${esc(val(k) ?? '')}">${unit ? `<span class="unit">${esc(unit)}</span>` : ''}</div>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
   };
@@ -1337,6 +1345,16 @@ async function refreshSnap() { try { onSnapshot(await api.get('/api/snapshot'));
 function wire() {
   document.addEventListener('click', (e) => {
     const goEl = e.target.closest('[data-go]'); if (goEl) { go(goEl.dataset.go); return; }
+    const vc = e.target.closest('[data-venue-k]');
+    if (vc && S.settings?.trading) {
+      const k = vc.dataset.venueK, t = S.settings.trading;
+      const cur = settingsDraft.dirty.has(k) ? settingsDraft.values[k] : (t[k] ?? '');
+      const set = new Set(String(cur).split(',').map(x => x.trim()).filter(Boolean));
+      set.has(vc.dataset.venue) ? set.delete(vc.dataset.venue) : set.add(vc.dataset.venue);
+      const v = [...VENUES_ALL.filter(x => set.has(x)), ...[...set].filter(x => !VENUES_ALL.includes(x))].join(',');
+      if ((t[k] ?? '') === v) settingsDraft.dirty.delete(k); else { settingsDraft.values[k] = v; settingsDraft.dirty.add(k); }
+      $('#page').dataset.redraw = '1'; schedule(true); syncSavebar(); return;
+    }
     const a = e.target.closest('[data-act]'); if (a && ACTIONS[a.dataset.act]) { e.preventDefault(); ACTIONS[a.dataset.act](a); return; }
     const sort = e.target.closest('[data-sort]'); if (sort) { const k = sort.dataset.sort; if (S.market.sort === k) S.market.dir *= -1; else { S.market.sort = k; S.market.dir = -1; } schedule(true); return; }
     const days = e.target.closest('[data-days]'); if (days) { S.perfDays = Number(days.dataset.days); S.perf = null; schedule(true); loadPerf(); return; }

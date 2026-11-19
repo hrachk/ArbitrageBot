@@ -235,6 +235,12 @@ internal static class Program
         Check("scalp exit: target", LeadLag.ExitReason(true, 100m, 100.3m, 0.21m, 100m, -0.2m, 0.1m, 3, 0.30m, 45, 0.2m) == "target");
         Check("scalp exit: market reversed", LeadLag.ExitReason(true, 100m, 99.95m, -0.15m, 100m, -0.3m, -0.2m, 3, 0.30m, 45, 0.2m) == "market-reversed");
         Check("scalp exit: time stop", LeadLag.ExitReason(true, 100m, 99.99m, -0.11m, 100m, -0.3m, 0m, 50, 0.30m, 45, 0.2m) == "time");
+        Check("venues: aliases map to feed names", Venues.NormalizeCsv(" gate.io, binance ,KuCoin;okx", out var u0) == "Binance,OKX,GateIo,Kucoin" && u0.Length == 0);
+        Check("venues: duplicates collapse", Venues.NormalizeCsv("Binance,binance,BINANCE", out _) == "Binance");
+        Check("venues: typo kept, not widened to all", Venues.NormalizeCsv("Bnance", out var u1) == "Bnance" && u1.Length == 1
+            && Venues.AllowSet("Bnance") is { } a1 && !a1.Contains("Binance"));
+        Check("venues: empty means every venue", Venues.AllowSet("  ") is null);
+        Check("venues: one venue allow set", Venues.AllowSet("binance") is { Count: 1 } a2 && a2.Contains("Binance") && !a2.Contains("Bybit"));
         Check("scalp exit: hold while lag persists", LeadLag.ExitReason(true, 100m, 100.05m, -0.05m, 100m, -0.3m, 0.05m, 5, 0.30m, 45, 0.2m) is null);
     }
 }
