@@ -154,7 +154,8 @@ public class SettingsStore : ISettingsStore
                 fundingHorizonMinutes = t.FundingHorizonMinutes > 0 ? t.FundingHorizonMinutes : arb.FundingHorizonMinutes,
                 liveConcurrentLegs = t.LiveConcurrentLegs ?? arb.LiveConcurrentLegs,
                 scalpDepositUsd = t.ScalpDepositUsd ?? arb.ScalpDepositUsd,
-                scalpLeverage = t.ScalpLeverage ?? arb.ScalpLeverage,
+                // Show the leverage the scalper actually uses (the runtime clamps it to 1-5).
+                scalpLeverage = Math.Clamp(t.ScalpLeverage ?? arb.ScalpLeverage, 1m, 5m),
                 scalpMaxOpen = t.ScalpMaxOpen ?? arb.ScalpMaxOpen,
                 scalpDailyLossUsd = t.ScalpDailyLossUsd ?? arb.ScalpDailyLossUsd,
                 scalpEntryPercent = t.ScalpEntryPercent ?? arb.ScalpEntryPercent,
