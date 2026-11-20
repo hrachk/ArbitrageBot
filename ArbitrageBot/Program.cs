@@ -10,9 +10,8 @@ using CryptoExchange.Net.SharedApis;
 using Microsoft.Extensions.Options;
 using Serilog;
 
-// Windows console "QuickEdit": one click in the window pauses all console output, and Serilog's
-// console sink then blocks every thread that logs — the bot looks frozen until Enter/Esc.
-ConsoleQuickEdit.Disable();
+// Console output is written on its own thread (NonBlockingConsoleSink), so QuickEdit stays on:
+// you can select and copy log text, and a selection only pauses the console, not the bot.
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -43,7 +42,8 @@ try
         .ReadFrom.Configuration(ctx.Configuration)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
-        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        // Console on its own thread: selecting text in the window must not freeze the bot.
+        .WriteTo.Sink(ConsoleSink.Instance.Value)
         .WriteTo.File(
             path: Path.Combine(exeDir, "logs", "arbitrage-.log"),
             rollingInterval: RollingInterval.Day,
@@ -699,3 +699,11 @@ finally
     await Log.CloseAndFlushAsync();
 }
 
+static class ConsoleSink
+{
+    public static readonly Lazy<NonBlockingConsoleSink> Instance = new(() => new NonBlockingConsoleSink(
+        new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+            .CreateLogger()));
+}

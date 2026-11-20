@@ -143,11 +143,15 @@ public sealed class DensityScalper
                 var lossCap = Math.Abs(snap.ScalpDailyLossUsd) > 0 ? Math.Abs(snap.ScalpDailyLossUsd) : 3m;
                 if (dayPnl <= -lossCap) { _lastNote = $"дневной лимит убытка {lossCap:F2} достигнут"; return; }
                 // Not in a hurry: a pause after every trade, a longer one after a loss.
-                var lastLoss = _closed.FirstOrDefault(c => c.Live == live) is { PnlUsd: < 0 } lc && lc.ClosedAt >= _lastCloseUtc.AddSeconds(-1);
+                // Measured from the last trade of this mode (also right after a restart), or from the
+                // last close/rejected order; no DateTime arithmetic on MinValue.
+                var lastTrade = _closed.FirstOrDefault(c => c.Live == live);
+                var lastLoss = lastTrade is { PnlUsd: < 0 };
+                var since = lastTrade != null && lastTrade.ClosedAt > _lastCloseUtc ? lastTrade.ClosedAt : _lastCloseUtc;
                 var pause = lastLoss ? Math.Max(snap.ScalpCooldownSeconds, snap.DensityLossCooldownSeconds) : Math.Max(0, snap.ScalpCooldownSeconds);
-                if ((now - _lastCloseUtc).TotalSeconds < pause)
+                if (since > DateTime.MinValue && (now - since).TotalSeconds < pause)
                 {
-                    if (lastLoss) _lastNote = $"пауза после убытка до {_lastCloseUtc.AddSeconds(pause).ToLocalTime():HH:mm:ss}";
+                    if (lastLoss) _lastNote = $"пауза после убытка до {since.AddSeconds(pause).ToLocalTime():HH:mm:ss}";
                     return;
                 }
                 notional = Math.Max(0m, snap.ScalpDepositUsd) * Math.Clamp(snap.ScalpLeverage, 1m, 5m);
