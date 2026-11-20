@@ -27,6 +27,7 @@ public class ArbitrageWorker : BackgroundService
     private readonly FundingRateService _fundingRates;
     private readonly HoldDecisionEngine _holdEngine;
     private readonly ScalpEngine _scalp;
+    private readonly DensityScalper _density;
     private readonly ExposureRegistry _exposure;
     private DateTime _lastSymbolRefreshUtc = DateTime.UtcNow;
     private DateTime _lastNoCandDiagUtc = DateTime.MinValue;
@@ -75,6 +76,7 @@ public class ArbitrageWorker : BackgroundService
         FundingRateService fundingRates,
         HoldDecisionEngine holdEngine,
         ScalpEngine scalp,
+        DensityScalper density,
         ExposureRegistry exposure)
     {
         _spotMarket = spotMarket;
@@ -95,6 +97,7 @@ public class ArbitrageWorker : BackgroundService
         _fundingRates = fundingRates;
         _holdEngine = holdEngine;
         _scalp = scalp;
+        _density = density;
         _exposure = exposure;
 
         _state.StrategyMode = _options.StrategyMode;
@@ -438,7 +441,7 @@ public class ArbitrageWorker : BackgroundService
             {
                 if (openedThisCycle >= maxPerCycle) break;
                 // The scalper holds this symbol: two strategies on one symbol and venue would net legs.
-                if (_scalp.HasExposure(o.Symbol)) continue;
+                if (_scalp.HasExposure(o.Symbol) || _density.HasLiveExposure(o.Symbol)) continue;
                 _exposure.MarkArb(o.Symbol, TimeSpan.FromSeconds(3));
 
                 // Real exchange orders only when Live fully enabled (not RO)

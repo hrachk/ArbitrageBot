@@ -1168,6 +1168,14 @@ public sealed class LiveOrderEngine
     private static readonly ConcurrentDictionary<string, decimal> LeverageSet = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The exchange's own step/tick for a USDT perp, refreshed every 6 h. Null when unknown.</summary>
+    /// <summary>Exchange filters for a USDT perp: qty step/decimals, tick/decimals, min qty, min notional.</summary>
+    public async Task<(decimal? QtyStep, int? QtyDecimals, decimal? PriceStep, int? PriceDecimals, decimal MinQty, decimal MinNotional)?>
+        GetSymbolFiltersAsync(string exchange, string symbol, CancellationToken ct)
+    {
+        var r = await GetRulesAsync(exchange, symbol, ct).ConfigureAwait(false);
+        return r == null ? null : (r.QtyStep, r.QtyDecimals, r.PriceStep, r.PriceDecimals, r.MinQty, r.MinNotional);
+    }
+
     private async Task<SymbolRules?> GetRulesAsync(string exchange, string symbol, CancellationToken ct)
     {
         var key = exchange + "|" + NormSym(symbol);

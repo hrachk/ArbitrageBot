@@ -909,33 +909,35 @@ function strategySwitch(cur) {
 }
 
 function renderDensity(sc) {
-  const d = lc(S.density || {}); const stt = lc(d.stats || {}); const t = S.settings?.trading || {};
+  const d = lc(S.density || {}); const sx = lc(d.stats || {}); const t = S.settings?.trading || {};
+  const isLive = d.mode === 'live'; const stt = { ...lc(sx.current || {}), placed: sx.placed, filled: sx.filled, cancelled: sx.cancelled, cancelReasons: sx.cancelReasons }; const oth = lc(sx.other || {});
   const walls = (d.walls || []).map(lc); const closed = (d.closed || []).map(lc);
   const pos = d.position ? lc(d.position) : null; const rest = d.resting ? lc(d.resting) : null;
   const win = stt.trades ? Math.round(stt.wins / stt.trades * 100) : null;
   const fillRate = stt.placed ? Math.round(stt.filled / stt.placed * 100) : null;
-  const why = { 'take-profit': ['тейк', 'pos'], stop: ['стоп за плотностью', 'neg'], 'wall-gone': ['плотность ушла', 'neg'], time: ['по времени', ''], 'no-book': ['нет стакана', 'neg'] };
+  const why = { 'take-profit': ['тейк', 'pos'], 'take-profit-market': ['тейк по рынку', 'pos'], stop: ['стоп за плотностью', 'neg'], 'exchange-stop': ['стоп на бирже', 'neg'], 'wall-gone': ['плотность ушла', 'neg'], time: ['по времени', ''], 'no-book': ['нет стакана', 'neg'], 'no-stop': ['нет стопа — закрыли', 'neg'] };
+  const liveHint = !d.liveRequested ? '' : !d.binanceKey ? 'Реальные ордера запрошены, но нет ключа Binance с правом trade.' : !d.liveOrdersOn ? 'Реальные ордера запрошены, но live-ордера выключены на странице Live.' : '';
   return `
   <section class="panel">
     <div class="panel-body row wrap" style="gap:18px;align-items:center">
-      <div style="flex:1;min-width:min(260px,100%)"><div class="row" style="gap:8px 10px;flex-wrap:wrap"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${sc.enabled ? 'long' : ''}">${sc.enabled ? 'paper' : 'выключен'}</span><span class="badge">биржи: ${esc((d.venues || []).map(venue).join(', '))}</span><span class="badge cost">только paper до проверки</span></div>
+      <div style="flex:1;min-width:min(260px,100%)"><div class="row" style="gap:8px 10px;flex-wrap:wrap"><h2 style="margin:0;font-size:20px;letter-spacing:-.02em">Скальпер</h2><span class="badge ${!sc.enabled ? '' : isLive ? 'neg' : 'long'}">${!sc.enabled ? 'выключен' : isLive ? 'реальные ордера' : 'paper'}</span><span class="badge">биржи: ${esc((d.venues || []).map(venue).join(', '))}</span>${liveHint ? `<span class="badge cost">${esc(liveHint)}</span>` : ''}</div>
         <div style="margin-top:10px">${strategySwitch('density')}</div>
         <p class="prose" style="margin:10px 0 0">Ищет крупную заявку маркет-мейкера в стакане, которая стоит не меньше ${esc(t.densityMinWallAgeSeconds ?? 20)} с. Когда цена подходит, ставит лимитку на тик перед ней. Плотность — причина отскока и защита стопа: если её съели или сняли, бот выходит. Тейк — небольшое движение от плотности.</p></div>
       <button class="btn ${sc.enabled ? '' : 'primary'}" data-act="scalp-toggle" style="height:40px">${sc.enabled ? ICON.pause + 'Выключить' : ICON.play + 'Включить скальпер'}</button>
     </div>
     <div class="kpis" style="border-top:1px solid var(--line)">
-      <div class="kpi"><div class="k">Paper-результат</div><div class="v ${cls(stt.realizedUsd)}">${fmt.usd(stt.realizedUsd)}</div><div class="d">комиссии ${fmt.usd(stt.feesUsd, 2, false)}</div></div>
+      <div class="kpi"><div class="k">${isLive ? 'Реальный результат' : 'Paper-результат'}</div><div class="v ${cls(stt.realizedUsd)}">${fmt.usd(stt.realizedUsd)}</div><div class="d">комиссии ${fmt.usd(stt.feesUsd, 2, false)}</div></div>
       <div class="kpi"><div class="k">Сегодня</div><div class="v ${cls(stt.todayUsd)}">${fmt.usd(stt.todayUsd)}</div><div class="d">${fmt.int(stt.tradesToday)} сделок</div></div>
       <div class="kpi"><div class="k">Win rate</div><div class="v">${win != null ? win + '%' : '—'}</div><div class="d">${fmt.int(stt.wins)} из ${fmt.int(stt.trades)}</div></div>
       <div class="kpi"><div class="k">Исполнение заявок</div><div class="v">${fillRate != null ? fillRate + '%' : '—'}</div><div class="d">${fmt.int(stt.filled)} из ${fmt.int(stt.placed)} · снято ${fmt.int(stt.cancelled)}</div></div>
     </div>
   </section>
 
-  <div class="callout info" style="margin-top:14px">${ICON.info}<div>Paper здесь считает строго: заявка исполняется, только если цена прошла сквозь наш уровень (касание не считается), заявка начинает работать через ${esc(t.paperFillLatencyMs ?? 700)} мс, а рыночный выход берётся по стакану ещё через столько же. ${d.lastNote ? '<br>Последнее: ' + esc(d.lastNote) : ''}</div></div>
+  ${isLive ? `<div class="callout" style="margin-top:14px">${ICON.warn}<div>Реальные ордера на Binance: вход и тейк — post-only лимитки, стоп стоит на самой бирже (STOP_MARKET по mark price) и закроет позицию, даже если бот или интернет упадут. Стоп закрывает всю позицию по символу: не держите на этих символах ручных позиций.${oth.trades ? ` Paper отдельно: ${fmt.usd(oth.realizedUsd)} за ${fmt.int(oth.trades)} сделок.` : ''}${d.lastNote ? '<br>Последнее: ' + esc(d.lastNote) : ''}</div></div>` : `<div class="callout info" style="margin-top:14px">${ICON.info}<div>Paper здесь считает строго: заявка исполняется, только если цена прошла сквозь наш уровень (касание не считается), заявка начинает работать через ${esc(t.paperFillLatencyMs ?? 700)} мс, а рыночный выход берётся по стакану ещё через столько же. ${d.lastNote ? '<br>Последнее: ' + esc(d.lastNote) : ''}</div></div>`}
 
   <section class="panel" style="margin-top:14px"><div class="panel-head"><h2>Сейчас</h2></div><div class="panel-body">
-    ${pos ? `<div class="row wrap" style="gap:14px"><span class="sym">${esc(baseOf(pos.symbol))}</span><span class="${pos.side === 'Long' ? 'long' : 'short'}">${pos.side === 'Long' ? 'long' : 'short'}</span><span class="num">вход ${fmt.price(pos.entry)}</span><span class="num pos">тейк ${fmt.price(pos.takeProfit)}</span><span class="num neg">стоп ${fmt.price(pos.stop)}</span><span class="num mut">плотность ${fmt.price(pos.wallPrice)}</span><span class="num">${signed(pos.unrealizedUsd)}</span>${pos.exiting ? `<span class="badge neg">выходим: ${esc((why[pos.exiting] || [pos.exiting])[0])}</span>` : ''}</div>`
-      : rest ? `<div>Заявка ${rest.side === 'Long' ? 'на покупку' : 'на продажу'} <b>${esc(baseOf(rest.symbol))}</b> по ${fmt.price(rest.limit)} стоит перед плотностью ${fmt.price(rest.wallPrice)} · ${fmt.ago(rest.placedAt)}</div>`
+    ${pos ? `<div class="row wrap" style="gap:14px"><span class="sym">${esc(baseOf(pos.symbol))}</span><span class="${pos.side === 'Long' ? 'long' : 'short'}">${pos.side === 'Long' ? 'long' : 'short'}</span><span class="num">вход ${fmt.price(pos.entry)}</span><span class="num pos">тейк ${fmt.price(pos.takeProfit)}</span><span class="num neg">стоп ${fmt.price(pos.stop)}</span><span class="num mut">плотность ${fmt.price(pos.wallPrice)}</span><span class="num">${signed(pos.unrealizedUsd)}</span>${pos.live ? `<span class="badge neg">live</span>${pos.exchangeStop ? '<span class="badge pos">стоп на бирже</span>' : '<span class="badge neg">стопа на бирже нет</span>'}` : ''}${pos.exiting ? `<span class="badge neg">выходим: ${esc((why[pos.exiting] || [pos.exiting])[0])}</span>` : ''}</div>`
+      : rest ? `<div>${rest.live ? '<span class="badge neg">live</span> ' : ''}Заявка ${rest.side === 'Long' ? 'на покупку' : 'на продажу'} <b>${esc(baseOf(rest.symbol))}</b> по ${fmt.price(rest.limit)} стоит перед плотностью ${fmt.price(rest.wallPrice)} · ${fmt.ago(rest.placedAt)}</div>`
       : `<div class="mut">${sc.enabled ? 'Ждём, когда цена подойдёт к зрелой плотности ближе ' + fmt.pct(t.densityApproachPercent ?? 0.3, 2, false) + '.' : 'Скальпер выключен.'}</div>`}
   </div></section>
 
@@ -946,9 +948,9 @@ function renderDensity(sc) {
 
   ${(stt.cancelReasons || []).length ? `<div class="mut small" style="margin-top:10px">Почему заявки снимались: ${(stt.cancelReasons || []).map(lc).map(c => esc(c.reason) + ' — ' + fmt.int(c.count)).join(' · ')}</div>` : ''}
 
-  <section class="panel" style="margin-top:14px"><div class="panel-head" style="flex-wrap:wrap;gap:6px 12px"><h2>История</h2><div class="tools">${closed.length ? '<button class="btn sm ghost" data-act="density-reset">Очистить историю</button>' : ''}<button class="btn sm ghost" data-go="settings" onclick="setTimeout(()=>document.getElementById('sec-scalp')?.scrollIntoView(),450)">Настройки скальпера</button></div></div>
+  <section class="panel" style="margin-top:14px"><div class="panel-head" style="flex-wrap:wrap;gap:6px 12px"><h2>История</h2><div class="tools">${closed.some(x => !x.live) ? '<button class="btn sm ghost" data-act="density-reset">Очистить paper-историю</button>' : ''}<button class="btn sm ghost" data-go="settings" onclick="setTimeout(()=>document.getElementById('sec-scalp')?.scrollIntoView(),450)">Настройки скальпера</button></div></div>
     <div class="panel-body flush">${closed.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Закрыта</th><th>Символ</th><th>Сторона</th><th class="r">Вход → выход</th><th class="r">Плотность</th><th class="r">Держали</th><th class="r">P&amp;L</th><th>Причина</th></tr></thead><tbody>
-      ${closed.map(x => { const [tt, c] = why[x.reason] || [x.reason, '']; return `<tr><td class="mut">${fmt.dt(x.closedAt)}</td><td class="sym">${esc(baseOf(x.symbol))}</td><td class="${x.isLong ? 'long' : 'short'}">${x.isLong ? 'long' : 'short'}</td><td class="r num">${fmt.price(x.entry)} → ${fmt.price(x.exit)}</td><td class="r num mut">${fmt.price(x.wallPrice)}</td><td class="r num">${fmt.dur((new Date(x.closedAt) - new Date(x.openedAt)) / 1000)}</td><td class="r">${signed(x.pnlUsd)}</td><td><span class="badge ${c}">${esc(tt)}</span></td></tr>`; }).join('')}
+      ${closed.map(x => { const [tt, c] = why[x.reason] || [x.reason, '']; return `<tr><td class="mut">${fmt.dt(x.closedAt)}</td><td class="sym">${esc(baseOf(x.symbol))}</td><td class="${x.isLong ? 'long' : 'short'}">${x.isLong ? 'long' : 'short'}${x.live ? ' <span class="badge neg">live</span>' : ''}</td><td class="r num">${fmt.price(x.entry)} → ${fmt.price(x.exit)}</td><td class="r num mut">${fmt.price(x.wallPrice)}</td><td class="r num">${fmt.dur((new Date(x.closedAt) - new Date(x.openedAt)) / 1000)}</td><td class="r">${signed(x.pnlUsd)}</td><td><span class="badge ${c}">${esc(tt)}</span></td></tr>`; }).join('')}
     </tbody></table></div>` : '<div class="empty">Сделок пока нет</div>'}</div></section>`;
 }
 
@@ -1125,7 +1127,7 @@ const SETTINGS = [
     ['scalpMaxHoldSeconds', 'Макс. удержание', 'int', '', 'с'],
     ['scalpCooldownSeconds', 'Пауза между входами', 'int', '', 'с'],
   ]},
-  { id: 'density', title: 'Скальпер: плотности', lead: 'Работает, когда на странице скальпера выбрана стратегия «Плотности в стакане». Пока только paper. Депозит, плечо, биржи, дневной лимит и паузу берёт из раздела «Скальпер».', fields: [
+  { id: 'density', title: 'Скальпер: плотности', lead: 'Работает, когда на странице скальпера выбрана стратегия «Плотности в стакане». Депозит, плечо, биржи, дневной лимит, паузу и «Скальпить реальными ордерами» берёт из раздела «Скальпер». Реальные ордера — только на Binance.', fields: [
     ['densityMinWallUsd', 'Мин. объём плотности', 'num', 'Заявка на одном уровне цены', 'USDT'],
     ['densityMinMultiple', 'Во сколько раз больше обычного уровня', 'num', 'Против медианы уровней в зоне поиска', 'x'],
     ['densityScanPercent', 'Зона поиска от цены', 'num', '', '%'],
@@ -1392,7 +1394,7 @@ const ACTIONS = {
     if (r) { await loadSettings(false); loadScalp(); }
   },
   async 'density-reset'() {
-    if (!await confirmModal({ title: 'Очистить историю плотностей?', body: 'Удалит paper-сделки стратегии плотностей и счётчики заявок.', confirm: 'Очистить' })) return;
+    if (!await confirmModal({ title: 'Очистить paper-историю плотностей?', body: 'Удалит paper-сделки и счётчики заявок. Реальные сделки останутся.', confirm: 'Очистить' })) return;
     await act(() => api.post('/api/scalp/density/reset'), (r) => `Удалено сделок: ${r?.removed ?? 0}`); loadScalp();
   },
   async 'scalp-toggle'() {
