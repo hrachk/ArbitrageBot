@@ -50,6 +50,7 @@ public sealed class DensityScalper
     private int _placed, _filled, _cancelled;
     private readonly Dictionary<string, int> _cancelReasons = new();
     private const string LiveVenue = "Binance";
+    private bool _sweptAfterStart;
 
     public DensityScalper(IFuturesMarketService market, ActiveMarketContext markets, RuntimeRiskConfig runtime,
         LiveTradingGuard guard, LiveSafetyService safety, LiveOrderEngine orders, BinanceMakerGateway gw, ExposureRegistry exposure,
@@ -115,6 +116,14 @@ public sealed class DensityScalper
             if (!Active) return;
 
             var live = LiveMode;
+            if (live && !_sweptAfterStart)
+            {
+                _sweptAfterStart = true;
+                // Clean stops left by an earlier run on symbols we traded live and do not hold now.
+                List<string> syms;
+                lock (_lock) syms = _closed.Where(x => x.Live).Select(x => x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).Take(30).ToList();
+                foreach (var s in syms) await _gw.SweepStopsAsync(s, ct).ConfigureAwait(false);
+            }
             WallTrack? best; decimal notional;
             lock (_lock)
             {
@@ -406,7 +415,12 @@ public sealed class DensityScalper
             await OpenLiveAsync(r, c.FilledQty, c.AveragePrice, now, ct).ConfigureAwait(false);
             return;
         }
-        if (c.Ok && !c.Open) { lock (_lock) { Cancel(why); SaveState(); } return; }
+        if (c.Ok && !c.Open)
+        {
+            _logger.LogInformation("DENSITY LIVE withdrawn {Sym} id={Id}: {Why}", r.Symbol, r.OrderId, why);
+            lock (_lock) { Cancel(why); SaveState(); }
+            return;
+        }
         Note($"{r.Symbol}: заявку не удалось снять — {c.Error}, повторим");
     }
 
@@ -461,6 +475,7 @@ public sealed class DensityScalper
                 if (tp.Ok && tp.Filled)
                 {
                     await _gw.CancelStopAsync(p.StopAlgoId, ct).ConfigureAwait(false);
+                    await _gw.SweepStopsAsync(p.Symbol, ct).ConfigureAwait(false);
                     lock (_lock) CloseUnlocked(tp.AveragePrice > 0 ? tp.AveragePrice : p.TakeProfit, snap.DensityMakerFeePercent, "take-profit", now);
                     return;
                 }
@@ -512,6 +527,7 @@ public sealed class DensityScalper
             mAvg = m.AveragePrice > 0 ? m.AveragePrice : (p.Mark > 0 ? p.Mark : p.Entry);
         }
         await _gw.CancelStopAsync(p.StopAlgoId, ct).ConfigureAwait(false);
+        await _gw.SweepStopsAsync(p.Symbol, ct).ConfigureAwait(false);
         var exit = p.Qty > 0 ? (tpQty * tpAvg + remaining * mAvg) / p.Qty : mAvg;
         var fees = p.Entry * p.Qty * snap.DensityMakerFeePercent / 100m
                    + tpQty * tpAvg * snap.DensityMakerFeePercent / 100m
