@@ -85,6 +85,17 @@ public sealed class RuntimeRiskConfig
             if (t.ScalpMaxHoldSeconds is { } sh && sh > 0) _opts.ScalpMaxHoldSeconds = Math.Clamp(sh, 5, 3600);
             if (t.ScalpCooldownSeconds is { } sc && sc >= 0) _opts.ScalpCooldownSeconds = Math.Clamp(sc, 0, 3600);
             if (t.ScalpLive is { } slv) _opts.ScalpLive = slv;
+            if (t.ScalpStrategy != null) _opts.ScalpStrategy = t.ScalpStrategy.Trim().ToLowerInvariant() == "density" ? "density" : "lag";
+            if (t.DensityMinWallUsd is { } dw && dw > 0) _opts.DensityMinWallUsd = Math.Clamp(dw, 500m, 50_000_000m);
+            if (t.DensityMinMultiple is { } dm && dm > 0) _opts.DensityMinMultiple = Math.Clamp(dm, 2m, 200m);
+            if (t.DensityScanPercent is { } ds && ds > 0) _opts.DensityScanPercent = Math.Clamp(ds, 0.1m, 5m);
+            if (t.DensityApproachPercent is { } da && da > 0) _opts.DensityApproachPercent = Math.Clamp(da, 0.02m, 2m);
+            if (t.DensityMinWallAgeSeconds is { } dg && dg >= 0) _opts.DensityMinWallAgeSeconds = Math.Clamp(dg, 0, 3600);
+            if (t.DensityTakeProfitPercent is { } dt && dt > 0) _opts.DensityTakeProfitPercent = Math.Clamp(dt, 0.05m, 5m);
+            if (t.DensityStopBeyondPercent is { } db && db > 0) _opts.DensityStopBeyondPercent = Math.Clamp(db, 0.02m, 3m);
+            if (t.DensityMaxHoldSeconds is { } dh && dh > 0) _opts.DensityMaxHoldSeconds = Math.Clamp(dh, 10, 86_400);
+            if (t.DensityMakerFeePercent is { } dmf && dmf >= 0) _opts.DensityMakerFeePercent = Math.Clamp(dmf, -0.05m, 0.2m);
+            if (t.DensityTakerFeePercent is { } dtf && dtf >= 0) _opts.DensityTakerFeePercent = Math.Clamp(dtf, 0m, 0.3m);
             if (t.ScalpVenues != null) _opts.ScalpVenues = Venues.NormalizeCsv(t.ScalpVenues, out _);
             _opts.DynamicSymbols = t.DynamicSymbols;
             if (t.DynamicTopN > 0) _opts.DynamicTopN = t.DynamicTopN;
@@ -220,6 +231,18 @@ public sealed class RuntimeRiskConfig
         ScalpCooldownSeconds = o.ScalpCooldownSeconds,
         ScalpLive = o.ScalpLive,
         ScalpVenues = o.ScalpVenues,
+        ScalpStrategy = o.ScalpStrategy,
+        DensityMinWallUsd = o.DensityMinWallUsd,
+        DensityMinMultiple = o.DensityMinMultiple,
+        DensityScanPercent = o.DensityScanPercent,
+        DensityApproachPercent = o.DensityApproachPercent,
+        DensityMinWallAgeSeconds = o.DensityMinWallAgeSeconds,
+        DensityTakeProfitPercent = o.DensityTakeProfitPercent,
+        DensityStopBeyondPercent = o.DensityStopBeyondPercent,
+        DensityMaxHoldSeconds = o.DensityMaxHoldSeconds,
+        DensityMakerFeePercent = o.DensityMakerFeePercent,
+        DensityTakerFeePercent = o.DensityTakerFeePercent,
+        DensityBookLevels = o.DensityBookLevels,
         LivePaperLeverage = o.LivePaperLeverage,
         FuturesMaxOpenPositions = o.FuturesMaxOpenPositions,
         FuturesMaxHoldMinutes = o.FuturesMaxHoldMinutes,

@@ -3,7 +3,7 @@ namespace ArbitrageBot.Services;
 /// <summary>
 /// Runs the scalper on its own loop so its order round trips never delay the hedge scan.
 /// </summary>
-public sealed class ScalpWorker(ScalpEngine scalp, ILogger<ScalpWorker> logger) : BackgroundService
+public sealed class ScalpWorker(ScalpEngine scalp, DensityScalper density, ILogger<ScalpWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -14,6 +14,7 @@ public sealed class ScalpWorker(ScalpEngine scalp, ILogger<ScalpWorker> logger) 
             try
             {
                 await scalp.TickAsync(stoppingToken);
+                density.Tick();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

@@ -421,3 +421,77 @@ public static class OrderRules
         return price;
     }
 }
+
+/// <summary>A large resting order ("плотность") on one side of the book.</summary>
+public readonly record struct BookWall(bool IsBid, decimal Price, decimal Qty, decimal NotionalUsd, decimal Multiple, decimal DistancePercent);
+
+/// <summary>
+/// Order-book density scalping, the way manual DOM scalpers trade market-maker walls:
+/// find a large, persistent resting order near the price, stand one tick in front of it with a
+/// passive limit, let the wall protect the stop, take a small move away from it.
+/// Pure helpers; the fill rules are deliberately pessimistic (trade-through only).
+/// </summary>
+public static class DensityMath
+{
+    /// <summary>Smallest positive gap between adjacent levels: the book's tick.</summary>
+    public static decimal InferTick(IReadOnlyList<(decimal Price, decimal Quantity)> bids, IReadOnlyList<(decimal Price, decimal Quantity)> asks)
+    {
+        var tick = decimal.MaxValue;
+        void Scan(IReadOnlyList<(decimal Price, decimal Quantity)> lv)
+        {
+            for (var i = 1; i < lv.Count && i < 60; i++)
+            {
+                var d = Math.Abs(lv[i].Price - lv[i - 1].Price);
+                if (d > 0 && d < tick) tick = d;
+            }
+        }
+        Scan(bids); Scan(asks);
+        return tick == decimal.MaxValue ? 0m : tick;
+    }
+
+    /// <summary>
+    /// Walls on one side within <paramref name="scanPercent"/> of mid: notional at least
+    /// <paramref name="minNotionalUsd"/> and at least <paramref name="minMultiple"/> x the median level.
+    /// Sorted by multiple, strongest first. The best level itself is never a wall (it is the touch).
+    /// </summary>
+    public static List<BookWall> FindWalls(IReadOnlyList<(decimal Price, decimal Quantity)> levels, bool isBid, decimal mid,
+        decimal scanPercent, decimal minNotionalUsd, decimal minMultiple)
+    {
+        var res = new List<BookWall>();
+        if (levels.Count < 5 || mid <= 0) return res;
+        var inRange = levels.Where(l => l.Price > 0 && l.Quantity > 0 && Math.Abs(l.Price - mid) / mid * 100m <= scanPercent).ToList();
+        if (inRange.Count < 5) return res;
+        var notionals = inRange.Select(l => l.Price * l.Quantity).OrderBy(x => x).ToList();
+        var median = notionals[notionals.Count / 2];
+        if (median <= 0) return res;
+        for (var i = 1; i < inRange.Count; i++)
+        {
+            var (p, q) = inRange[i];
+            var n = p * q;
+            var mult = n / median;
+            if (n >= minNotionalUsd && mult >= minMultiple)
+                res.Add(new BookWall(isBid, p, q, n, mult, Math.Abs(p - mid) / mid * 100m));
+        }
+        return res.OrderByDescending(w => w.Multiple).ToList();
+    }
+
+    /// <summary>Price one tick in front of the wall (above a bid wall, below an ask wall).</summary>
+    public static decimal FrontOf(BookWall w, decimal tick) => w.IsBid ? w.Price + tick : w.Price - tick;
+
+    /// <summary>
+    /// Pessimistic fill of a resting entry at <paramref name="limit"/>: only when the market traded
+    /// through our level (for a buy, the best bid is now below it or the ask came down to it).
+    /// A touch that bounces exactly at our price counts as no fill.
+    /// </summary>
+    public static bool RestingFilled(bool isBuy, decimal limit, decimal bestBid, decimal bestAsk)
+        => isBuy ? (bestBid > 0 && bestBid < limit) || (bestAsk > 0 && bestAsk <= limit)
+                 : (bestAsk > 0 && bestAsk > limit) || (bestBid > 0 && bestBid >= limit);
+
+    /// <summary>Wall still standing: level present with at least <paramref name="keepFraction"/> of its reference size.</summary>
+    public static bool WallHolds(IReadOnlyList<(decimal Price, decimal Quantity)> levels, decimal price, decimal refQty, decimal keepFraction)
+    {
+        foreach (var (p, q) in levels)
+            if (p == price) return q >= refQty * keepFraction;
+        return false;
+    }
+}

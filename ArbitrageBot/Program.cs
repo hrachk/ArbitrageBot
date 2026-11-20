@@ -92,6 +92,7 @@ try
     builder.Services.AddSingleton<LiveOrderEngine>();
     builder.Services.AddSingleton<ExposureRegistry>();
     builder.Services.AddSingleton<ScalpEngine>();
+    builder.Services.AddSingleton<DensityScalper>();
     builder.Services.AddHostedService<ScalpWorker>();
     builder.Services.AddSingleton<LiveSafetyService>();
     builder.Services.AddHttpClient("live-alerts");
@@ -459,6 +460,8 @@ try
     app.MapGet("/api/analytics/trades", (IPaperAnalyticsStore a, int take = 1000, int skip = 0) => Results.Json(a.GetTradeDetails(take, skip)));
     app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 90) => Results.Json(a.GetDaySummaries(maxDays)));
     app.MapGet("/api/scalp", (ScalpEngine scalp) => Results.Json(scalp.Snapshot()));
+    app.MapGet("/api/scalp/density", (DensityScalper d) => Results.Json(d.Snapshot()));
+    app.MapPost("/api/scalp/density/reset", (DensityScalper d) => Results.Ok(new { removed = d.ResetHistory() }));
     app.MapPost("/api/scalp/reset-paper", (ScalpEngine scalp) => Results.Ok(new { removed = scalp.ResetPaperHistory() }));
 
     // Telegram Mini App: one payload for mobile reports panel

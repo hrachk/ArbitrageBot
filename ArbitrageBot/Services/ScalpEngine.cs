@@ -188,6 +188,8 @@ public sealed class ScalpEngine
         MarkAndMaybeClose();
         ResolvePending();
         if (ct.IsCancellationRequested || !_runtime.Snapshot.SpatialScalpMode) return;
+        // Only one scalp strategy opens trades at a time; the density scalper has its own engine.
+        if (_runtime.Snapshot.ScalpStrategy == "density") { _watch = null; return; }
 
         var snap = _runtime.Snapshot;
         decimal realizedToday;

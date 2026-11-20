@@ -115,6 +115,9 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
                 try
                 {
                     var depth = _options.MaxDepthLevels > 0 ? _options.MaxDepthLevels : 20;
+                    // Density scalping reads walls deeper than the arbitrage needs.
+                    if (exchange.Equals("Binance", StringComparison.OrdinalIgnoreCase) && _options.DensityBookLevels > depth)
+                        depth = _options.DensityBookLevels;
                     ISymbolOrderBook? book = null;
                     foreach (var name in ExchangeNameVariants(exchange))
                     {
@@ -475,6 +478,17 @@ public class FuturesMarketService : IFuturesMarketService, IAsyncDisposable
             IsSynced(longEx, symbol), IsSynced(shortEx, symbol),
             snap.TradeMaxQuoteAgeMs, snap.MaxLegSkewMs, SyncedQuietLimitMs,
             out _);
+    }
+
+    /// <summary>Both sides of a live (synced socket) book, best first; null when not live.</summary>
+    public (IReadOnlyList<(decimal Price, decimal Quantity)> Bids, IReadOnlyList<(decimal Price, decimal Quantity)> Asks)? BookSides(string exchange, string symbol)
+    {
+        var key = $"{exchange}:{symbol}";
+        if (!_books.TryGetValue(key, out var book) || _restSourced.ContainsKey(key) || !IsSynced(exchange, symbol)) return null;
+        var b = book.Bids?.Select(x => (x.Price, x.Quantity)).ToList();
+        var a = book.Asks?.Select(x => (x.Price, x.Quantity)).ToList();
+        if (b is not { Count: > 0 } || a is not { Count: > 0 }) return null;
+        return (b, a);
     }
 
     private IReadOnlyList<(decimal Price, decimal Quantity)>? Levels(string exchange, string symbol, bool asks)
