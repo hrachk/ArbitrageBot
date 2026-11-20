@@ -92,6 +92,7 @@ try
     builder.Services.AddSingleton<LiveOrderEngine>();
     builder.Services.AddSingleton<ExposureRegistry>();
     builder.Services.AddSingleton<ScalpEngine>();
+    builder.Services.AddSingleton<BinanceMakerGateway>();
     builder.Services.AddSingleton<DensityScalper>();
     builder.Services.AddHostedService<ScalpWorker>();
     builder.Services.AddSingleton<LiveSafetyService>();

@@ -14,7 +14,7 @@ public sealed class ScalpWorker(ScalpEngine scalp, DensityScalper density, ILogg
             try
             {
                 await scalp.TickAsync(stoppingToken);
-                density.Tick();
+                await density.TickAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
