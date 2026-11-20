@@ -249,6 +249,20 @@ internal static class Program
         Near("rules: on-tick price unchanged", OrderRules.SnapPrice(0.3002m, 0.0001m, null, true), 0.3002m);
         Near("rules: price by decimals", OrderRules.SnapPrice(1.23456m, null, 3, false), 1.234m);
         Check("rules: no info leaves values", OrderRules.FloorQty(5.55m, null, null) == 5.55m && OrderRules.SnapPrice(5.55m, null, null, true) == 5.55m);
+        {
+            var bids = new List<(decimal, decimal)> { (100.00m, 10m), (99.99m, 12m), (99.98m, 9m), (99.97m, 11m), (99.96m, 800m), (99.95m, 10m), (99.94m, 8m) };
+            var asks = new List<(decimal, decimal)> { (100.01m, 10m), (100.02m, 11m), (100.03m, 9m), (100.04m, 12m), (100.05m, 10m) };
+            Near("density: tick inferred", DensityMath.InferTick(bids, asks), 0.01m);
+            var w = DensityMath.FindWalls(bids, true, 100.005m, 1m, 20_000m, 5m);
+            Check("density: finds the 800-lot bid wall", w.Count == 1 && w[0].Price == 99.96m && w[0].Multiple > 50m);
+            Check("density: below min notional is no wall", DensityMath.FindWalls(bids, true, 100.005m, 1m, 200_000m, 5m).Count == 0);
+            Check("density: touch level is never a wall", DensityMath.FindWalls(new List<(decimal, decimal)> { (100m, 900m), (99.99m, 10m), (99.98m, 10m), (99.97m, 10m), (99.96m, 10m), (99.95m, 10m) }, true, 100m, 1m, 1000m, 5m).Count == 0);
+            Near("density: front of bid wall", DensityMath.FrontOf(w[0], 0.01m), 99.97m);
+            Check("density: buy not filled on touch", !DensityMath.RestingFilled(true, 99.97m, 99.97m, 99.98m));
+            Check("density: buy filled on trade-through", DensityMath.RestingFilled(true, 99.97m, 99.96m, 99.97m));
+            Check("density: sell TP filled only through", !DensityMath.RestingFilled(false, 100.30m, 100.29m, 100.30m) && DensityMath.RestingFilled(false, 100.30m, 100.30m, 100.31m));
+            Check("density: wall holds at 60%", DensityMath.WallHolds(bids, 99.96m, 1000m, 0.6m) && !DensityMath.WallHolds(bids, 99.96m, 2000m, 0.6m));
+        }
         Check("scalp exit: hold while lag persists", LeadLag.ExitReason(true, 100m, 100.05m, -0.05m, 100m, -0.3m, 0.05m, 5, 0.30m, 45, 0.2m) is null);
     }
 }

@@ -96,6 +96,17 @@ public class TradingUiSettings
     public int? ScalpCooldownSeconds { get; set; }
     public bool? ScalpLive { get; set; }
     public string? ScalpVenues { get; set; }
+    public string? ScalpStrategy { get; set; }
+    public decimal? DensityMinWallUsd { get; set; }
+    public decimal? DensityMinMultiple { get; set; }
+    public decimal? DensityScanPercent { get; set; }
+    public decimal? DensityApproachPercent { get; set; }
+    public int? DensityMinWallAgeSeconds { get; set; }
+    public decimal? DensityTakeProfitPercent { get; set; }
+    public decimal? DensityStopBeyondPercent { get; set; }
+    public int? DensityMaxHoldSeconds { get; set; }
+    public decimal? DensityMakerFeePercent { get; set; }
+    public decimal? DensityTakerFeePercent { get; set; }
     public bool DynamicSymbols { get; set; } = true;
     public int DynamicTopN { get; set; } = 16;
     public decimal DynamicMinQuoteVolumeUsd { get; set; } = 8_000_000m;

@@ -167,6 +167,30 @@ public class ArbitrageOptions
     /// <summary>Venues the scalper may trade, comma separated (e.g. "Binance"). Empty = every venue.
     /// The lag is still measured against all venues. Live scalping also skips venues without trade keys.</summary>
     public string ScalpVenues { get; set; } = "";
+    /// <summary>Scalp strategy: "lag" (venue lead-lag) or "density" (stand in front of order-book walls). Density is paper-only.</summary>
+    public string ScalpStrategy { get; set; } = "lag";
+    /// <summary>Wall: minimum resting notional at one price (USDT).</summary>
+    public decimal DensityMinWallUsd { get; set; } = 20000m;
+    /// <summary>Wall: at least this many times the median level within the scan range.</summary>
+    public decimal DensityMinMultiple { get; set; } = 5m;
+    /// <summary>Look for walls within this distance of mid (%).</summary>
+    public decimal DensityScanPercent { get; set; } = 1.0m;
+    /// <summary>Place the entry when price is this close to the wall (%).</summary>
+    public decimal DensityApproachPercent { get; set; } = 0.30m;
+    /// <summary>Wall must stand this long (anti-spoof) before we trade it.</summary>
+    public int DensityMinWallAgeSeconds { get; set; } = 20;
+    /// <summary>Take profit away from the wall (%), resting maker order.</summary>
+    public decimal DensityTakeProfitPercent { get; set; } = 0.35m;
+    /// <summary>Stop if price goes this far beyond the wall (%), or the wall is eaten/pulled.</summary>
+    public decimal DensityStopBeyondPercent { get; set; } = 0.15m;
+    /// <summary>Close at market after this long.</summary>
+    public int DensityMaxHoldSeconds { get; set; } = 180;
+    /// <summary>Maker fee per side (%).</summary>
+    public decimal DensityMakerFeePercent { get; set; } = 0.02m;
+    /// <summary>Taker fee per side (%), for stop and time exits.</summary>
+    public decimal DensityTakerFeePercent { get; set; } = 0.05m;
+    /// <summary>Order book levels kept for Binance books (walls further than 30 levels are invisible otherwise).</summary>
+    public int DensityBookLevels { get; set; } = 500;
 
     // ---- Execution realism (audit 2026-11) ----
     /// <summary>A traded leg's quote must be younger than this (ms). REST snapshots are never a traded leg.</summary>
