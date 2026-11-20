@@ -499,6 +499,8 @@ try
     app.MapPost("/api/live/disable", (LiveTradingGuard guard, IOptions<ArbitrageOptions> opt, RuntimeRiskConfig risk, ISettingsStore store) =>
     {
         guard.Disable("api");
+        // "Reset and return to paper" also clears a manual kill (not a daily-loss kill for today).
+        var cleared = guard.IsKilled ? guard.ClearKill() : (true, "");
         // Back to paper with the user's saved settings. Re-applying appsettings.json defaults here
         // silently replaced size, limits and equity with values the user never chose.
         var o = opt.Value;
@@ -512,7 +514,9 @@ try
         return Results.Ok(new
         {
             ok = true,
-            message = "Live disabled → DEMO paper auto-exec on real order books (same professional thresholds).",
+            message = cleared.Item1
+                ? "Live disabled → DEMO paper auto-exec on real order books (same professional thresholds)."
+                : cleared.Item2,
             status = guard.Status(),
             mode = "PAPER"
         });

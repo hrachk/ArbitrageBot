@@ -134,6 +134,32 @@ public sealed class LiveTradingGuard
         _logger.LogWarning("LIVE disabled: {Reason}", reason);
     }
 
+    /// <summary>
+    /// Clear a kill switch and stay in paper. Before this, the only way out of KILLED was TryEnable,
+    /// but the UI hides the enable buttons while killed and its "reset" called Disable, which kept
+    /// the kill — so a manual kill could never be undone from the UI.
+    /// </summary>
+    public (bool ok, string message) ClearKill()
+    {
+        string? was;
+        lock (_lock)
+        {
+            RollDayUnlocked();
+            if (!_killed) return (true, "Kill switch is not active");
+            if (_dailyLossLimit < 0 && _dayRealized <= _dailyLossLimit)
+                return (false, $"Daily loss limit {_dailyLossLimit:F0} reached today ({_dayRealized:F2}): kill stays until the UTC day rolls over");
+            was = _killReason;
+            _killed = false;
+            _killReason = null;
+            _enabled = false;
+            _readOnly = true;
+            PersistRiskStateUnlocked();
+        }
+        Audit("kill-cleared", new { was });
+        _logger.LogWarning("LIVE kill switch cleared (was: {Was}); paper until live is enabled again", was);
+        return (true, "Kill switch cleared. Live is off; enable it again when ready.");
+    }
+
     public void Kill(string reason)
     {
         lock (_lock)
