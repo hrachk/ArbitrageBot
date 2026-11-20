@@ -50,6 +50,11 @@ public sealed class DensityScalper
     private int _placed, _filled, _cancelled;
     private readonly Dictionary<string, int> _cancelReasons = new();
     private const string LiveVenue = "Binance";
+    private readonly Dictionary<string, BlacklistEntry> _blacklist = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _clearedAt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly string _blacklistPath;
+    // Mid history per venue|symbol (1 sample/s, 30 min) for the trend filter.
+    private readonly Dictionary<string, List<(DateTime At, decimal Mid)>> _mids = new(StringComparer.OrdinalIgnoreCase);
     private bool _sweptAfterStart;
 
     public DensityScalper(IFuturesMarketService market, ActiveMarketContext markets, RuntimeRiskConfig runtime,
@@ -67,7 +72,12 @@ public sealed class DensityScalper
         _logger = logger;
         _ledgerPath = Path.Combine(env.ContentRootPath, "data", "paper", "density-ledger.json");
         _statePath = Path.Combine(env.ContentRootPath, "data", "live", "density-state.json");
+        _blacklistPath = Path.Combine(env.ContentRootPath, "data", "density-blacklist.json");
         Load();
+        LoadBlacklist();
+        // Apply the rule to trades made before it existed (or before a restart).
+        foreach (var sym in _closed.Select(x => x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
+            CheckBlacklistUnlocked(sym, DateTime.UtcNow);
         LoadState();
     }
 
@@ -132,7 +142,14 @@ public sealed class DensityScalper
                 var dayPnl = _closed.Where(c => c.Live == live && c.ClosedAt.Date == today).Sum(c => c.PnlUsd);
                 var lossCap = Math.Abs(snap.ScalpDailyLossUsd) > 0 ? Math.Abs(snap.ScalpDailyLossUsd) : 3m;
                 if (dayPnl <= -lossCap) { _lastNote = $"дневной лимит убытка {lossCap:F2} достигнут"; return; }
-                if ((now - _lastCloseUtc).TotalSeconds < Math.Max(0, snap.ScalpCooldownSeconds)) return;
+                // Not in a hurry: a pause after every trade, a longer one after a loss.
+                var lastLoss = _closed.FirstOrDefault(c => c.Live == live) is { PnlUsd: < 0 } lc && lc.ClosedAt >= _lastCloseUtc.AddSeconds(-1);
+                var pause = lastLoss ? Math.Max(snap.ScalpCooldownSeconds, snap.DensityLossCooldownSeconds) : Math.Max(0, snap.ScalpCooldownSeconds);
+                if ((now - _lastCloseUtc).TotalSeconds < pause)
+                {
+                    if (lastLoss) _lastNote = $"пауза после убытка до {_lastCloseUtc.AddSeconds(pause).ToLocalTime():HH:mm:ss}";
+                    return;
+                }
                 notional = Math.Max(0m, snap.ScalpDepositUsd) * Math.Clamp(snap.ScalpLeverage, 1m, 5m);
                 if (notional < 6m) { _lastNote = "депозит скальпа слишком мал"; return; }
                 best = PickWall(snap, now, notional, live);
@@ -180,6 +197,10 @@ public sealed class DensityScalper
             var bid = b.Bids[0].Price; var ask = b.Asks[0].Price;
             if (bid <= 0 || ask <= bid) continue;
             var mid = (bid + ask) / 2m;
+            var hk = ex + "|" + symbol;
+            if (!_mids.TryGetValue(hk, out var hist)) _mids[hk] = hist = [];
+            if (hist.Count == 0 || (now - hist[^1].At).TotalSeconds >= 1) hist.Add((now, mid));
+            while (hist.Count > 0 && now - hist[0].At > TimeSpan.FromMinutes(30)) hist.RemoveAt(0);
             foreach (var w in DensityMath.FindWalls(b.Bids, true, mid, snap.DensityScanPercent, snap.DensityMinWallUsd, snap.DensityMinMultiple)
                          .Concat(DensityMath.FindWalls(b.Asks, false, mid, snap.DensityScanPercent, snap.DensityMinWallUsd, snap.DensityMinMultiple)))
             {
@@ -206,9 +227,91 @@ public sealed class DensityScalper
             if ((now - t.FirstSeen).TotalSeconds < snap.DensityMinWallAgeSeconds) continue;
             if (t.DistancePercent > snap.DensityApproachPercent) continue;
             if (t.Notional < notional * 3m) continue; // our order must be small next to the wall
+            if (SymbolPaused(t.Symbol, live, snap, now) != null) continue;
+            if (!DensityMath.TrendAllows(t.IsBid, Move(t.Exchange, t.Symbol, snap.DensityTrendMinutes, now), snap.DensityTrendBlockPercent)) continue;
             if (best == null || t.Multiple > best.Multiple) best = t;
         }
         return best;
+    }
+
+    /// <summary>Price change over the last <paramref name="minutes"/> (%), or null without enough history.</summary>
+    private decimal? Move(string ex, string symbol, int minutes, DateTime now)
+    {
+        if (!_mids.TryGetValue(ex + "|" + symbol, out var h) || h.Count < 2) return null;
+        var from = now - TimeSpan.FromMinutes(Math.Max(1, minutes));
+        var first = h.FirstOrDefault(x => x.At >= from);
+        if (first.Mid <= 0 || (now - first.At).TotalSeconds < 60) return null;
+        return (h[^1].Mid - first.Mid) / first.Mid * 100m;
+    }
+
+    /// <summary>
+    /// Blacklist: a symbol that lost DensitySymbolMaxLosses times (since it was last cleared) is out,
+    /// until removed by hand, or for DensitySymbolBlockMinutes when that is set. Persisted.
+    /// </summary>
+    private DateTime? SymbolPaused(string symbol, bool live, ArbitrageOptions snap, DateTime now)
+    {
+        if (!_blacklist.TryGetValue(symbol, out var e)) return null;
+        if (snap.DensitySymbolBlockMinutes > 0 && now - e.Since > TimeSpan.FromMinutes(snap.DensitySymbolBlockMinutes))
+        {
+            _blacklist.Remove(symbol);
+            _clearedAt[symbol] = now;
+            SaveBlacklist();
+            return null;
+        }
+        return snap.DensitySymbolBlockMinutes > 0 ? e.Since.AddMinutes(snap.DensitySymbolBlockMinutes) : DateTime.MaxValue;
+    }
+
+    /// <summary>After a close: blacklist the symbol once it reached the loss count since it was last cleared.</summary>
+    private void CheckBlacklistUnlocked(string symbol, DateTime now)
+    {
+        var snap = _runtime.Snapshot;
+        if (snap.DensitySymbolMaxLosses <= 0 || _blacklist.ContainsKey(symbol)) return;
+        var since = _clearedAt.GetValueOrDefault(symbol, DateTime.MinValue);
+        var losses = _closed.Count(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && x.ClosedAt > since && x.PnlUsd < 0);
+        if (losses < snap.DensitySymbolMaxLosses) return;
+        var pnl = _closed.Where(x => x.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && x.ClosedAt > since).Sum(x => x.PnlUsd);
+        _blacklist[symbol] = new BlacklistEntry(now, losses, pnl);
+        SaveBlacklist();
+        _lastNote = $"{symbol} в чёрном списке: {losses} убыточных сделки, {pnl:F2}$";
+        _logger.LogWarning("DENSITY blacklisted {Sym}: {N} losing trades, pnl {Pnl:F2}", symbol, losses, pnl);
+    }
+
+    public bool RemoveFromBlacklist(string symbol)
+    {
+        lock (_lock)
+        {
+            var ok = _blacklist.Remove(symbol);
+            _clearedAt[symbol] = DateTime.UtcNow;
+            SaveBlacklist();
+            return ok;
+        }
+    }
+
+    private void SaveBlacklist()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_blacklistPath)!);
+            File.WriteAllText(_blacklistPath, JsonSerializer.Serialize(new { blacklist = _blacklist, clearedAt = _clearedAt }, Json));
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Density blacklist save failed"); }
+    }
+
+    private void LoadBlacklist()
+    {
+        try
+        {
+            if (!File.Exists(_blacklistPath)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(_blacklistPath));
+            if (doc.RootElement.TryGetProperty("blacklist", out var bl))
+                foreach (var p in bl.EnumerateObject())
+                    _blacklist[p.Name] = p.Value.Deserialize<BlacklistEntry>(Json)!;
+            if (doc.RootElement.TryGetProperty("clearedAt", out var ca))
+                foreach (var p in ca.EnumerateObject())
+                    _clearedAt[p.Name] = p.Value.GetDateTime();
+            if (_blacklist.Count > 0) _logger.LogInformation("Density blacklist: {List}", string.Join(", ", _blacklist.Keys));
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Density blacklist unreadable"); }
     }
 
     // ------------------------------------------------------------------ paper
@@ -243,7 +346,11 @@ public sealed class DensityScalper
         ArbitrageOptions snap, DateTime now)
     {
         var mid = (b.Bids[0].Price + b.Asks[0].Price) / 2m;
-        if (!DensityMath.WallHolds(r.IsLong ? b.Bids : b.Asks, r.WallPrice, r.WallRefQty, 0.6m)) return "плотность съели или сняли";
+        var levels = r.IsLong ? b.Bids : b.Asks;
+        if (!DensityMath.WallHolds(levels, r.WallPrice, r.WallRefQty, 0.6m)) return "плотность съели или сняли";
+        // Price is at us and the wall is shrinking: it is being eaten — a fill now would be the losing kind.
+        var near = Math.Abs(mid - r.WallPrice) / mid * 100m <= snap.DensityApproachPercent / 3m;
+        if (near && !DensityMath.WallHolds(levels, r.WallPrice, r.WallRefQty, 0.85m)) return "плотность начали разъедать";
         if (Math.Abs(mid - r.WallPrice) / mid * 100m > snap.DensityApproachPercent * 2m) return "цена ушла от плотности";
         if ((now - r.PlacedAt).TotalSeconds > 60) return "за 60 с цена не дошла";
         return null;
@@ -311,7 +418,10 @@ public sealed class DensityScalper
     {
         var bid = b.Bids[0].Price; var ask = b.Asks[0].Price;
         if (p.IsLong ? bid <= p.Stop : ask >= p.Stop) return "stop";
-        if (!DensityMath.WallHolds(p.IsLong ? b.Bids : b.Asks, p.WallPrice, p.WallRefQty, 0.4m)) return "wall-gone";
+        // Wall gone only counts once price is actually at it: a wall pulled while price sits above
+        // it (long) is noise; the exits for real damage are the stop beyond it and the time limit.
+        if (!DensityMath.WallHolds(p.IsLong ? b.Bids : b.Asks, p.WallPrice, p.WallRefQty, 0.4m)
+            && (p.IsLong ? bid <= p.WallPrice : ask >= p.WallPrice)) return "wall-gone";
         if ((now - p.OpenedAt).TotalSeconds > snap.DensityMaxHoldSeconds) return "time";
         return null;
     }
@@ -332,6 +442,7 @@ public sealed class DensityScalper
             t.Live ? "LIVE" : "paper", t.Symbol, t.IsLong ? "L" : "S", t.Entry, t.Exit, reason, t.PnlUsd);
         Save();
         if (t.Live) SaveState();
+        if (t.PnlUsd < 0) CheckBlacklistUnlocked(t.Symbol, now);
     }
 
     private static string ReasonRu(string r) => r switch
@@ -570,6 +681,11 @@ public sealed class DensityScalper
                 binanceKey = _gw.HasKeys(),
                 venues = live ? new[] { LiveVenue } : Venues.AllowSet(snap.ScalpVenues)?.ToArray() ?? [LiveVenue],
                 lastNote = _lastNote,
+                blacklist = _blacklist.Select(kv => new
+                {
+                    symbol = kv.Key, since = kv.Value.Since, losses = kv.Value.Losses, pnlUsd = kv.Value.PnlUsd,
+                    until = snap.DensitySymbolBlockMinutes > 0 ? kv.Value.Since.AddMinutes(snap.DensitySymbolBlockMinutes) : (DateTime?)null
+                }).ToList(),
                 walls = _tracks.Values
                     .OrderBy(w => w.DistancePercent)
                     .Take(14)
@@ -717,6 +833,8 @@ public sealed class DensityScalper
     }
 
     private sealed record LiveState(Resting? Resting, Position? Position);
+
+    public sealed record BlacklistEntry(DateTime Since, int Losses, decimal PnlUsd);
 
     public sealed record Trade(string Exchange, string Symbol, bool IsLong, decimal Qty, decimal Entry, decimal Exit, decimal WallPrice,
         DateTime OpenedAt, DateTime ClosedAt, decimal PnlUsd, decimal FeesUsd, string Reason, bool Live = false);

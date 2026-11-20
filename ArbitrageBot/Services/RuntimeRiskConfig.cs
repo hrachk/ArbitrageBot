@@ -96,6 +96,11 @@ public sealed class RuntimeRiskConfig
             if (t.DensityMaxHoldSeconds is { } dh && dh > 0) _opts.DensityMaxHoldSeconds = Math.Clamp(dh, 10, 86_400);
             if (t.DensityMakerFeePercent is { } dmf && dmf >= 0) _opts.DensityMakerFeePercent = Math.Clamp(dmf, -0.05m, 0.2m);
             if (t.DensityTakerFeePercent is { } dtf && dtf >= 0) _opts.DensityTakerFeePercent = Math.Clamp(dtf, 0m, 0.3m);
+            if (t.DensityTrendBlockPercent is { } dtb && dtb >= 0) _opts.DensityTrendBlockPercent = Math.Clamp(dtb, 0m, 10m);
+            if (t.DensityTrendMinutes is { } dtm && dtm > 0) _opts.DensityTrendMinutes = Math.Clamp(dtm, 1, 60);
+            if (t.DensitySymbolMaxLosses is { } dsl && dsl >= 0) _opts.DensitySymbolMaxLosses = Math.Clamp(dsl, 0, 20);
+            if (t.DensitySymbolBlockMinutes is { } dsb && dsb >= 0) _opts.DensitySymbolBlockMinutes = Math.Clamp(dsb, 0, 43_200);
+            if (t.DensityLossCooldownSeconds is { } dlc && dlc >= 0) _opts.DensityLossCooldownSeconds = Math.Clamp(dlc, 0, 86_400);
             if (t.ScalpVenues != null) _opts.ScalpVenues = Venues.NormalizeCsv(t.ScalpVenues, out _);
             _opts.DynamicSymbols = t.DynamicSymbols;
             if (t.DynamicTopN > 0) _opts.DynamicTopN = t.DynamicTopN;
@@ -231,6 +236,11 @@ public sealed class RuntimeRiskConfig
         ScalpCooldownSeconds = o.ScalpCooldownSeconds,
         ScalpLive = o.ScalpLive,
         ScalpVenues = o.ScalpVenues,
+        DensityTrendBlockPercent = o.DensityTrendBlockPercent,
+        DensityTrendMinutes = o.DensityTrendMinutes,
+        DensitySymbolMaxLosses = o.DensitySymbolMaxLosses,
+        DensitySymbolBlockMinutes = o.DensitySymbolBlockMinutes,
+        DensityLossCooldownSeconds = o.DensityLossCooldownSeconds,
         ScalpStrategy = o.ScalpStrategy,
         DensityMinWallUsd = o.DensityMinWallUsd,
         DensityMinMultiple = o.DensityMinMultiple,

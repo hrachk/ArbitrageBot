@@ -96,6 +96,11 @@ public class TradingUiSettings
     public int? ScalpCooldownSeconds { get; set; }
     public bool? ScalpLive { get; set; }
     public string? ScalpVenues { get; set; }
+    public decimal? DensityTrendBlockPercent { get; set; }
+    public int? DensityTrendMinutes { get; set; }
+    public int? DensitySymbolMaxLosses { get; set; }
+    public int? DensitySymbolBlockMinutes { get; set; }
+    public int? DensityLossCooldownSeconds { get; set; }
     public string? ScalpStrategy { get; set; }
     public decimal? DensityMinWallUsd { get; set; }
     public decimal? DensityMinMultiple { get; set; }

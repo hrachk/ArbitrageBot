@@ -487,6 +487,24 @@ public static class DensityMath
         => isBuy ? (bestBid > 0 && bestBid < limit) || (bestAsk > 0 && bestAsk <= limit)
                  : (bestAsk > 0 && bestAsk > limit) || (bestBid > 0 && bestBid >= limit);
 
+    /// <summary>
+    /// Trend filter: do not buy in front of a bid wall while the price is falling through the day's
+    /// walls (they get eaten, and our fill is exactly the moment one is being eaten), nor sell in an uptrend.
+    /// </summary>
+    public static bool TrendAllows(bool isLong, decimal? movePercent, decimal blockPercent)
+        => blockPercent <= 0 || movePercent is not { } m || (isLong ? m > -blockPercent : m < blockPercent);
+
+    /// <summary>
+    /// Symbol cool-off: after <paramref name="maxConsecutiveLosses"/> losing trades in a row on a symbol,
+    /// skip it until <paramref name="block"/> has passed since the last of them.
+    /// </summary>
+    public static bool SymbolBlocked(IReadOnlyList<(DateTime ClosedAt, decimal Pnl)> newestFirst, int maxConsecutiveLosses, TimeSpan block, DateTime now)
+    {
+        if (maxConsecutiveLosses <= 0 || newestFirst.Count < maxConsecutiveLosses) return false;
+        for (var i = 0; i < maxConsecutiveLosses; i++) if (newestFirst[i].Pnl >= 0) return false;
+        return now - newestFirst[0].ClosedAt < block;
+    }
+
     /// <summary>Wall still standing: level present with at least <paramref name="keepFraction"/> of its reference size.</summary>
     public static bool WallHolds(IReadOnlyList<(decimal Price, decimal Quantity)> levels, decimal price, decimal refQty, decimal keepFraction)
     {
