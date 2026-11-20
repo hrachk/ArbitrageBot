@@ -148,6 +148,25 @@ public sealed class BinanceMakerGateway
         if (!r.Success) _logger.LogInformation("DENSITY LIVE stop cancel {Id}: {Err}", algoId, r.Error?.Message);
     }
 
+    /// <summary>
+    /// Remove every open conditional (algo) order on the symbol and return how many there were.
+    /// A single-id cancel can answer "Unknown order" while the stop is still listed, so after a
+    /// close we sweep by symbol; the density scalper is the only place that sets conditional orders.
+    /// </summary>
+    public async Task<int?> SweepStopsAsync(string symbol, CancellationToken ct)
+    {
+        var client = Client();
+        if (client == null) return null;
+        var open = await client.Binance.UsdFuturesApi.Trading.GetOpenConditionalOrdersAsync(symbol, ct: ct).ConfigureAwait(false);
+        if (!open.Success) { _logger.LogWarning("DENSITY LIVE stop list {Sym}: {Err}", symbol, open.Error?.Message); return null; }
+        var n = open.Data.Count();
+        if (n == 0) return 0;
+        var r = await client.Binance.UsdFuturesApi.Trading.CancelAllConditionalOrdersAsync(symbol, ct: ct).ConfigureAwait(false);
+        if (r.Success) _logger.LogWarning("DENSITY LIVE removed {N} leftover stop order(s) on {Sym}", n, symbol);
+        else _logger.LogWarning("DENSITY LIVE leftover stops on {Sym} ({N}) not removed: {Err}", symbol, n, r.Error?.Message);
+        return n;
+    }
+
     /// <summary>Signed position size for the side we hold (0 when flat), or null when it cannot be read.</summary>
     public async Task<decimal?> PositionQtyAsync(string symbol, bool positionIsLong, CancellationToken ct)
     {
