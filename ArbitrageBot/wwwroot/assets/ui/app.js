@@ -980,7 +980,7 @@ function renderLive() {
     ${phaseIdx === 0 && !st.killed ? '<button class="btn" data-act="live-enable-ro">Включить только чтение</button><button class="btn danger" data-act="live-enable">Включить реальные ордера</button>' : ''}
     ${phaseIdx === 1 ? '<button class="btn danger" data-act="live-enable">Перейти к реальным ордерам</button><button class="btn ghost" data-act="live-disable">Вернуться в paper</button>' : ''}
     ${phaseIdx === 2 ? '<button class="btn" data-act="live-disable">Остановить live, вернуться в paper</button>' : ''}
-    ${st.killed ? '<button class="btn" data-act="live-disable">Сбросить и вернуться в paper</button>' : ''}
+    ${st.killed ? '<button class="btn" data-act="kill-reset">Снять kill switch</button>' : ''}
     <span class="grow" style="flex:1"></span>
     <span class="mut small">Лимиты: до ${fmt.int(st.maxOpenPositions)} хеджей · до ${fmt.usd(st.maxNotionalUsd, 0, false)} на хедж · стоп дня ${fmt.usd(st.dailyLossLimitUsd, 0)} · сегодня ${fmt.usd(st.dayRealizedUsd)}</span>
   </div></section>
@@ -1315,6 +1315,11 @@ const ACTIONS = {
   async 'live-enable-ro'() {
     const r = await confirmModal({ title: 'Режим «только чтение»', body: 'Бот подключится к биржам по ключам, но ордеров не будет. Введите фразу <span class="num">ENABLE LIVE TRADING</span>.', confirm: 'Включить чтение', input: { label: 'Фраза подтверждения', placeholder: 'ENABLE LIVE TRADING' } });
     if (!r) return; await act(() => api.post('/api/live/enable', { confirmPhrase: r.value, readOnly: true }), (x) => x?.message || 'Режим чтения включён'); refreshSnap();
+  },
+  async 'kill-reset'() {
+    if (!await confirmModal({ title: 'Снять kill switch?', body: 'Бот останется в paper. Сверьте позиции на биржах, затем включите live заново кнопкой «Включить реальные ордера».', confirm: 'Снять kill switch' })) return;
+    await act(() => api.post('/api/live/disable'), (r) => r?.status?.killed ? (r.message || 'Kill switch не снят') : 'Kill switch снят, бот в paper. Можно включать live.');
+    refreshSnap();
   },
   async 'live-disable'() { if (!await confirmModal({ title: 'Вернуться в paper?', body: 'Live будет выключен, бот продолжит работу на виртуальной марже.', confirm: 'Вернуться в paper' })) return; await act(() => api.post('/api/live/disable'), 'Live выключен, работает paper'); refreshSnap(); },
   'live-balances'() { loadLiveBalances(true); },
