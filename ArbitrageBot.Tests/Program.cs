@@ -263,6 +263,16 @@ internal static class Program
             Check("density: sell TP filled only through", !DensityMath.RestingFilled(false, 100.30m, 100.29m, 100.30m) && DensityMath.RestingFilled(false, 100.30m, 100.30m, 100.31m));
             Check("density: wall holds at 60%", DensityMath.WallHolds(bids, 99.96m, 1000m, 0.6m) && !DensityMath.WallHolds(bids, 99.96m, 2000m, 0.6m));
         }
+        Check("density trend: long blocked in a fall", !DensityMath.TrendAllows(true, -0.6m, 0.4m) && DensityMath.TrendAllows(true, -0.2m, 0.4m));
+        Check("density trend: short blocked in a rise", !DensityMath.TrendAllows(false, 0.5m, 0.4m) && DensityMath.TrendAllows(false, -1m, 0.4m));
+        Check("density trend: no history or off allows", DensityMath.TrendAllows(true, null, 0.4m) && DensityMath.TrendAllows(true, -5m, 0m));
+        {
+            var t0 = new DateTime(2026, 11, 20, 12, 0, 0, DateTimeKind.Utc);
+            var two = new List<(DateTime, decimal)> { (t0, -0.2m), (t0.AddMinutes(-10), -0.1m) };
+            Check("density pause: 2 losses in a row pause the symbol", DensityMath.SymbolBlocked(two, 2, TimeSpan.FromMinutes(120), t0.AddMinutes(30)));
+            Check("density pause: expires", !DensityMath.SymbolBlocked(two, 2, TimeSpan.FromMinutes(120), t0.AddMinutes(121)));
+            Check("density pause: a win breaks the streak", !DensityMath.SymbolBlocked(new List<(DateTime, decimal)> { (t0, -0.2m), (t0.AddMinutes(-10), 0.6m) }, 2, TimeSpan.FromMinutes(120), t0.AddMinutes(1)));
+        }
         Check("scalp exit: hold while lag persists", LeadLag.ExitReason(true, 100m, 100.05m, -0.05m, 100m, -0.3m, 0.05m, 5, 0.30m, 45, 0.2m) is null);
     }
 }

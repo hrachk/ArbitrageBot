@@ -462,6 +462,12 @@ try
     app.MapGet("/api/analytics/days", (IPaperAnalyticsStore a, int maxDays = 90) => Results.Json(a.GetDaySummaries(maxDays)));
     app.MapGet("/api/scalp", (ScalpEngine scalp) => Results.Json(scalp.Snapshot()));
     app.MapGet("/api/scalp/density", (DensityScalper d) => Results.Json(d.Snapshot()));
+    app.MapPost("/api/scalp/density/blacklist/remove", async (HttpRequest req, DensityScalper d) =>
+    {
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body);
+        var sym = doc.RootElement.TryGetProperty("symbol", out var s) ? s.GetString() ?? "" : "";
+        return string.IsNullOrWhiteSpace(sym) ? Results.BadRequest(new { ok = false }) : Results.Ok(new { ok = d.RemoveFromBlacklist(sym.Trim()) });
+    });
     app.MapPost("/api/scalp/density/reset", (DensityScalper d) => Results.Ok(new { removed = d.ResetHistory() }));
     app.MapPost("/api/scalp/reset-paper", (ScalpEngine scalp) => Results.Ok(new { removed = scalp.ResetPaperHistory() }));
 

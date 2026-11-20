@@ -178,7 +178,7 @@ public class ArbitrageOptions
     /// <summary>Place the entry when price is this close to the wall (%).</summary>
     public decimal DensityApproachPercent { get; set; } = 0.30m;
     /// <summary>Wall must stand this long (anti-spoof) before we trade it.</summary>
-    public int DensityMinWallAgeSeconds { get; set; } = 20;
+    public int DensityMinWallAgeSeconds { get; set; } = 45;
     /// <summary>Take profit away from the wall (%), resting maker order.</summary>
     public decimal DensityTakeProfitPercent { get; set; } = 0.35m;
     /// <summary>Stop if price goes this far beyond the wall (%), or the wall is eaten/pulled.</summary>
@@ -191,6 +191,17 @@ public class ArbitrageOptions
     public decimal DensityTakerFeePercent { get; set; } = 0.05m;
     /// <summary>Order book levels kept for Binance books (walls further than 30 levels are invisible otherwise).</summary>
     public int DensityBookLevels { get; set; } = 500;
+    /// <summary>Skip bid walls if price fell more than this over DensityTrendMinutes (ask walls: rose). 0 = off.
+    /// 0.25 would have kept out 6 of the 7 losing live trades of 2026-11-20 and let the winner through.</summary>
+    public decimal DensityTrendBlockPercent { get; set; } = 0.25m;
+    /// <summary>Window for the trend filter.</summary>
+    public int DensityTrendMinutes { get; set; } = 5;
+    /// <summary>After this many losing trades on a symbol it goes on the blacklist. 0 = off.</summary>
+    public int DensitySymbolMaxLosses { get; set; } = 2;
+    /// <summary>After a losing trade, wait this long before the next entry (s).</summary>
+    public int DensityLossCooldownSeconds { get; set; } = 300;
+    /// <summary>How long a blacklisted symbol stays out (minutes); 0 = until removed by hand on the scalp page.</summary>
+    public int DensitySymbolBlockMinutes { get; set; } = 0;
 
     // ---- Execution realism (audit 2026-11) ----
     /// <summary>A traded leg's quote must be younger than this (ms). REST snapshots are never a traded leg.</summary>

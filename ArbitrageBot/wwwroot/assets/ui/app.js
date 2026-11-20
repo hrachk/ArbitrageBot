@@ -29,6 +29,7 @@ const signed = (v, f = fmt.usd) => `<span class="num ${cls(v)}">${f(v)}</span>`;
 const VENUE = { Binance: 'Binance', Bybit: 'Bybit', OKX: 'OKX', Bitget: 'Bitget', GateIo: 'Gate.io', Kucoin: 'KuCoin', KuCoin: 'KuCoin', Coinbase: 'Coinbase' };
 const venue = (v) => VENUE[v] || v || '—';
 const VENUES_ALL = ['Binance', 'Bybit', 'OKX', 'Bitget', 'GateIo', 'Kucoin'];
+const ruPlural = (n, one, few, many) => { const a = Math.abs(n) % 100, b = a % 10; return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many; };
 const baseOf = (s) => String(s || '').replace(/USDT$/i, '');
 
 // ───────────────────────── icons ─────────────────────────
@@ -946,6 +947,7 @@ function renderDensity(sc) {
       ${walls.map(w => `<tr><td class="sym">${esc(baseOf(w.symbol))}</td><td class="${w.side === 'bid' ? 'long' : 'short'}">${w.side === 'bid' ? 'покупка' : 'продажа'}</td><td class="r num">${fmt.price(w.price)}</td><td class="r num">$${fmt.int(w.notionalUsd)}</td><td class="r num">×${fmt.int(w.multiple)}</td><td class="r num">${fmt.pct(w.distancePercent, 2, false)}</td><td class="r num ${w.mature ? '' : 'mut'}">${fmt.dur(w.ageSeconds)}${w.mature ? '' : ' · рано'}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">Плотностей по фильтру сейчас нет</div>'}</div></section>
 
+  ${(d.blacklist || []).length ? `<section class="panel" style="margin-top:14px"><div class="panel-head"><h2>Чёрный список</h2><span class="sub">монета, проигравшая ${esc(t.densitySymbolMaxLosses ?? 2)} ${ruPlural(t.densitySymbolMaxLosses ?? 2, 'раз', 'раза', 'раз')}, больше не торгуется</span></div><div class="panel-body" style="display:flex;flex-wrap:wrap;gap:8px">${(d.blacklist || []).map(lc).map(x => `<span class="chip on" style="gap:8px"><b>${esc(baseOf(x.symbol))}</b><span class="small neg">${fmt.int(x.losses)} ${ruPlural(x.losses, 'убыток', 'убытка', 'убытков')} · ${fmt.usd(x.pnlUsd)}</span>${x.until ? `<span class="small mut">до ${new Date(x.until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>` : ''}<button type="button" class="btn sm ghost" data-act="density-unblock" data-symbol="${esc(x.symbol)}">Вернуть</button></span>`).join('')}</div></section>` : ''}
   ${(stt.cancelReasons || []).length ? `<div class="mut small" style="margin-top:10px">Почему заявки снимались: ${(stt.cancelReasons || []).map(lc).map(c => esc(c.reason) + ' — ' + fmt.int(c.count)).join(' · ')}</div>` : ''}
 
   <section class="panel" style="margin-top:14px"><div class="panel-head" style="flex-wrap:wrap;gap:6px 12px"><h2>История</h2><div class="tools">${closed.some(x => !x.live) ? '<button class="btn sm ghost" data-act="density-reset">Очистить paper-историю</button>' : ''}<button class="btn sm ghost" data-go="settings" onclick="setTimeout(()=>document.getElementById('sec-scalp')?.scrollIntoView(),450)">Настройки скальпера</button></div></div>
@@ -1136,6 +1138,11 @@ const SETTINGS = [
     ['densityTakeProfitPercent', 'Тейк', 'num', 'Лимиткой, от цены входа', '%'],
     ['densityStopBeyondPercent', 'Стоп за плотностью', 'num', 'Плюс выход сразу, если плотность съели или сняли', '%'],
     ['densityMaxHoldSeconds', 'Макс. удержание', 'int', '', 'с'],
+    ['densityTrendBlockPercent', 'Не входить против тренда сильнее', 'num', 'Не покупать от плотности, если цена упала больше этого за окно ниже (и наоборот). 0 — выключено', '%'],
+    ['densityTrendMinutes', 'Окно тренда', 'int', '', 'мин'],
+    ['densityLossCooldownSeconds', 'Пауза после убыточной сделки', 'int', '', 'с'],
+    ['densitySymbolMaxLosses', 'В чёрный список после убытков', 'int', 'Монета, проигравшая столько раз, больше не торгуется. 0 — выключено', 'шт'],
+    ['densitySymbolBlockMinutes', 'Срок чёрного списка', 'int', '0 — пока не уберёте вручную на странице скальпера', 'мин'],
     ['densityMakerFeePercent', 'Комиссия мейкера', 'num', 'Binance: 0.02, с BNB меньше', '%'],
     ['densityTakerFeePercent', 'Комиссия тейкера', 'num', 'Для стопа и выхода по времени', '%'],
   ]},
@@ -1392,6 +1399,11 @@ const ACTIONS = {
     const t = S.settings?.trading; const k = el?.dataset?.strategy; if (!t || !k || t.scalpStrategy === k) return;
     const r = await act(() => api.post('/api/settings/trading', { ...t, scalpStrategy: k }), k === 'density' ? 'Скальпер: плотности в стакане (paper)' : 'Скальпер: отставание бирж');
     if (r) { await loadSettings(false); loadScalp(); }
+  },
+  async 'density-unblock'(el) {
+    const sym = el?.dataset?.symbol; if (!sym) return;
+    if (!await confirmModal({ title: `Вернуть ${baseOf(sym)} в торговлю?`, body: 'Счётчик убытков по монете начнётся заново.', confirm: 'Вернуть' })) return;
+    await act(() => api.post('/api/scalp/density/blacklist/remove', { symbol: sym }), `${baseOf(sym)} снова торгуется`); loadScalp();
   },
   async 'density-reset'() {
     if (!await confirmModal({ title: 'Очистить paper-историю плотностей?', body: 'Удалит paper-сделки и счётчики заявок. Реальные сделки останутся.', confirm: 'Очистить' })) return;
